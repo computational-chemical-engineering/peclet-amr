@@ -4,24 +4,24 @@
 // criterion. The headline one is SDF-driven: refine leaves the solid surface
 // passes through (plus a band) down to a target level, leaving the interior /
 // far field coarse — the usual AMR pattern for the suite's cut-cell IBM. Reuses
-// the shared tpx::geom SDF (any callable returning a signed distance at a world
+// the shared peclet::core::geom SDF (any callable returning a signed distance at a world
 // point) and the AmrGeometry world mapping.
 //
-// Header-only, guarded by TPX_HAVE_MORTON.
-#ifndef TPX_AMR_REFINE_HPP
-#define TPX_AMR_REFINE_HPP
+// Header-only, guarded by PECLET_CORE_HAVE_MORTON.
+#ifndef PECLET_CORE_AMR_REFINE_HPP
+#define PECLET_CORE_AMR_REFINE_HPP
 
-#ifdef TPX_HAVE_MORTON
+#ifdef PECLET_CORE_HAVE_MORTON
 
 #include <algorithm>
 #include <cmath>
 #include <vector>
 
-#include "tpx/amr/block_octree.hpp"
-#include "tpx/amr/leaf_field.hpp"
-#include "tpx/common/types.hpp"
+#include "peclet/core/amr/block_octree.hpp"
+#include "peclet/core/amr/leaf_field.hpp"
+#include "peclet/core/common/types.hpp"
 
-namespace tpx::amr {
+namespace peclet::core::amr {
 
 /// Refine leaves near an SDF interface down to `targetLevel`.
 ///
@@ -29,7 +29,7 @@ namespace tpx::amr {
 /// within the cell or a band around it: |phi(center)| <= halfDiagonal + band*h0,
 /// where halfDiagonal = 0.5*sqrt(Dim)*cellWidth. Iterated until no eligible leaf
 /// remains; returns the number of refinements performed. `sdf` is any callable
-/// `Real(const Vec<Dim>&)` (e.g. a lambda over a tpx::geom shape). Optionally
+/// `Real(const Vec<Dim>&)` (e.g. a lambda over a peclet::core::geom shape). Optionally
 /// restore 2:1 balance afterwards.
 template <int Dim, unsigned Bits, class SdfFn>
 Index refineToSdf(BlockOctree<Dim, Bits>& t, const AmrGeometry<Dim>& geo, SdfFn&& sdf,
@@ -59,7 +59,7 @@ Index refineToSdf(BlockOctree<Dim, Bits>& t, const AmrGeometry<Dim>& geo, SdfFn&
   return total;
 }
 
-}  // namespace tpx::amr
+}  // namespace peclet::core::amr
 
-#endif  // TPX_HAVE_MORTON
-#endif  // TPX_AMR_REFINE_HPP
+#endif  // PECLET_CORE_HAVE_MORTON
+#endif  // PECLET_CORE_AMR_REFINE_HPP

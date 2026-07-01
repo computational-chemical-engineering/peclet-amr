@@ -9,12 +9,12 @@
 // PBD / N-body consumer (e.g. dem) would use; theta = 0 recurses fully and
 // reproduces the direct O(N^2) sum exactly.
 //
-// Header-only, guarded by TPX_HAVE_MORTON. Serial/host (the device traversal is a
+// Header-only, guarded by PECLET_CORE_HAVE_MORTON. Serial/host (the device traversal is a
 // follow-up; the aggregates + leaf arrays are already device-friendly).
-#ifndef TPX_AMR_BARNES_HUT_HPP
-#define TPX_AMR_BARNES_HUT_HPP
+#ifndef PECLET_CORE_AMR_BARNES_HUT_HPP
+#define PECLET_CORE_AMR_BARNES_HUT_HPP
 
-#ifdef TPX_HAVE_MORTON
+#ifdef PECLET_CORE_HAVE_MORTON
 
 #include <algorithm>
 #include <array>
@@ -22,11 +22,11 @@
 #include <map>
 #include <vector>
 
-#include "tpx/amr/block_octree.hpp"
-#include "tpx/amr/leaf_field.hpp"
-#include "tpx/common/types.hpp"
+#include "peclet/core/amr/block_octree.hpp"
+#include "peclet/core/amr/leaf_field.hpp"
+#include "peclet/core/common/types.hpp"
 
-namespace tpx::amr {
+namespace peclet::core::amr {
 
 template <int Dim = 3, unsigned Bits = (Dim == 2 ? 32u : (Dim == 3 ? 21u : 16u))>
 class BarnesHut {
@@ -201,7 +201,7 @@ class BarnesHut {
   std::vector<std::map<Code, Agg>> agg_;    // agg_[level][nodeOriginCode]
 };
 
-}  // namespace tpx::amr
+}  // namespace peclet::core::amr
 
-#endif  // TPX_HAVE_MORTON
-#endif  // TPX_AMR_BARNES_HUT_HPP
+#endif  // PECLET_CORE_HAVE_MORTON
+#endif  // PECLET_CORE_AMR_BARNES_HUT_HPP

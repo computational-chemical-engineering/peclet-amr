@@ -11,22 +11,22 @@
 // formulas, each cell fills its own slice — so on OpenMP the device FaceGeom == host buildFaceGeom
 // bit-for-bit (test_amr_device_facegeom). GPU is tolerance-not-bit-exact (FMA), per the convention.
 //
-// Requires a Kokkos build + the morton checkout (TPX_HAVE_MORTON).
-#ifndef TPX_AMR_DEVICE_FACEGEOM_ASSEMBLY_HPP
-#define TPX_AMR_DEVICE_FACEGEOM_ASSEMBLY_HPP
+// Requires a Kokkos build + the morton checkout (PECLET_CORE_HAVE_MORTON).
+#ifndef PECLET_CORE_AMR_DEVICE_FACEGEOM_ASSEMBLY_HPP
+#define PECLET_CORE_AMR_DEVICE_FACEGEOM_ASSEMBLY_HPP
 
-#ifdef TPX_HAVE_MORTON
+#ifdef PECLET_CORE_HAVE_MORTON
 
 #include <array>
 
-#include "tpx/amr/block_octree_view.hpp"
-#include "tpx/amr/device_assembly.hpp"  // FvFaceEmit (shared geometry traversal helpers)
-#include "tpx/amr/device_csr.hpp"       // deviceScanOffsets
-#include "tpx/amr/face_geom.hpp"        // FaceGeom (the produced type)
-#include "tpx/amr/poisson.hpp"
-#include "tpx/common/view.hpp"
+#include "peclet/core/amr/block_octree_view.hpp"
+#include "peclet/core/amr/device_assembly.hpp"  // FvFaceEmit (shared geometry traversal helpers)
+#include "peclet/core/amr/csr.hpp"       // deviceScanOffsets
+#include "peclet/core/amr/face_geom.hpp"        // FaceGeom (the produced type)
+#include "peclet/core/amr/poisson.hpp"
+#include "peclet/core/common/view.hpp"
 
-namespace tpx::amr {
+namespace peclet::core::amr {
 
 /// The device face-geometry walker: replicates AmrPoisson::forEachFaceFull + periodicNeighbor over the
 /// device octree, using FvFaceEmit's geometry helpers. `g` carries the octree view + openness + h0 +
@@ -174,7 +174,7 @@ FaceGeom deviceAssembleFaceGeom(const AmrPoisson<3, Bits>& ap, const std::vector
   return fg;
 }
 
-}  // namespace tpx::amr
+}  // namespace peclet::core::amr
 
-#endif  // TPX_HAVE_MORTON
-#endif  // TPX_AMR_DEVICE_FACEGEOM_ASSEMBLY_HPP
+#endif  // PECLET_CORE_HAVE_MORTON
+#endif  // PECLET_CORE_AMR_DEVICE_FACEGEOM_ASSEMBLY_HPP

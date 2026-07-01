@@ -4,23 +4,23 @@
 // origin. AmrGeometry maps those to world coordinates (origin + h0 * fine), and
 // LeafField<T> is a value-per-leaf array in the octree's leaf (Z-order) slot
 // order — the simulation field the device kernels and the VTU writer operate on.
-// The on-device counterpart is simply a tpx::View<T> of length numLeaves(); this
+// The on-device counterpart is simply a peclet::core::View<T> of length numLeaves(); this
 // host container is the I/O / setup form.
 //
-// Header-only, guarded by TPX_HAVE_MORTON (so it tracks block_octree.hpp).
-#ifndef TPX_AMR_LEAF_FIELD_HPP
-#define TPX_AMR_LEAF_FIELD_HPP
+// Header-only, guarded by PECLET_CORE_HAVE_MORTON (so it tracks block_octree.hpp).
+#ifndef PECLET_CORE_AMR_LEAF_FIELD_HPP
+#define PECLET_CORE_AMR_LEAF_FIELD_HPP
 
-#ifdef TPX_HAVE_MORTON
+#ifdef PECLET_CORE_HAVE_MORTON
 
 #include <array>
 #include <cstddef>
 #include <vector>
 
-#include "tpx/amr/block_octree.hpp"
-#include "tpx/common/types.hpp"
+#include "peclet/core/amr/block_octree.hpp"
+#include "peclet/core/common/types.hpp"
 
-namespace tpx::amr {
+namespace peclet::core::amr {
 
 /// World-space placement of a block-local octree: fine coordinate (0,..,0) sits at
 /// `origin`, and one level-0 fine cell is `h0` wide in every axis.
@@ -69,7 +69,7 @@ struct LeafField {
   const T* data() const { return values.data(); }
 };
 
-}  // namespace tpx::amr
+}  // namespace peclet::core::amr
 
-#endif  // TPX_HAVE_MORTON
-#endif  // TPX_AMR_LEAF_FIELD_HPP
+#endif  // PECLET_CORE_HAVE_MORTON
+#endif  // PECLET_CORE_AMR_LEAF_FIELD_HPP

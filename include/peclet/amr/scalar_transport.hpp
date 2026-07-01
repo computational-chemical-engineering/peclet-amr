@@ -15,21 +15,21 @@
 // The face-normal velocity is sampled from a user callable vel(faceCentreWorld,
 // axis) -> Real; pass a divergence-free field for a conservative, monotone update.
 //
-// Header-only, guarded by TPX_HAVE_MORTON. Serial/host first.
-#ifndef TPX_AMR_SCALAR_TRANSPORT_HPP
-#define TPX_AMR_SCALAR_TRANSPORT_HPP
+// Header-only, guarded by PECLET_CORE_HAVE_MORTON. Serial/host first.
+#ifndef PECLET_CORE_AMR_SCALAR_TRANSPORT_HPP
+#define PECLET_CORE_AMR_SCALAR_TRANSPORT_HPP
 
-#ifdef TPX_HAVE_MORTON
+#ifdef PECLET_CORE_HAVE_MORTON
 
 #include <array>
 #include <cmath>
 #include <vector>
 
-#include "tpx/amr/block_octree.hpp"
-#include "tpx/amr/leaf_field.hpp"
-#include "tpx/common/types.hpp"
+#include "peclet/core/amr/block_octree.hpp"
+#include "peclet/core/amr/leaf_field.hpp"
+#include "peclet/core/common/types.hpp"
 
-namespace tpx::amr {
+namespace peclet::core::amr {
 
 template <int Dim, unsigned Bits = (Dim == 2 ? 32u : (Dim == 3 ? 21u : 16u))>
 class ScalarTransport {
@@ -157,7 +157,7 @@ class ScalarTransport {
   std::array<Coord, Dim> fineExt_{};
 };
 
-}  // namespace tpx::amr
+}  // namespace peclet::core::amr
 
-#endif  // TPX_HAVE_MORTON
-#endif  // TPX_AMR_SCALAR_TRANSPORT_HPP
+#endif  // PECLET_CORE_HAVE_MORTON
+#endif  // PECLET_CORE_AMR_SCALAR_TRANSPORT_HPP

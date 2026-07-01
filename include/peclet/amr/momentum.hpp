@@ -17,24 +17,24 @@
 //
 // Validation is by convergence + agreement with the host operator to tolerance (the GPU
 // matvec differs from host in the last bit by FMA contraction). Requires a Kokkos build +
-// the morton checkout (TPX_HAVE_MORTON).
-#ifndef TPX_AMR_MOMENTUM_HPP
-#define TPX_AMR_MOMENTUM_HPP
+// the morton checkout (PECLET_CORE_HAVE_MORTON).
+#ifndef PECLET_CORE_AMR_MOMENTUM_HPP
+#define PECLET_CORE_AMR_MOMENTUM_HPP
 
-#ifdef TPX_HAVE_MORTON
+#ifdef PECLET_CORE_HAVE_MORTON
 
 #include <cmath>
 #include <functional>
 #include <map>
 #include <vector>
 
-#include "tpx/amr/block_octree.hpp"
-#include "tpx/amr/multigrid.hpp"  // deviceRestrict / deviceProlongAdd transfer kernels
-#include "tpx/amr/pcg.hpp"        // dotPlain-style primitives: axpy, zpby, negate
-#include "tpx/amr/face_csr.hpp"          // shared host+device assembled-operator row kernels
-#include "tpx/common/view.hpp"
+#include "peclet/core/amr/block_octree.hpp"
+#include "peclet/core/amr/multigrid.hpp"  // deviceRestrict / deviceProlongAdd transfer kernels
+#include "peclet/core/amr/pcg.hpp"        // dotPlain-style primitives: axpy, zpby, negate
+#include "peclet/core/amr/face_csr.hpp"          // shared host+device assembled-operator row kernels
+#include "peclet/core/common/view.hpp"
 
-namespace tpx::amr {
+namespace peclet::core::amr {
 
 /// Assembled momentum operator on the device: (A u)_i = diag_i u_i + Σ coef·u[nbr], with an
 /// optional implicit-FOU advection part (rebuilt each step from the lagged velocity): a
@@ -578,7 +578,7 @@ class MomentumSolver {
   std::function<void(View<const double>, View<double>)> precFn_;  // generic z = M^{-1} r
 };
 
-}  // namespace tpx::amr
+}  // namespace peclet::core::amr
 
-#endif  // TPX_HAVE_MORTON
-#endif  // TPX_AMR_MOMENTUM_HPP
+#endif  // PECLET_CORE_HAVE_MORTON
+#endif  // PECLET_CORE_AMR_MOMENTUM_HPP

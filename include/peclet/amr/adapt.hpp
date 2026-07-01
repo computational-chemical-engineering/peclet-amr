@@ -18,22 +18,22 @@
 // Löhner indicator (indicators.hpp). The level convention is the octree's: refining
 // *decreases* level toward 0 (finest), coarsening increases it toward `lmax` (root).
 //
-// Header-only, guarded by TPX_HAVE_MORTON.
-#ifndef TPX_AMR_ADAPT_HPP
-#define TPX_AMR_ADAPT_HPP
+// Header-only, guarded by PECLET_CORE_HAVE_MORTON.
+#ifndef PECLET_CORE_AMR_ADAPT_HPP
+#define PECLET_CORE_AMR_ADAPT_HPP
 
-#ifdef TPX_HAVE_MORTON
+#ifdef PECLET_CORE_HAVE_MORTON
 
 #include <array>
 #include <cmath>
 #include <utility>
 #include <vector>
 
-#include "tpx/amr/block_octree.hpp"
-#include "tpx/amr/indicators.hpp"
-#include "tpx/common/types.hpp"
+#include "peclet/core/amr/block_octree.hpp"
+#include "peclet/core/amr/indicators.hpp"
+#include "peclet/core/common/types.hpp"
 
-namespace tpx::amr {
+namespace peclet::core::amr {
 
 namespace detail {
 inline double minmod(double a, double b) {
@@ -221,7 +221,7 @@ AdaptResult<Dim, Bits> adapt(const BlockOctree<Dim, Bits>& t, const std::vector<
   return adaptField(t, f, flags, linear);
 }
 
-}  // namespace tpx::amr
+}  // namespace peclet::core::amr
 
-#endif  // TPX_HAVE_MORTON
-#endif  // TPX_AMR_ADAPT_HPP
+#endif  // PECLET_CORE_HAVE_MORTON
+#endif  // PECLET_CORE_AMR_ADAPT_HPP

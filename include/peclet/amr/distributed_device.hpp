@@ -20,23 +20,23 @@
 // uses a parallel reduction whose order differs, but the norm is only a convergence scalar, never the
 // solution.) GPU is tolerance-not-bit-exact (FMA) by the documented convention.
 //
-// Requires a Kokkos build + MPI + the morton checkout (TPX_HAVE_MORTON).
-#ifndef TPX_AMR_DISTRIBUTED_DEVICE_HPP
-#define TPX_AMR_DISTRIBUTED_DEVICE_HPP
+// Requires a Kokkos build + MPI + the morton checkout (PECLET_CORE_HAVE_MORTON).
+#ifndef PECLET_CORE_AMR_DISTRIBUTED_DEVICE_HPP
+#define PECLET_CORE_AMR_DISTRIBUTED_DEVICE_HPP
 
-#ifdef TPX_HAVE_MORTON
+#ifdef PECLET_CORE_HAVE_MORTON
 
 #include <cmath>
 #include <memory>
 #include <vector>
 
-#include "tpx/amr/distributed_poisson.hpp"  // DistributedOctree, AmrGeometry, DistributedMultigrid (ref)
-#include "tpx/amr/multigrid.hpp"            // deviceRestrict / deviceProlongAdd (bit-exact, reused)
-#include "tpx/common/mpi.hpp"
-#include "tpx/common/view.hpp"
-#include "tpx/halo/grid_halo.hpp"  // detail::gpuAwareMpi() (TPX_GPU_AWARE_MPI opt-in, H1)
+#include "peclet/core/amr/distributed_poisson.hpp"  // DistributedOctree, AmrGeometry, DistributedMultigrid (ref)
+#include "peclet/core/amr/multigrid.hpp"            // deviceRestrict / deviceProlongAdd (bit-exact, reused)
+#include "peclet/core/common/mpi.hpp"
+#include "peclet/core/common/view.hpp"
+#include "peclet/core/halo/grid_halo.hpp"  // detail::gpuAwareMpi() (PECLET_CORE_GPU_AWARE_MPI opt-in, H1)
 
-namespace tpx::amr {
+namespace peclet::core::amr {
 
 /// Value-only, device-resident face-neighbour gather over a fixed topology (C2). Built once from a
 /// DistributedOctree::GatherHaloTopology; thereafter `gather(x, g)` moves only the compact send/recv
@@ -79,10 +79,10 @@ class DistributedGatherHalo {
   /// faceNeighborGather over the same field (periodic ⇒ every slot is filled; no sentinels).
   void gather(View<const double> x, View<double> g, int tag = 41) const {
     const double sentinel = -1e300;  // == DistributedOctree::kNoNeighbor; unused in the periodic case
-    // GPU-aware MPI (H1): when enabled (TPX_GPU_AWARE_MPI) hand the device send/recv buffer pointers
+    // GPU-aware MPI (H1): when enabled (PECLET_CORE_GPU_AWARE_MPI) hand the device send/recv buffer pointers
     // straight to MPI — the field never touches the host even for the compact buffers. Default is the
     // portable host-staged path (deep_copy to a host mirror), exactly as GridHalo does.
-    const bool aware = tpx::halo::detail::gpuAwareMpi();
+    const bool aware = peclet::core::halo::detail::gpuAwareMpi();
     Kokkos::deep_copy(g, sentinel);
     if (nLocal_) {
       IndexView ls = d_localSlot_, ll = d_localLeaf_;
@@ -332,7 +332,7 @@ class DistributedMultigridDevice {
   std::vector<std::unique_ptr<Level>> levels_;
 };
 
-}  // namespace tpx::amr
+}  // namespace peclet::core::amr
 
-#endif  // TPX_HAVE_MORTON
-#endif  // TPX_AMR_DISTRIBUTED_DEVICE_HPP
+#endif  // PECLET_CORE_HAVE_MORTON
+#endif  // PECLET_CORE_AMR_DISTRIBUTED_DEVICE_HPP

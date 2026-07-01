@@ -28,27 +28,27 @@
 // ⇒ Stokes. 3D. Cut cells and the
 // ±2-cell advection stencil assume same-level neighbours (resolve the boundary in a
 // uniformly-finest band, so the stencils never sit on a 2:1 interface — docs/AMR.md).
-// Header-only, guarded by TPX_HAVE_MORTON. Serial/host first.
-#ifndef TPX_AMR_FLOW_ORACLE_HPP
-#define TPX_AMR_FLOW_ORACLE_HPP
+// Header-only, guarded by PECLET_CORE_HAVE_MORTON. Serial/host first.
+#ifndef PECLET_CORE_AMR_FLOW_ORACLE_HPP
+#define PECLET_CORE_AMR_FLOW_ORACLE_HPP
 
-#ifdef TPX_HAVE_MORTON
+#ifdef PECLET_CORE_HAVE_MORTON
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <vector>
 
-#include "tpx/amr/advect_recon.hpp"  // shared high-order face reconstruction (host+device)
-#include "tpx/amr/block_octree.hpp"
-#include "tpx/amr/cut_cell.hpp"
-#include "tpx/amr/poisson.hpp"
-#include "tpx/common/types.hpp"
+#include "peclet/core/amr/advect_recon.hpp"  // shared high-order face reconstruction (host+device)
+#include "peclet/core/amr/block_octree.hpp"
+#include "peclet/core/amr/cut_cell.hpp"
+#include "peclet/core/amr/poisson.hpp"
+#include "peclet/core/common/types.hpp"
 
 // Retired from the production path: this serial Gauss-Seidel host driver is kept ONLY as the
 // development-stage oracle that the device AmrFlow (flow_device.hpp) is validated bit-for-bit
 // against. It is NOT exposed by the Python bindings. Production AMR flow runs on the device path.
-namespace tpx::amr::oracle {
+namespace peclet::core::amr::oracle {
 
 template <unsigned Bits = 21u>
 class AmrFlow {
@@ -369,7 +369,7 @@ class AmrFlow {
   bool faceFieldBuilt_ = false;   // uf_ populated by a projection (else advection falls back to ½(u_i+u_j))
 };
 
-}  // namespace tpx::amr::oracle
+}  // namespace peclet::core::amr::oracle
 
-#endif  // TPX_HAVE_MORTON
-#endif  // TPX_AMR_FLOW_ORACLE_HPP
+#endif  // PECLET_CORE_HAVE_MORTON
+#endif  // PECLET_CORE_AMR_FLOW_ORACLE_HPP

@@ -11,17 +11,17 @@
 // distributed-on-device build on this + the device halo.
 //
 // Requires a Kokkos build (MORTON_ENABLE_KOKKOS ⇒ MORTON_HD = KOKKOS_FUNCTION) and
-// the morton checkout (TPX_HAVE_MORTON).
-#ifndef TPX_AMR_FV_OP_HPP
-#define TPX_AMR_FV_OP_HPP
+// the morton checkout (PECLET_CORE_HAVE_MORTON).
+#ifndef PECLET_CORE_AMR_FV_OP_HPP
+#define PECLET_CORE_AMR_FV_OP_HPP
 
-#ifdef TPX_HAVE_MORTON
+#ifdef PECLET_CORE_HAVE_MORTON
 
-#include "tpx/amr/block_octree_view.hpp"
-#include "tpx/amr/face_csr.hpp"  // shared host+device FV (weight-CSR) row kernels
-#include "tpx/common/view.hpp"
+#include "peclet/core/amr/block_octree_view.hpp"
+#include "peclet/core/amr/face_csr.hpp"  // shared host+device FV (weight-CSR) row kernels
+#include "peclet/core/common/view.hpp"
 
-namespace tpx::amr {
+namespace peclet::core::amr {
 
 /// y = inv · Σ_faces (x_nb − x_i)  (= ∇² in spacing h0 with inv = 1/h0²), on device.
 template <int Dim, unsigned Bits>
@@ -192,7 +192,7 @@ inline void deviceQuadDelta(View<const Index> qStart, View<const Index> qSlot,
       });
 }
 
-}  // namespace tpx::amr
+}  // namespace peclet::core::amr
 
-#endif  // TPX_HAVE_MORTON
-#endif  // TPX_AMR_FV_OP_HPP
+#endif  // PECLET_CORE_HAVE_MORTON
+#endif  // PECLET_CORE_AMR_FV_OP_HPP

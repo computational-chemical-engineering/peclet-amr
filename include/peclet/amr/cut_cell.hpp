@@ -14,24 +14,24 @@
 // Cut cells are assumed to have same-level face neighbours (the suite contract:
 // resolve the immersed boundary in a uniformly-finest band, so cut cells never sit
 // on a 2:1 interface — see docs/AMR.md). 3D (sdflow's 6-direction scheme).
-// Header-only, guarded by TPX_HAVE_MORTON. Serial/host first.
-#ifndef TPX_AMR_CUT_CELL_HPP
-#define TPX_AMR_CUT_CELL_HPP
+// Header-only, guarded by PECLET_CORE_HAVE_MORTON. Serial/host first.
+#ifndef PECLET_CORE_AMR_CUT_CELL_HPP
+#define PECLET_CORE_AMR_CUT_CELL_HPP
 
-#ifdef TPX_HAVE_MORTON
+#ifdef PECLET_CORE_HAVE_MORTON
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <vector>
 
-#include "tpx/amr/block_octree.hpp"
-#include "tpx/amr/face_csr.hpp"  // shared host+device assembled-operator row kernels
-#include "tpx/amr/leaf_field.hpp"
-#include "tpx/amr/poisson.hpp"
-#include "tpx/common/types.hpp"
+#include "peclet/core/amr/block_octree.hpp"
+#include "peclet/core/amr/face_csr.hpp"  // shared host+device assembled-operator row kernels
+#include "peclet/core/amr/leaf_field.hpp"
+#include "peclet/core/amr/poisson.hpp"
+#include "peclet/core/common/types.hpp"
 
-namespace tpx::amr {
+namespace peclet::core::amr {
 
 // ---- boundary-distance polynomials (port of sdflow cut_cell_ibm.hpp, SCHEME 0,
 //      double precision) ----
@@ -601,7 +601,7 @@ class AmrCutCell {
   bool hasAdv_ = false;
 };
 
-}  // namespace tpx::amr
+}  // namespace peclet::core::amr
 
-#endif  // TPX_HAVE_MORTON
-#endif  // TPX_AMR_CUT_CELL_HPP
+#endif  // PECLET_CORE_HAVE_MORTON
+#endif  // PECLET_CORE_AMR_CUT_CELL_HPP

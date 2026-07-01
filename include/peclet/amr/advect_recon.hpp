@@ -8,17 +8,17 @@
 // pure-C++ build). min/max/abs are expressed with branches rather than std::/Kokkos:: math so the body
 // is identical on both backends (and bit-identical to the previous std::fmin/fmax form for the finite
 // velocity/scalar data the solver produces).
-#ifndef TPX_AMR_ADVECT_RECON_HPP
-#define TPX_AMR_ADVECT_RECON_HPP
+#ifndef PECLET_CORE_AMR_ADVECT_RECON_HPP
+#define PECLET_CORE_AMR_ADVECT_RECON_HPP
 
-#if defined(TPX_HAVE_MORTON)
+#if defined(PECLET_CORE_HAVE_MORTON)
 #include <morton/morton.hpp>
 #endif
 #ifndef MORTON_HD
 #define MORTON_HD
 #endif
 
-namespace tpx::amr {
+namespace peclet::core::amr {
 
 /// High-order advected face value from the two upwind cells (`upup`, `up`) and the downwind cell
 /// (`down`). `scheme` 0 = second-order upwind (SOU = 1.5·up − 0.5·upup); else Koren TVD limiter.
@@ -35,6 +35,6 @@ MORTON_HD inline double hoFaceValue(double upup, double up, double down, int sch
   return up + 0.5 * psi * den;  // Koren TVD
 }
 
-}  // namespace tpx::amr
+}  // namespace peclet::core::amr
 
-#endif  // TPX_AMR_ADVECT_RECON_HPP
+#endif  // PECLET_CORE_AMR_ADVECT_RECON_HPP

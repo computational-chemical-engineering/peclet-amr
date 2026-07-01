@@ -10,19 +10,19 @@
 // the per-leaf hot path on device, bit-for-bit identical results.
 //
 // Including this header requires Kokkos (build with -DTPX_ENABLE_KOKKOS=ON) and
-// the morton sibling checkout (TPX_HAVE_MORTON, with MORTON_ENABLE_KOKKOS so
+// the morton sibling checkout (PECLET_CORE_HAVE_MORTON, with MORTON_ENABLE_KOKKOS so
 // MORTON_HD == KOKKOS_FUNCTION).
-#ifndef TPX_AMR_BLOCK_OCTREE_VIEW_HPP
-#define TPX_AMR_BLOCK_OCTREE_VIEW_HPP
+#ifndef PECLET_CORE_AMR_BLOCK_OCTREE_VIEW_HPP
+#define PECLET_CORE_AMR_BLOCK_OCTREE_VIEW_HPP
 
-#ifdef TPX_HAVE_MORTON
+#ifdef PECLET_CORE_HAVE_MORTON
 
 #include <cstdint>
 
-#include "tpx/amr/block_octree.hpp"
-#include "tpx/common/view.hpp"
+#include "peclet/core/amr/block_octree.hpp"
+#include "peclet/core/common/view.hpp"
 
-namespace tpx::amr {
+namespace peclet::core::amr {
 
 /// Device mirror of a BlockOctree's leaf arrays + device-callable queries.
 template <int Dim, unsigned Bits = (Dim == 2 ? 32u : (Dim == 3 ? 21u : 16u))>
@@ -64,7 +64,7 @@ struct BlockOctreeView {
   }
 };
 
-}  // namespace tpx::amr
+}  // namespace peclet::core::amr
 
-#endif  // TPX_HAVE_MORTON
-#endif  // TPX_AMR_BLOCK_OCTREE_VIEW_HPP
+#endif  // PECLET_CORE_HAVE_MORTON
+#endif  // PECLET_CORE_AMR_BLOCK_OCTREE_VIEW_HPP

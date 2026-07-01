@@ -13,21 +13,21 @@
 // bit-for-bit equal to the host `assembleFv` / `buildFaceCsr` (the cross-backend anti-drift lock in
 // tests/test_amr_device_assembly_kokkos). GPU is tolerance-not-bit-exact (FMA), per the convention.
 //
-// Requires a Kokkos build + the morton checkout (TPX_HAVE_MORTON ⇒ MORTON_HD == KOKKOS_FUNCTION).
-#ifndef TPX_AMR_DEVICE_ASSEMBLY_HPP
-#define TPX_AMR_DEVICE_ASSEMBLY_HPP
+// Requires a Kokkos build + the morton checkout (PECLET_CORE_HAVE_MORTON ⇒ MORTON_HD == KOKKOS_FUNCTION).
+#ifndef PECLET_CORE_AMR_DEVICE_ASSEMBLY_HPP
+#define PECLET_CORE_AMR_DEVICE_ASSEMBLY_HPP
 
-#ifdef TPX_HAVE_MORTON
+#ifdef PECLET_CORE_HAVE_MORTON
 
 #include <array>
 
-#include "tpx/amr/block_octree_view.hpp"
-#include "tpx/amr/device_csr.hpp"
-#include "tpx/amr/fv_op.hpp"
-#include "tpx/amr/poisson.hpp"
-#include "tpx/common/view.hpp"
+#include "peclet/core/amr/block_octree_view.hpp"
+#include "peclet/core/amr/csr.hpp"
+#include "peclet/core/amr/fv_op.hpp"
+#include "peclet/core/amr/poisson.hpp"
+#include "peclet/core/common/view.hpp"
 
-namespace tpx::amr {
+namespace peclet::core::amr {
 
 /// Device-callable reproduction of AmrPoisson's per-cell face walk + geometry. Trivially copyable
 /// (Views are handles, the rest are scalars), so it captures by value into Kokkos kernels. Drives both
@@ -151,7 +151,7 @@ FvOp deviceAssembleFv(const AmrPoisson<Dim, Bits>& ap, const BlockOctreeView<Dim
   for (int d = 0; d < Dim; ++d) emit.fineExt[d] = ap.fineExt()[d];
   if (ap.hasOpenness()) emit.alpha = toDevice(ap.opennessRaw(), "amr::alpha");
 
-  DeviceCsr csr = deviceBuildFaceCsr(ov.numLeaves(), emit);
+  Csr csr = deviceBuildFaceCsr(ov.numLeaves(), emit);
 
   FvOp op;
   op.n = ov.numLeaves();
@@ -173,7 +173,7 @@ FvOp deviceAssembleFv(const AmrPoisson<Dim, Bits>& ap, const BlockOctreeView<Dim
   return op;
 }
 
-}  // namespace tpx::amr
+}  // namespace peclet::core::amr
 
-#endif  // TPX_HAVE_MORTON
-#endif  // TPX_AMR_DEVICE_ASSEMBLY_HPP
+#endif  // PECLET_CORE_HAVE_MORTON
+#endif  // PECLET_CORE_AMR_DEVICE_ASSEMBLY_HPP

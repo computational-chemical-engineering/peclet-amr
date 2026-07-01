@@ -17,20 +17,20 @@
 // and the remap is per-cell, the adapted mesh + field are bit-identical across rank
 // counts (COMM_WORLD == COMM_SELF).
 //
-// Header-only, guarded by TPX_HAVE_MORTON.
-#ifndef TPX_AMR_DISTRIBUTED_ADAPT_HPP
-#define TPX_AMR_DISTRIBUTED_ADAPT_HPP
+// Header-only, guarded by PECLET_CORE_HAVE_MORTON.
+#ifndef PECLET_CORE_AMR_DISTRIBUTED_ADAPT_HPP
+#define PECLET_CORE_AMR_DISTRIBUTED_ADAPT_HPP
 
-#ifdef TPX_HAVE_MORTON
+#ifdef PECLET_CORE_HAVE_MORTON
 
 #include <cmath>
 #include <vector>
 
-#include "tpx/amr/adapt.hpp"
-#include "tpx/amr/distributed_octree.hpp"
-#include "tpx/common/types.hpp"
+#include "peclet/core/amr/adapt.hpp"
+#include "peclet/core/amr/distributed_octree.hpp"
+#include "peclet/core/common/types.hpp"
 
-namespace tpx::amr {
+namespace peclet::core::amr {
 
 /// Löhner indicator per local leaf, using the owner-based face-neighbour halo so
 /// cross-block neighbours contribute exactly as in a whole-domain solve.
@@ -93,7 +93,7 @@ std::vector<double> distributedAdapt(DistributedOctree<Dim, Bits>& d, const std:
   return transferField(oldLocal, f, d.local(), linear);
 }
 
-}  // namespace tpx::amr
+}  // namespace peclet::core::amr
 
-#endif  // TPX_HAVE_MORTON
-#endif  // TPX_AMR_DISTRIBUTED_ADAPT_HPP
+#endif  // PECLET_CORE_HAVE_MORTON
+#endif  // PECLET_CORE_AMR_DISTRIBUTED_ADAPT_HPP

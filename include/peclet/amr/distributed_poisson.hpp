@@ -17,11 +17,11 @@
 // definite; diagonal −2*Dim/h², off +1/h²), matching AmrPoisson::applyLaplacian,
 // DistributedFvOperator and the device operators. Solvers solve L u = rhs.
 //
-// Header-only, guarded by TPX_HAVE_MORTON; uses the MPI shim.
-#ifndef TPX_AMR_DISTRIBUTED_POISSON_HPP
-#define TPX_AMR_DISTRIBUTED_POISSON_HPP
+// Header-only, guarded by PECLET_CORE_HAVE_MORTON; uses the MPI shim.
+#ifndef PECLET_CORE_AMR_DISTRIBUTED_POISSON_HPP
+#define PECLET_CORE_AMR_DISTRIBUTED_POISSON_HPP
 
-#ifdef TPX_HAVE_MORTON
+#ifdef PECLET_CORE_HAVE_MORTON
 
 #include <array>
 #include <cassert>
@@ -29,12 +29,12 @@
 #include <memory>
 #include <vector>
 
-#include "tpx/amr/distributed_octree.hpp"
-#include "tpx/amr/leaf_field.hpp"
-#include "tpx/common/mpi.hpp"
-#include "tpx/common/types.hpp"
+#include "peclet/core/amr/distributed_octree.hpp"
+#include "peclet/core/amr/leaf_field.hpp"
+#include "peclet/core/common/mpi.hpp"
+#include "peclet/core/common/types.hpp"
 
-namespace tpx::amr {
+namespace peclet::core::amr {
 
 template <int Dim, unsigned Bits = (Dim == 2 ? 32u : (Dim == 3 ? 21u : 16u))>
 class DistributedPoisson {
@@ -233,7 +233,7 @@ class DistributedMultigrid {
   std::vector<std::unique_ptr<Level>> levels_;
 };
 
-}  // namespace tpx::amr
+}  // namespace peclet::core::amr
 
-#endif  // TPX_HAVE_MORTON
-#endif  // TPX_AMR_DISTRIBUTED_POISSON_HPP
+#endif  // PECLET_CORE_HAVE_MORTON
+#endif  // PECLET_CORE_AMR_DISTRIBUTED_POISSON_HPP

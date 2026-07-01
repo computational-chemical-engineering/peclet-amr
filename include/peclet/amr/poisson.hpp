@@ -21,22 +21,22 @@
 // lexicographic Gauss-Seidel over the Z-order leaf slots. Periodic BCs only (the
 // natural first target); the singular null space is fixed by mean removal.
 //
-// Header-only, guarded by TPX_HAVE_MORTON.
-#ifndef TPX_AMR_POISSON_HPP
-#define TPX_AMR_POISSON_HPP
+// Header-only, guarded by PECLET_CORE_HAVE_MORTON.
+#ifndef PECLET_CORE_AMR_POISSON_HPP
+#define PECLET_CORE_AMR_POISSON_HPP
 
-#ifdef TPX_HAVE_MORTON
+#ifdef PECLET_CORE_HAVE_MORTON
 
 #include <array>
 #include <cmath>
 #include <vector>
 
-#include "tpx/amr/block_octree.hpp"
-#include "tpx/amr/face_csr.hpp"  // shared host+device FV (weight-CSR) row kernels
-#include "tpx/amr/leaf_field.hpp"
-#include "tpx/common/types.hpp"
+#include "peclet/core/amr/block_octree.hpp"
+#include "peclet/core/amr/face_csr.hpp"  // shared host+device FV (weight-CSR) row kernels
+#include "peclet/core/amr/leaf_field.hpp"
+#include "peclet/core/common/types.hpp"
 
-namespace tpx::amr {
+namespace peclet::core::amr {
 
 /// Cell-centered FV Poisson operator on one (periodic) block octree.
 template <int Dim, unsigned Bits = (Dim == 2 ? 32u : (Dim == 3 ? 21u : 16u))>
@@ -655,7 +655,7 @@ class AmrMultigrid {
   std::vector<std::vector<Index>> c2p_;
 };
 
-}  // namespace tpx::amr
+}  // namespace peclet::core::amr
 
-#endif  // TPX_HAVE_MORTON
-#endif  // TPX_AMR_POISSON_HPP
+#endif  // PECLET_CORE_HAVE_MORTON
+#endif  // PECLET_CORE_AMR_POISSON_HPP

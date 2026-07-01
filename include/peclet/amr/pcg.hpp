@@ -23,19 +23,19 @@
 // on global-reduction summation order, so this is the *performance* path — validated by
 // convergence + matching the V-cycle's converged solution, not by host bit-exactness.
 //
-// Requires a Kokkos build + the morton checkout (TPX_HAVE_MORTON).
-#ifndef TPX_AMR_PCG_HPP
-#define TPX_AMR_PCG_HPP
+// Requires a Kokkos build + the morton checkout (PECLET_CORE_HAVE_MORTON).
+#ifndef PECLET_CORE_AMR_PCG_HPP
+#define PECLET_CORE_AMR_PCG_HPP
 
-#ifdef TPX_HAVE_MORTON
+#ifdef PECLET_CORE_HAVE_MORTON
 
 #include <cmath>
 
-#include "tpx/amr/multigrid.hpp"
-#include "tpx/amr/fv_op.hpp"
-#include "tpx/common/view.hpp"
+#include "peclet/core/amr/multigrid.hpp"
+#include "peclet/core/amr/fv_op.hpp"
+#include "peclet/core/common/view.hpp"
 
-namespace tpx::amr {
+namespace peclet::core::amr {
 
 // ---- small device vector primitives (volume-weighted where the FV operator needs it) ----
 
@@ -228,7 +228,7 @@ class PCG {
   bool singular_ = true;
 };
 
-}  // namespace tpx::amr
+}  // namespace peclet::core::amr
 
-#endif  // TPX_HAVE_MORTON
-#endif  // TPX_AMR_PCG_HPP
+#endif  // PECLET_CORE_HAVE_MORTON
+#endif  // PECLET_CORE_AMR_PCG_HPP

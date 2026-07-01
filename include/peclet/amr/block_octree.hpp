@@ -2,7 +2,7 @@
 //
 // The suite's AMR primitive. Unlike the textbook linear octree (one global
 // space-filling curve, partitioned by index ranges à la p4est/Dendro), the suite
-// keeps the ORB *block* decomposition (tpx::decomp::BlockDecomposer) and gives
+// keeps the ORB *block* decomposition (peclet::core::decomp::BlockDecomposer) and gives
 // *each block its own local Morton coordinate system*. BlockOctree is that
 // per-block octree: leaves are addressed by `morton::Morton<Dim,Bits>` codes
 // relative to the block origin, so codes stay narrow and the block is
@@ -21,16 +21,16 @@
 //  * Leaves tile the block without overlap and are stored sorted by code, i.e. in
 //    Z-order — the same order morton's curve and the device leaf arrays use.
 //
-// Header-only, guarded by TPX_HAVE_MORTON (set by CMake when the morton sibling
+// Header-only, guarded by PECLET_CORE_HAVE_MORTON (set by CMake when the morton sibling
 // checkout is present). The query helpers carry morton's MORTON_HD, so they are
 // device-callable exactly when morton is (KOKKOS_FUNCTION under a Kokkos build);
 // topology mutation (refine/coarsen/balance) is host-side and rebuilds the leaf
 // arrays the device queries read — mirroring grid_halo.hpp (host) vs
 // grid_halo_kokkos.hpp (device).
-#ifndef TPX_AMR_BLOCK_OCTREE_HPP
-#define TPX_AMR_BLOCK_OCTREE_HPP
+#ifndef PECLET_CORE_AMR_BLOCK_OCTREE_HPP
+#define PECLET_CORE_AMR_BLOCK_OCTREE_HPP
 
-#ifdef TPX_HAVE_MORTON
+#ifdef PECLET_CORE_HAVE_MORTON
 
 #include <algorithm>
 #include <array>
@@ -38,9 +38,9 @@
 #include <vector>
 
 #include "morton/morton.hpp"
-#include "tpx/common/types.hpp"
+#include "peclet/core/common/types.hpp"
 
-namespace tpx::amr {
+namespace peclet::core::amr {
 
 /// Locate the leaf containing Morton code `p` in sorted leaf arrays.
 ///
@@ -320,7 +320,7 @@ class BlockOctree {
   std::vector<std::uint8_t> levels_;  // parallel to codes_
 };
 
-}  // namespace tpx::amr
+}  // namespace peclet::core::amr
 
-#endif  // TPX_HAVE_MORTON
-#endif  // TPX_AMR_BLOCK_OCTREE_HPP
+#endif  // PECLET_CORE_HAVE_MORTON
+#endif  // PECLET_CORE_AMR_BLOCK_OCTREE_HPP

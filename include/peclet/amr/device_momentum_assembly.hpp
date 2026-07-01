@@ -18,20 +18,20 @@
 // fills its own CSR slice (S1, atomic-free), so on OpenMP the device MomentumOp == host assembleOperator
 // bit-for-bit (test_amr_device_momentum). GPU is tolerance-not-bit-exact (FMA), per the convention.
 //
-// Requires a Kokkos build + the morton checkout (TPX_HAVE_MORTON).
-#ifndef TPX_AMR_DEVICE_MOMENTUM_ASSEMBLY_HPP
-#define TPX_AMR_DEVICE_MOMENTUM_ASSEMBLY_HPP
+// Requires a Kokkos build + the morton checkout (PECLET_CORE_HAVE_MORTON).
+#ifndef PECLET_CORE_AMR_DEVICE_MOMENTUM_ASSEMBLY_HPP
+#define PECLET_CORE_AMR_DEVICE_MOMENTUM_ASSEMBLY_HPP
 
-#ifdef TPX_HAVE_MORTON
+#ifdef PECLET_CORE_HAVE_MORTON
 
-#include "tpx/amr/block_octree_view.hpp"
-#include "tpx/amr/cut_cell.hpp"
-#include "tpx/amr/device_assembly.hpp"  // FvFaceEmit (the α=1 ∇² geometry traversal)
-#include "tpx/amr/device_csr.hpp"
-#include "tpx/amr/momentum.hpp"
-#include "tpx/common/view.hpp"
+#include "peclet/core/amr/block_octree_view.hpp"
+#include "peclet/core/amr/cut_cell.hpp"
+#include "peclet/core/amr/device_assembly.hpp"  // FvFaceEmit (the α=1 ∇² geometry traversal)
+#include "peclet/core/amr/csr.hpp"
+#include "peclet/core/amr/momentum.hpp"
+#include "peclet/core/common/view.hpp"
 
-namespace tpx::amr {
+namespace peclet::core::amr {
 
 /// Sink adapter: forwards each face from the FvFaceEmit traversal as (j, factor·coef) to the real CSR
 /// sink — turns the plain geometric coeff into the regular-fluid momentum coupling −μ·invV·(a·c).
@@ -193,7 +193,7 @@ MomentumOp deviceAssembleMomentum(const AmrCutCell<Bits>& ccop, const BlockOctre
     emit.advNbr = toDevice(ccop.advNbrRaw(), "mom::advNbr");
   }
 
-  DeviceCsr csr = deviceBuildFaceCsr(n, emit);
+  Csr csr = deviceBuildFaceCsr(n, emit);
 
   MomentumOp op;
   op.n = n;
@@ -210,7 +210,7 @@ MomentumOp deviceAssembleMomentum(const AmrCutCell<Bits>& ccop, const BlockOctre
   return op;
 }
 
-}  // namespace tpx::amr
+}  // namespace peclet::core::amr
 
-#endif  // TPX_HAVE_MORTON
-#endif  // TPX_AMR_DEVICE_MOMENTUM_ASSEMBLY_HPP
+#endif  // PECLET_CORE_HAVE_MORTON
+#endif  // PECLET_CORE_AMR_DEVICE_MOMENTUM_ASSEMBLY_HPP

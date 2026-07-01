@@ -2,7 +2,7 @@
 //
 // The suite keeps the ORB *block* decomposition and gives each block its own
 // local octree (block_octree.hpp). DistributedOctree ties the per-rank blocks
-// together: ORB (tpx::decomp::BlockDecomposer) assigns a brick of global root
+// together: ORB (peclet::core::decomp::BlockDecomposer) assigns a brick of global root
 // cells to each rank, each rank builds a BlockOctree with the matching world
 // geometry, and this class supplies the two pieces of distributed glue:
 //
@@ -23,12 +23,12 @@
 // coordinates — the same owner-based, no-Cartesian-assumption pattern GridHaloTopology
 // uses. Self-addressed messages are handled locally (no MPI send-to-self).
 //
-// Header-only, guarded by TPX_HAVE_MORTON; uses the MPI shim (tpx/common/mpi.hpp,
+// Header-only, guarded by PECLET_CORE_HAVE_MORTON; uses the MPI shim (tpx/common/mpi.hpp,
 // real MPI or the single-rank stub) and the NBX engine.
-#ifndef TPX_AMR_DISTRIBUTED_OCTREE_HPP
-#define TPX_AMR_DISTRIBUTED_OCTREE_HPP
+#ifndef PECLET_CORE_AMR_DISTRIBUTED_OCTREE_HPP
+#define PECLET_CORE_AMR_DISTRIBUTED_OCTREE_HPP
 
-#ifdef TPX_HAVE_MORTON
+#ifdef PECLET_CORE_HAVE_MORTON
 
 #include <algorithm>
 #include <array>
@@ -39,14 +39,14 @@
 #include <vector>
 
 #include "morton/morton.hpp"
-#include "tpx/amr/block_octree.hpp"
-#include "tpx/amr/leaf_field.hpp"
-#include "tpx/common/mpi.hpp"
-#include "tpx/common/types.hpp"
-#include "tpx/decomp/block_decomposer.hpp"
-#include "tpx/halo/nbx.hpp"
+#include "peclet/core/amr/block_octree.hpp"
+#include "peclet/core/amr/leaf_field.hpp"
+#include "peclet/core/common/mpi.hpp"
+#include "peclet/core/common/types.hpp"
+#include "peclet/core/decomp/block_decomposer.hpp"
+#include "peclet/core/halo/nbx.hpp"
 
-namespace tpx::amr {
+namespace peclet::core::amr {
 
 template <int Dim, unsigned Bits = (Dim == 2 ? 32u : (Dim == 3 ? 21u : 16u))>
 class DistributedOctree {
@@ -820,7 +820,7 @@ class DistributedOctree {
   Index rootSpan_ = 1;
 };
 
-}  // namespace tpx::amr
+}  // namespace peclet::core::amr
 
-#endif  // TPX_HAVE_MORTON
-#endif  // TPX_AMR_DISTRIBUTED_OCTREE_HPP
+#endif  // PECLET_CORE_HAVE_MORTON
+#endif  // PECLET_CORE_AMR_DISTRIBUTED_OCTREE_HPP

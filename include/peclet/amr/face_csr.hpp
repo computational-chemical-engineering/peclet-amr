@@ -1,7 +1,7 @@
 // transport-core — shared, backend-agnostic kernels for an assembled face-CSR operator.
 //
-// The "host" serial reference solver (tpx::amr::AmrCutCell / oracle::AmrFlow, pure C++20) and the "device"
-// Kokkos solver (tpx::amr::MomentumOp + device_momentum.hpp) used to carry two independent
+// The "host" serial reference solver (peclet::core::amr::AmrCutCell / oracle::AmrFlow, pure C++20) and the "device"
+// Kokkos solver (peclet::core::amr::MomentumOp + device_momentum.hpp) used to carry two independent
 // encodings of the SAME per-cell arithmetic — a real drift risk. This header is the single source of
 // that arithmetic: the assembled operator
 //
@@ -15,23 +15,23 @@
 //
 // Mesh-agnostic: it names no octree types and assumes nothing beyond the CSR, so it is equally the
 // kernel layer for a future Voronoi-cell (unstructured polyhedral) operator.
-#ifndef TPX_AMR_FACE_CSR_HPP
-#define TPX_AMR_FACE_CSR_HPP
+#ifndef PECLET_CORE_AMR_FACE_CSR_HPP
+#define PECLET_CORE_AMR_FACE_CSR_HPP
 
-#include "tpx/common/types.hpp"
+#include "peclet/core/common/types.hpp"
 
 // MORTON_HD: KOKKOS_FUNCTION under a Kokkos build, __host__ __device__ under nvcc, empty otherwise —
 // so the row kernels are device-callable when compiled for the device and ordinary host functions in
 // the pure-C++ build. morton.hpp defines it for all three cases; when the (optional) morton checkout
 // is absent the operator is host-only, so an empty fallback is exactly right.
-#if defined(TPX_HAVE_MORTON)
+#if defined(PECLET_CORE_HAVE_MORTON)
 #include <morton/morton.hpp>
 #endif
 #ifndef MORTON_HD
 #define MORTON_HD
 #endif
 
-namespace tpx::amr {
+namespace peclet::core::amr {
 
 /// A uniform accessor over a raw host array, giving it the `operator()(i)` that Kokkos::View has, so
 /// the row kernels can be written once for both. (Device passes a `View<const T>` directly.)
@@ -136,6 +136,6 @@ MORTON_HD inline double fvPointSolve(const Op& op, Index i, const U& u, double r
   return (Hii != 0.0) ? (rhs_i - Hoff) / Hii : uOld;
 }
 
-}  // namespace tpx::amr
+}  // namespace peclet::core::amr
 
-#endif  // TPX_AMR_FACE_CSR_HPP
+#endif  // PECLET_CORE_AMR_FACE_CSR_HPP

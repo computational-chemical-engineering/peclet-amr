@@ -22,24 +22,24 @@
 // as a second precomputed CSR (deviceQuadDelta). Openness (cut-cell) flows in for
 // free: build with an AmrPoisson that has openness set and w_f carries it.
 //
-// Requires a Kokkos build + the morton checkout (TPX_HAVE_MORTON).
-#ifndef TPX_AMR_MULTIGRID_HPP
-#define TPX_AMR_MULTIGRID_HPP
+// Requires a Kokkos build + the morton checkout (PECLET_CORE_HAVE_MORTON).
+#ifndef PECLET_CORE_AMR_MULTIGRID_HPP
+#define PECLET_CORE_AMR_MULTIGRID_HPP
 
-#ifdef TPX_HAVE_MORTON
+#ifdef PECLET_CORE_HAVE_MORTON
 
 #include <cmath>
 #include <memory>
 #include <utility>
 #include <vector>
 
-#include "tpx/amr/block_octree.hpp"
-#include "tpx/amr/device_assembly.hpp"  // deviceAssembleFv (device per-level operator rebuild, D5)
-#include "tpx/amr/fv_op.hpp"
-#include "tpx/amr/poisson.hpp"
-#include "tpx/common/view.hpp"
+#include "peclet/core/amr/block_octree.hpp"
+#include "peclet/core/amr/device_assembly.hpp"  // deviceAssembleFv (device per-level operator rebuild, D5)
+#include "peclet/core/amr/fv_op.hpp"
+#include "peclet/core/amr/poisson.hpp"
+#include "peclet/core/common/view.hpp"
 
-namespace tpx::amr {
+namespace peclet::core::amr {
 
 /// Restrict: coarse(p) = mean over p's children (CSR fixed order ⇒ deterministic).
 inline void deviceRestrict(View<const Index> childStart, View<const Index> childIdx,
@@ -411,7 +411,7 @@ class Multigrid {
   View<double> dq_, b0true_;  // finest-level deferred-correction scratch
 };
 
-}  // namespace tpx::amr
+}  // namespace peclet::core::amr
 
-#endif  // TPX_HAVE_MORTON
-#endif  // TPX_AMR_MULTIGRID_HPP
+#endif  // PECLET_CORE_HAVE_MORTON
+#endif  // PECLET_CORE_AMR_MULTIGRID_HPP

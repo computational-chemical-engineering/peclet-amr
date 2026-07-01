@@ -16,32 +16,32 @@
 // deferred correction, advected by the divergence-free face field uf (built each projection;
 // falls back to ½(u_i+u_j) until the first projection) — conservative (∇·uf = 0).
 //
-// Requires a Kokkos build + the morton checkout (TPX_HAVE_MORTON).
-#ifndef TPX_AMR_FLOW_HPP
-#define TPX_AMR_FLOW_HPP
+// Requires a Kokkos build + the morton checkout (PECLET_CORE_HAVE_MORTON).
+#ifndef PECLET_CORE_AMR_FLOW_HPP
+#define PECLET_CORE_AMR_FLOW_HPP
 
-#ifdef TPX_HAVE_MORTON
+#ifdef PECLET_CORE_HAVE_MORTON
 
 #include <array>
 #include <cmath>
 #include <cstdlib>
 #include <vector>
 
-#include "tpx/amr/advect_recon.hpp"  // shared high-order face reconstruction (host+device)
-#include "tpx/amr/block_octree.hpp"
-#include "tpx/amr/cut_cell.hpp"
-#include "tpx/amr/face_geom.hpp"                   // FaceGeom (shared with the device assembler)
-#include "tpx/amr/device_facegeom_assembly.hpp"   // deviceAssembleFaceGeom (D4/D6)
-#include "tpx/amr/device_momentum_assembly.hpp"   // deviceAssembleMomentum (D3/D6)
-#include "tpx/amr/momentum.hpp"
-#include "tpx/amr/multigrid.hpp"
-#include "tpx/amr/pcg.hpp"
-#include "tpx/amr/velocity_mg.hpp"
-#include "tpx/amr/poisson.hpp"
-#include "tpx/common/types.hpp"
-#include "tpx/common/view.hpp"
+#include "peclet/core/amr/advect_recon.hpp"  // shared high-order face reconstruction (host+device)
+#include "peclet/core/amr/block_octree.hpp"
+#include "peclet/core/amr/cut_cell.hpp"
+#include "peclet/core/amr/face_geom.hpp"                   // FaceGeom (shared with the device assembler)
+#include "peclet/core/amr/device_facegeom_assembly.hpp"   // deviceAssembleFaceGeom (D4/D6)
+#include "peclet/core/amr/device_momentum_assembly.hpp"   // deviceAssembleMomentum (D3/D6)
+#include "peclet/core/amr/momentum.hpp"
+#include "peclet/core/amr/multigrid.hpp"
+#include "peclet/core/amr/pcg.hpp"
+#include "peclet/core/amr/velocity_mg.hpp"
+#include "peclet/core/amr/poisson.hpp"
+#include "peclet/core/common/types.hpp"
+#include "peclet/core/common/view.hpp"
 
-namespace tpx::amr {
+namespace peclet::core::amr {
 
 // FaceGeom (the collocated projection's static face-geometry CSR) now lives in face_geom.hpp so the
 // device assembler and this driver share the type without a circular include.
@@ -749,7 +749,7 @@ class AmrFlow {
     Kokkos::deep_copy(u_[c], m);
   }
   /// Copy a velocity component back to host (single D2H, no host loop — S2a).
-  std::vector<double> velocity(int c) const { return tpx::toVector(u_[c]); }
+  std::vector<double> velocity(int c) const { return peclet::core::toVector(u_[c]); }
 
   /// All three velocity components interleaved as a flat (n,3) row-major host buffer
   /// (out[i*3+c]) with a single device→host transfer (G6): the three independent component
@@ -765,7 +765,7 @@ class AmrFlow {
       Kokkos::parallel_for(
           "amr::pack_vel", n_, KOKKOS_LAMBDA(const Index i) { p(i * 3 + cc) = uc(i); });
     }
-    return tpx::toVector(packed);
+    return peclet::core::toVector(packed);
   }
   /// L2 norm of the (openness-weighted) divergence of the current velocity.
   double divNormL2() {
@@ -777,7 +777,7 @@ class AmrFlow {
   /// far below the cell field's O(h²) divNormL2 — including across 2:1 interfaces.
   double divNormFace() { return deviceDivFaceNorm(geom_, View<const double>(uf_)); }
   /// Copy the divergence-free face field to host (one value per CSR (sub)face, forEachFaceFull order).
-  std::vector<double> faceField() const { return tpx::toVector(uf_); }
+  std::vector<double> faceField() const { return peclet::core::toVector(uf_); }
   Index numLeaves() const { return n_; }
   /// Per-leaf fluid mask (false inside the solid) — for host-side post-processing / bindings.
   bool isFluid(Index i) const { return mom_.isFluid(i); }
@@ -851,7 +851,7 @@ class AmrFlow {
   bool faceFieldBuilt_ = false;  // uf_ populated by a projection (else advection falls back to ½(u_i+u_j))
 };
 
-}  // namespace tpx::amr
+}  // namespace peclet::core::amr
 
-#endif  // TPX_HAVE_MORTON
-#endif  // TPX_AMR_FLOW_HPP
+#endif  // PECLET_CORE_HAVE_MORTON
+#endif  // PECLET_CORE_AMR_FLOW_HPP
