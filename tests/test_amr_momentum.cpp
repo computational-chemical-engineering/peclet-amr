@@ -1,5 +1,5 @@
 // Device (Kokkos) momentum operator + solver for the AMR collocated flow step
-// (peclet::core::amr::MomentumOp / MomentumSolver). Validates, against the host
+// (peclet::amr::MomentumOp / MomentumSolver). Validates, against the host
 // AmrCutCell on a uniform-fine sphere geometry:
 //   (1) the assembled device matvec applyMom == host AmrCutCell::applyOp (to FP
 //       tolerance — same coefficients; GPU differs only in the last bit by FMA);
@@ -11,21 +11,19 @@
 //       plain Jacobi stalls — the reason a Krylov accelerator is needed for momentum.
 // Runs on whatever backend Kokkos targets (CUDA / HIP / OpenMP).
 //
-// Guarded by PECLET_CORE_HAVE_MORTON; a no-op pass without the morton sibling checkout.
 #include "test_util.hpp"
 
-#ifdef PECLET_CORE_HAVE_MORTON
 #include <cmath>
 #include <Kokkos_Core.hpp>
 #include <vector>
 
-#include "peclet/core/amr/block_octree.hpp"
-#include "peclet/core/amr/cut_cell.hpp"
-#include "peclet/core/amr/momentum.hpp"
+#include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/cut_cell.hpp"
+#include "peclet/amr/momentum.hpp"
 #include "peclet/core/common/types.hpp"
 
 using namespace peclet::core;
-using namespace peclet::core::amr;
+using namespace peclet::amr;
 
 namespace {
 
@@ -112,7 +110,7 @@ void run() {
       mag = std::max(mag, std::fabs(hostAu[(std::size_t)i]));
     }
     std::printf("[mom] matvec max|dev-host(geometric)| = %.3e (mag %.3e)\n", e, mag);
-    PECLET_CORE_CHECK(e < 1e-10 * (1.0 + mag));
+    PECLET_AMR_CHECK(e < 1e-10 * (1.0 + mag));
   }
 
   // ===== (2) device solves reach the host gaussSeidel solution =====
@@ -145,8 +143,8 @@ void run() {
   double eb = maxFluidErr(ub, uh, cc, n);
   std::printf("[mom] BiCGStab: %d iters, res0 %.3e res %.3e, max|u-uGS| = %.3e\n", RB.iters,
               RB.res0, RB.res, eb);
-  PECLET_CORE_CHECK(RB.res < RB.res0 * 1e-9);
-  PECLET_CORE_CHECK(eb < 1e-7);
+  PECLET_AMR_CHECK(RB.res < RB.res0 * 1e-9);
+  PECLET_AMR_CHECK(eb < 1e-7);
 
   // weighted Jacobi (diagonally dominant at dt=0.25 ⇒ converges)
   Kokkos::deep_copy(du, 0.0);
@@ -159,7 +157,7 @@ void run() {
   auto uj = getDev(du, n);
   double ej = maxFluidErr(uj, uh, cc, n);
   std::printf("[mom] Jacobi: res %.3e, max|u-uGS| = %.3e\n", rj, ej);
-  PECLET_CORE_CHECK(ej < 1e-6);
+  PECLET_AMR_CHECK(ej < 1e-6);
 
   // ===== (3) matvec still matches with implicit-FOU advection assembled in =====
   {
@@ -185,7 +183,7 @@ void run() {
       mag = std::max(mag, std::fabs(hostAu[(std::size_t)i]));
     }
     std::printf("[mom] advection matvec max|dev-host| = %.3e (mag %.3e)\n", e, mag);
-    PECLET_CORE_CHECK(e < 1e-10 * (1.0 + mag));
+    PECLET_AMR_CHECK(e < 1e-10 * (1.0 + mag));
   }
 
   // ===== (4) large-dt (ill-conditioned) regime: BiCGStab converges where Jacobi stalls =====
@@ -204,7 +202,7 @@ void run() {
     s2.setJacobi(4, 0.7);
     auto R2 = s2.solveBiCGStab(op2, du2, View<const double>(db2), 2000, 1e-8);
     std::printf("[mom] large-dt BiCGStab: %d iters, rel res %.3e\n", R2.iters, R2.res / R2.res0);
-    PECLET_CORE_CHECK(R2.res < R2.res0 * 1e-6);
+    PECLET_AMR_CHECK(R2.res < R2.res0 * 1e-6);
   }
 }
 
@@ -214,11 +212,5 @@ int main(int argc, char** argv) {
   Kokkos::initialize(argc, argv);
   run();
   Kokkos::finalize();
-  PECLET_CORE_RETURN_TEST_RESULT();
+  PECLET_AMR_RETURN_TEST_RESULT();
 }
-#else
-int main() {
-  std::printf("PECLET_CORE_HAVE_MORTON not set — skipping device momentum test\n");
-  return ::peclet::core::test::kSkipExitCode;
-}
-#endif  // PECLET_CORE_HAVE_MORTON

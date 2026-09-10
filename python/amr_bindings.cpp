@@ -1,4 +1,4 @@
-// core — Python surface for the AMR octree (peclet::core::amr).
+// core — Python surface for the AMR octree (peclet::amr).
 //
 // A nanobind module exposing the host adaptive-mesh-refinement path: the per-block BlockOctree
 // (serial) and the MPI DistributedOctree (ORB over root cells), so an mpi4py driver can build a
@@ -15,13 +15,11 @@
 //
 // Per-leaf arrays are returned via the shared peclet::core::python::vector_to_ndarray
 // (capsule-backed, no extra copy); the Flow path returns host fields the same way. AMR is guarded
-// by PECLET_CORE_HAVE_MORTON, so this module REQUIRES the morton sibling checkout — its CMake
 // points the include path at
-// ../../morton/include and defines PECLET_CORE_HAVE_MORTON. MPI is assumed already initialized by
 // the host (import mpi4py.MPI first); the distributed class uses MPI_COMM_WORLD and never calls
 // Init/Finalize.
 //
-// Build: see python/CMakeLists.txt (the amr_bindings target -> peclet.core.amr).
+// Build: see CMakeLists.txt (the `amr` target -> peclet.amr._amr, re-exported by packaging/amr_init.py).
 #include <mpi.h>
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
@@ -41,17 +39,17 @@
 #include <string>
 #include <vector>
 
-#include "peclet/core/amr/adapt.hpp"
-#include "peclet/core/amr/block_octree.hpp"
-#include "peclet/core/amr/distributed_adapt.hpp"
-#include "peclet/core/amr/distributed_octree.hpp"
-#include "peclet/core/amr/flow.hpp"         // the canonical (device) AmrFlow exposed to Python
-#include "peclet/core/amr/flow_oracle.hpp"  // oracle::AmrFlow (dev-only reference; not exposed)
-#include "peclet/core/amr/indicators.hpp"
-#include "peclet/core/amr/leaf_field.hpp"
-#include "peclet/core/amr/poisson.hpp"
-#include "peclet/core/amr/refine.hpp"
-#include "peclet/core/amr/vtu_io.hpp"
+#include "peclet/amr/adapt.hpp"
+#include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/distributed_adapt.hpp"
+#include "peclet/amr/distributed_octree.hpp"
+#include "peclet/amr/flow.hpp"         // the canonical (device) AmrFlow exposed to Python
+#include "peclet/amr/flow_oracle.hpp"  // oracle::AmrFlow (dev-only reference; not exposed)
+#include "peclet/amr/indicators.hpp"
+#include "peclet/amr/leaf_field.hpp"
+#include "peclet/amr/poisson.hpp"
+#include "peclet/amr/refine.hpp"
+#include "peclet/amr/vtu_io.hpp"
 #include "peclet/core/common/types.hpp"
 #include "peclet/core/geom/scene_query.hpp"  // SphereBedQuery (Layer 2-for-core)
 #include "peclet/core/geom/sdf.hpp"
@@ -65,7 +63,7 @@ using namespace peclet::core;
 // and with an anonymous namespace hipcc's host/device split leaves their vtables unemitted, so the
 // HIP link fails with `ld.lld: undefined hidden symbol: vtable for (anonymous namespace)::Octree`
 // (and Poisson / Flow / DistributedOctree). OpenMP/CUDA builds are indifferent.
-namespace peclet::core::pybind_amr {
+namespace peclet::amr::pybind {
 
 using BO = amr::BlockOctree<3>;  // 3D, Bits=21 (default) — codes fit a uint64
 using DO = amr::DistributedOctree<3>;
@@ -238,7 +236,7 @@ inline std::array<double, 3> resolveSpacing(const std::optional<SpacingArg>& spa
 }
 
 // A per-block adaptive octree with its world placement (origin + per-axis finest spacing).
-// Wraps peclet::core::amr::BlockOctree<3> + AmrGeometry<3>: build a uniform brick, refine toward a
+// Wraps peclet::amr::BlockOctree<3> + AmrGeometry<3>: build a uniform brick, refine toward a
 // surface, query leaves, and read leaf geometry / fields as numpy. The serial / single-rank form;
 // for the distributed (MPI) octree use DistributedOctree below.
 class Octree : public Releasable {
@@ -370,7 +368,7 @@ class Octree : public Releasable {
 // ---- geometric-multigrid Poisson solver --------------------------------------------------------
 
 // Cell-centered finite-volume Poisson solver (Lu = rhs) on an Octree, via a geometric multigrid
-// V-cycle (peclet::core::amr::AmrMultigrid). The operator L is the conservative two-point FV
+// V-cycle (peclet::amr::AmrMultigrid). The operator L is the conservative two-point FV
 // Laplacian (negative-definite, suite sign convention); on a graded octree it is consistent and
 // second-order in the bulk (first-order at coarse/fine faces). `periodic=True` solves the singular
 // periodic problem (the constant null space is removed each cycle); the manufactured RHS b =
@@ -437,7 +435,7 @@ class Poisson : public Releasable {
 // ---- collocated incompressible flow ------------------------------------------------------------
 
 // Collocated (cell-centered) incompressible Stokes / Navier-Stokes step on an Octree with a
-// cut-cell immersed boundary (peclet::core::amr::AmrFlow). Each step() is: an implicit
+// cut-cell immersed boundary (peclet::amr::AmrFlow). Each step() is: an implicit
 // backward-Euler viscous momentum predictor with no-slip (u=0) Dirichlet cut-cell IBM on the SDF
 // solid, then the Almgren-Bell-Colella approximate projection in incremental-rotational form
 // (openness-weighted pressure Poisson). Stokes by default; set_advection(True) adds explicit
@@ -447,6 +445,8 @@ class Poisson : public Releasable {
 //
 // Resolve the immersed boundary in a uniformly-finest band: the cut-cell and ±2 advection stencils
 // assume same-level neighbours, so keep the solid surface off 2:1 interfaces.
+class DistributedOctree;  // the MPI wrapper, defined below (Flow's distributed constructor)
+
 class Flow : public Releasable {
  public:
   Flow(const Octree& oct, double rho, double mu, double dt) : n_(oct.octreeRef().numLeaves()) {
@@ -464,7 +464,7 @@ class Flow : public Releasable {
   // Distributed (mpi4py): run this solver on one ORB block of a DistributedOctree — the whole
   // step then executes multi-rank through the ±2 LeafHalo (docs/amr_distributed_flow.md).
   // Defined after DistributedOctree below; keep_alive on the binding pins the octree.
-  Flow(class DistributedOctree& d, double rho, double mu, double dt);
+  Flow(DistributedOctree& d, double rho, double mu, double dt);
   // Distributed load rebalance: weighted-ORB re-decomposition migrating u/p with the leaves +
   // full rebuild (collective; distributed constructor only).
   void rebalance_mpi(std::function<double(double, double, double)> sdf) {
@@ -792,10 +792,10 @@ inline Flow::Flow(DistributedOctree& d, double rho, double mu, double dt)
   flow_.setDt(dt);
 }
 
-}  // namespace peclet::core::pybind_amr
+}  // namespace peclet::amr::pybind
 
-NB_MODULE(amr, m) {
-  using namespace peclet::core::pybind_amr;
+NB_MODULE(_amr, m) {
+  using namespace peclet::amr::pybind;
   // The Flow path runs Kokkos kernels — initialise the device runtime on import (the backend/arch
   // is fixed by the prefix the module was built against); the release-then-finalize atexit hook,
   // finalize() and execution_space are the suite-wide pattern (teardown registry above). Per-leaf

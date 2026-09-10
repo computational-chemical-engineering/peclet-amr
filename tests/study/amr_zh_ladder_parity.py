@@ -16,7 +16,7 @@ sys.path.insert(0, __file__.rsplit("/tests/", 1)[0] + "/python/build_cuda2")
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
 
 from amr_zh_ladder import build, drag, geometry, make_sdf  # noqa: E402
-from peclet.core import amr  # noqa: E402
+from peclet import amr  # noqa: E402
 
 
 def fields(N, cf, sampled, steps=200):

@@ -7,22 +7,22 @@
 // the shared peclet::core::geom SDF (any callable returning a signed distance at a world
 // point) and the AmrGeometry world mapping.
 //
-// Header-only, guarded by PECLET_CORE_HAVE_MORTON.
-#ifndef PECLET_CORE_AMR_REFINE_HPP
-#define PECLET_CORE_AMR_REFINE_HPP
+#ifndef PECLET_AMR_REFINE_HPP
+#define PECLET_AMR_REFINE_HPP
 
-#ifdef PECLET_CORE_HAVE_MORTON
+#include "peclet/amr/common.hpp"
+
 
 #include <algorithm>
 #include <cmath>
 #include <utility>
 #include <vector>
 
-#include "peclet/core/amr/block_octree.hpp"
-#include "peclet/core/amr/leaf_field.hpp"
+#include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/leaf_field.hpp"
 #include "peclet/core/common/types.hpp"
 
-namespace peclet::core::amr {
+namespace peclet::amr {
 
 /// Refine leaves near an SDF interface down to `targetLevel`.
 ///
@@ -149,7 +149,6 @@ auto gapFloorTarget(GapFn&& gapFn, Real h0, unsigned coarsestLevel, Real n = 4.0
   };
 }
 
-}  // namespace peclet::core::amr
+}  // namespace peclet::amr
 
-#endif  // PECLET_CORE_HAVE_MORTON
-#endif  // PECLET_CORE_AMR_REFINE_HPP
+#endif  // PECLET_AMR_REFINE_HPP

@@ -6,11 +6,11 @@
 // writer trivial and is what ParaView expects for a cell-wise AMR dump. ASCII,
 // human-readable, openable in ParaView.
 //
-// Header-only, guarded by PECLET_CORE_HAVE_MORTON.
-#ifndef PECLET_CORE_AMR_VTU_IO_HPP
-#define PECLET_CORE_AMR_VTU_IO_HPP
+#ifndef PECLET_AMR_VTU_IO_HPP
+#define PECLET_AMR_VTU_IO_HPP
 
-#ifdef PECLET_CORE_HAVE_MORTON
+#include "peclet/amr/common.hpp"
+
 
 #include <array>
 #include <fstream>
@@ -19,11 +19,11 @@
 #include <string>
 #include <vector>
 
-#include "peclet/core/amr/block_octree.hpp"
-#include "peclet/core/amr/leaf_field.hpp"
+#include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/leaf_field.hpp"
 #include "peclet/core/common/types.hpp"
 
-namespace peclet::core::amr {
+namespace peclet::amr {
 
 namespace detail {
 // Corner offsets in VTK cell-point order. 3D: VTK_HEXAHEDRON (=12); 2D: VTK_QUAD (=9).
@@ -117,7 +117,6 @@ void writeVtu(const std::string& path, const BlockOctree<Dim, Bits>& t, const Am
   writeVtu(path, t, geo, name, field.values);
 }
 
-}  // namespace peclet::core::amr
+}  // namespace peclet::amr
 
-#endif  // PECLET_CORE_HAVE_MORTON
-#endif  // PECLET_CORE_AMR_VTU_IO_HPP
+#endif  // PECLET_AMR_VTU_IO_HPP

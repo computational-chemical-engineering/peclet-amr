@@ -32,15 +32,14 @@
 #include <cstdio>
 #include <vector>
 
-#ifdef PECLET_CORE_HAVE_MORTON
-#include "peclet/core/amr/block_octree.hpp"
-#include "peclet/core/amr/cut_cell.hpp"
-#include "peclet/core/amr/poisson.hpp"
+#include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/cut_cell.hpp"
+#include "peclet/amr/poisson.hpp"
 #include "peclet/core/common/types.hpp"
 #include "peclet/core/scheme/ghost_closure.hpp"
 
 using namespace peclet::core;
-using namespace peclet::core::amr;
+using namespace peclet::amr;
 
 namespace {
 
@@ -773,10 +772,3 @@ int main() {
   std::printf("%d/4 gates\n", npass);
   return 0;
 }
-#else
-#include <cstdio>
-int main() {
-  std::printf("PECLET_CORE_HAVE_MORTON not set — skipping\n");
-  return 77;  // ctest SKIP_RETURN_CODE (tests/test_util.hpp kSkipExitCode)
-}
-#endif

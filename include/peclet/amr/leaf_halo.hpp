@@ -32,13 +32,13 @@
 // whose per-row arithmetic order is decomposition-independent stays bit-exact WORLD==SELF (the
 // DistributedFvOperator argument). GPU is tolerance-not-bit-exact vs host (FMA) as documented.
 //
-// Header-only, guarded by PECLET_CORE_HAVE_MORTON. The host part compiles without Kokkos; the
 // device exchanger is guarded on KOKKOS_INLINE_FUNCTION (include after a Kokkos-carrying header
 // in device TUs, like ghost_projection.hpp).
-#ifndef PECLET_CORE_AMR_LEAF_HALO_HPP
-#define PECLET_CORE_AMR_LEAF_HALO_HPP
+#ifndef PECLET_AMR_LEAF_HALO_HPP
+#define PECLET_AMR_LEAF_HALO_HPP
 
-#ifdef PECLET_CORE_HAVE_MORTON
+#include "peclet/amr/common.hpp"
+
 
 #include <array>
 #include <map>
@@ -47,7 +47,7 @@
 #include <stdexcept>
 #include <vector>
 
-#include "peclet/core/amr/distributed_octree.hpp"
+#include "peclet/amr/distributed_octree.hpp"
 #include "peclet/core/common/mpi.hpp"
 #include "peclet/core/common/types.hpp"
 
@@ -58,7 +58,7 @@
 #include "peclet/core/halo/grid_halo.hpp"  // halo::detail::gpuAwareMpi() (GPU-aware opt-in)
 #endif
 
-namespace peclet::core::amr {
+namespace peclet::amr {
 
 template <int Dim, unsigned Bits = (Dim == 2 ? 32u : (Dim == 3 ? 21u : 16u))>
 class LeafHalo {
@@ -439,7 +439,6 @@ class LeafHaloExchange {
 
 #endif  // KOKKOS_INLINE_FUNCTION
 
-}  // namespace peclet::core::amr
+}  // namespace peclet::amr
 
-#endif  // PECLET_CORE_HAVE_MORTON
-#endif  // PECLET_CORE_AMR_LEAF_HALO_HPP
+#endif  // PECLET_AMR_LEAF_HALO_HPP

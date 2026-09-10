@@ -7,22 +7,20 @@
 //   (2) the mesh tracks the moving blob (the finest cells stay near its centre);
 //   (3) the adaptive mesh stays far smaller than a uniform-fine grid.
 //
-// Guarded by PECLET_CORE_HAVE_MORTON; a no-op pass without the morton sibling checkout.
 #include "test_util.hpp"
 
-#ifdef PECLET_CORE_HAVE_MORTON
 #include <array>
 #include <cmath>
 #include <vector>
 
-#include "peclet/core/amr/adapt.hpp"
-#include "peclet/core/amr/block_octree.hpp"
-#include "peclet/core/amr/leaf_field.hpp"
-#include "peclet/core/amr/scalar_transport.hpp"
+#include "peclet/amr/adapt.hpp"
+#include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/leaf_field.hpp"
+#include "peclet/amr/scalar_transport.hpp"
 #include "peclet/core/common/types.hpp"
 
 using namespace peclet::core;
-using namespace peclet::core::amr;
+using namespace peclet::amr;
 
 namespace {
 
@@ -111,7 +109,7 @@ void run() {
   }
 
   // (1) mass conserved through all steps + adapts
-  PECLET_CORE_CHECK(massMaxDev < 1e-9 * std::fabs(m0));
+  PECLET_AMR_CHECK(massMaxDev < 1e-9 * std::fabs(m0));
 
   // (2) the blob advected to the right place: mass-weighted x-centroid ≈ cx0 + U*T
   // (blob stays interior, no wrap), and the finest cells are present near it.
@@ -133,23 +131,17 @@ void run() {
   }
   const double xc = sx / sw;                        // scalar mass-weighted x-centroid
   const double fc = fineCx / fineW;                 // mean x of the finest cells
-  PECLET_CORE_CHECK(std::fabs(xc - cxEnd) < 0.05);  // advection moved the blob correctly
-  PECLET_CORE_CHECK(nFinest > 0);
-  PECLET_CORE_CHECK(std::fabs(fc - cxEnd) < 0.1);  // finest cells follow the blob
+  PECLET_AMR_CHECK(std::fabs(xc - cxEnd) < 0.05);  // advection moved the blob correctly
+  PECLET_AMR_CHECK(nFinest > 0);
+  PECLET_AMR_CHECK(std::fabs(fc - cxEnd) < 0.1);  // finest cells follow the blob
 
   // (3) adaptive mesh stays smaller than uniform-fine (32^3 = 32768)
-  PECLET_CORE_CHECK(maxLeaves < 32768);
+  PECLET_AMR_CHECK(maxLeaves < 32768);
 }
 
 }  // namespace
 
 int main() {
   run();
-  PECLET_CORE_RETURN_TEST_RESULT();
+  PECLET_AMR_RETURN_TEST_RESULT();
 }
-#else
-int main() {
-  std::printf("PECLET_CORE_HAVE_MORTON not set — skipping adaptive transport test\n");
-  return ::peclet::core::test::kSkipExitCode;
-}
-#endif  // PECLET_CORE_HAVE_MORTON

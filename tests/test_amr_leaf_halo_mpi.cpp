@@ -1,4 +1,4 @@
-// LeafHalo (peclet::core::amr::LeafHalo): the ghost registry + value halo the distributed
+// LeafHalo (peclet::amr::LeafHalo): the ghost registry + value halo the distributed
 // AmrFlow builders thread their neighbour probes through (docs/amr_distributed_flow.md, rung 1).
 // On a genuinely graded, cross-block 2:1-balanced octree it validates:
 //   (1) the builder fixpoint (resolve → resolveMisses rounds) terminates and resolves every
@@ -12,20 +12,18 @@
 //       path never touches a ghost slot).
 // np = 1,2,4,8.
 //
-// Guarded by PECLET_CORE_HAVE_MORTON; a no-op pass without the morton sibling checkout.
 #include "test_util.hpp"
 
-#ifdef PECLET_CORE_HAVE_MORTON
 #include <array>
 #include <cmath>
 #include <vector>
 
-#include "peclet/core/amr/distributed_octree.hpp"
-#include "peclet/core/amr/leaf_halo.hpp"
+#include "peclet/amr/distributed_octree.hpp"
+#include "peclet/amr/leaf_halo.hpp"
 #include "peclet/core/common/mpi.hpp"
 
 using namespace peclet::core;
-using namespace peclet::core::amr;
+using namespace peclet::amr;
 
 namespace {
 
@@ -105,14 +103,14 @@ void run() {
     ++rounds;
     if (halo.resolveMisses() == 0)
       break;
-    PECLET_CORE_CHECK(rounds < 6);  // bounded reach ⇒ bounded rounds
+    PECLET_AMR_CHECK(rounds < 6);  // bounded reach ⇒ bounded rounds
   }
   for (std::size_t k = 0; k < probes.size(); ++k)
-    PECLET_CORE_CHECK(slot[k] >= 0);  // periodic domain: every probe resolves
+    PECLET_AMR_CHECK(slot[k] >= 0);  // periodic domain: every probe resolves
   halo.finalize();
 
   if (size == 1)
-    PECLET_CORE_CHECK_EQ(halo.numGhosts(), 0);  // np=1: zero ghosts by construction
+    PECLET_AMR_CHECK_EQ(halo.numGhosts(), 0);  // np=1: zero ghosts by construction
 
   // Ghost metadata vs the owner (coverLevels oracle): anchor and level agree.
   {
@@ -121,9 +119,9 @@ void run() {
       anchors[static_cast<std::size_t>(g)] = halo.ghostCoord(g);
     std::vector<int> lv = world.coverLevels(anchors);
     for (Index g = 0; g < halo.numGhosts(); ++g) {
-      PECLET_CORE_CHECK_EQ(lv[static_cast<std::size_t>(g)], halo.level(halo.numLocal() + g));
+      PECLET_AMR_CHECK_EQ(lv[static_cast<std::size_t>(g)], halo.level(halo.numLocal() + g));
       for (int a = 0; a < 3; ++a)  // anchor is the covering leaf's lo: aligned to its level
-        PECLET_CORE_CHECK_EQ((long)(halo.ghostCoord(g)[a] >> lv[static_cast<std::size_t>(g)])
+        PECLET_AMR_CHECK_EQ((long)(halo.ghostCoord(g)[a] >> lv[static_cast<std::size_t>(g)])
                                  << lv[static_cast<std::size_t>(g)],
                              (long)halo.ghostCoord(g)[a]);
     }
@@ -136,7 +134,7 @@ void run() {
   halo.exchangeHost(x);
   for (Index g = 0; g < halo.numGhosts(); ++g) {
     const Code gc = M::encode(halo.ghostCoord(g)).code();
-    PECLET_CORE_CHECK(x[static_cast<std::size_t>(halo.numLocal() + g)] == fAt(gc, h0));
+    PECLET_AMR_CHECK(x[static_cast<std::size_t>(halo.numLocal() + g)] == fAt(gc, h0));
   }
 
   // Cross-check against the per-probe coverValues owner gather (the pre-LeafHalo oracle).
@@ -144,14 +142,14 @@ void run() {
     std::vector<std::array<Coord, 3>> wrapped(probes.size());
     for (std::size_t k = 0; k < probes.size(); ++k) {
       std::array<long, 3> p = probes[k];
-      PECLET_CORE_CHECK(halo.wrap(p));
+      PECLET_AMR_CHECK(halo.wrap(p));
       for (int a = 0; a < 3; ++a)
         wrapped[k][a] = static_cast<Coord>(p[a]);
     }
     std::vector<double> local(x.begin(), x.begin() + static_cast<std::size_t>(n));
     std::vector<double> oracle = world.coverValues(wrapped, local);
     for (std::size_t k = 0; k < probes.size(); ++k)
-      PECLET_CORE_CHECK(x[static_cast<std::size_t>(slot[k])] == oracle[k]);
+      PECLET_AMR_CHECK(x[static_cast<std::size_t>(slot[k])] == oracle[k]);
   }
 
   // ---- topology reuse: change the field, exchange again, ghosts refresh ----
@@ -160,7 +158,7 @@ void run() {
   halo.exchangeHost(x);
   for (Index g = 0; g < halo.numGhosts(); ++g) {
     const Code gc = M::encode(halo.ghostCoord(g)).code();
-    PECLET_CORE_CHECK(x[static_cast<std::size_t>(halo.numLocal() + g)] == 3.0 * fAt(gc, h0) + 1.0);
+    PECLET_AMR_CHECK(x[static_cast<std::size_t>(halo.numLocal() + g)] == 3.0 * fAt(gc, h0) + 1.0);
   }
 
   // Dedup effectiveness: at np>1 the probe count into ghosts far exceeds the slot count.
@@ -169,7 +167,7 @@ void run() {
     if (slot[k] >= halo.numLocal())
       ++nProbeGhost;
   if (size > 1 && nProbeGhost > 0)
-    PECLET_CORE_CHECK(halo.numGhosts() < nProbeGhost);
+    PECLET_AMR_CHECK(halo.numGhosts() < nProbeGhost);
 }
 
 }  // namespace
@@ -179,7 +177,7 @@ int main(int argc, char** argv) {
   run();
   int rank = 0;
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-  int fails = peclet::core::test::g_failures, total = 0;
+  int fails = peclet::amr::test::g_failures, total = 0;
   MPI_Reduce(&fails, &total, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
   MPI_Finalize();
   if (rank == 0) {
@@ -192,9 +190,3 @@ int main(int argc, char** argv) {
   }
   return 0;
 }
-#else
-#include "test_skip_mpi.hpp"
-int main(int argc, char** argv) {
-  return ::peclet::core::test::skipMpiTest(argc, argv, "LeafHalo test");
-}
-#endif  // PECLET_CORE_HAVE_MORTON

@@ -1,4 +1,4 @@
-// Dynamic load re-balancing (peclet::core::amr::DistributedOctree::rebalance): weighted-ORB
+// Dynamic load re-balancing (peclet::amr::DistributedOctree::rebalance): weighted-ORB
 // re-decomposition + leaf/field migration on a distributed octree whose refinement is
 // concentrated in part of the domain (so the equal-cell-count ORB leaves one rank heavy).
 // rebalance() is a pure redistribution of the *same* global mesh, so:
@@ -8,20 +8,18 @@
 //   (3) the per-rank leaf-count imbalance (max/mean) drops vs the equal-cell decomposition.
 // np = 1,2,4,8.
 //
-// Guarded by PECLET_CORE_HAVE_MORTON; a no-op pass without the morton sibling checkout.
 #include "test_util.hpp"
 
-#ifdef PECLET_CORE_HAVE_MORTON
 #include <algorithm>
 #include <cmath>
 #include <vector>
 
-#include "peclet/core/amr/distributed_octree.hpp"
-#include "peclet/core/amr/leaf_field.hpp"
+#include "peclet/amr/distributed_octree.hpp"
+#include "peclet/amr/leaf_field.hpp"
 #include "peclet/core/common/mpi.hpp"
 
 using namespace peclet::core;
-using namespace peclet::core::amr;
+using namespace peclet::amr;
 
 namespace {
 
@@ -115,13 +113,13 @@ void run() {
   for (Index i = 0; i < world.local().numLeaves(); ++i)
     if (fw[(std::size_t)i] != fAt(world.globalCode(i), world.local().level(i)))
       ++valMism;
-  PECLET_CORE_CHECK_EQ(valMism, 0);
+  PECLET_AMR_CHECK_EQ(valMism, 0);
 
   // (1b) global mesh + field bit-for-bit identical to the single-block computation.
   const Index nw = world.local().numLeaves();
   long lnw = nw, gnw = 0;
   MPI_Allreduce(&lnw, &gnw, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
-  PECLET_CORE_CHECK(gnw == self.local().numLeaves());
+  PECLET_AMR_CHECK(gnw == self.local().numLeaves());
   int mism = 0;
   for (Index i = 0; i < nw; ++i) {
     Index si = self.local().find(world.globalCode(i));
@@ -134,20 +132,20 @@ void run() {
     if (fw[(std::size_t)i] != fs[(std::size_t)si])
       ++mism;
   }
-  PECLET_CORE_CHECK_EQ(mism, 0);
+  PECLET_AMR_CHECK_EQ(mism, 0);
 
   // (2) leaf count preserved exactly; Σ V·f conserved through the migration.
-  PECLET_CORE_CHECK(gnw == n0);
+  PECLET_AMR_CHECK(gnw == n0);
   double mw1 = localMass(world, fw), m1 = 0.0;
   MPI_Allreduce(&mw1, &m1, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-  PECLET_CORE_CHECK(std::fabs(m1 - m0) < 1e-9 * std::fabs(m0));
+  PECLET_AMR_CHECK(std::fabs(m1 - m0) < 1e-9 * std::fabs(m0));
 
   // (3) imbalance drops (only meaningful with >1 rank; np=1 is trivially 1.0 -> 1.0).
   double imb1 = imbalance(world);
   if (world.size() > 1) {
-    PECLET_CORE_CHECK(imb0 > 1.15);  // the skewed mesh really was imbalanced under equal-cell ORB
-    PECLET_CORE_CHECK(imb1 < imb0);  // weighted ORB improved it
-    PECLET_CORE_CHECK(imb1 < 1.6);   // ... to a decently even distribution
+    PECLET_AMR_CHECK(imb0 > 1.15);  // the skewed mesh really was imbalanced under equal-cell ORB
+    PECLET_AMR_CHECK(imb1 < imb0);  // weighted ORB improved it
+    PECLET_AMR_CHECK(imb1 < 1.6);   // ... to a decently even distribution
   }
 
   // A second rebalance is a no-op (already balanced for this weight) and still bit-exact.
@@ -158,7 +156,7 @@ void run() {
   for (Index i = 0; i < world.local().numLeaves(); ++i)
     if (fw[(std::size_t)i] != fAt(world.globalCode(i), world.local().level(i)))
       ++valMism2;
-  PECLET_CORE_CHECK_EQ(valMism2, 0);
+  PECLET_AMR_CHECK_EQ(valMism2, 0);
 }
 
 }  // namespace
@@ -168,7 +166,7 @@ int main(int argc, char** argv) {
   run();
   int rank = 0;
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-  int fails = peclet::core::test::g_failures, total = 0;
+  int fails = peclet::amr::test::g_failures, total = 0;
   MPI_Reduce(&fails, &total, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
   MPI_Finalize();
   if (rank == 0) {
@@ -181,9 +179,3 @@ int main(int argc, char** argv) {
   }
   return 0;
 }
-#else
-#include "test_skip_mpi.hpp"
-int main(int argc, char** argv) {
-  return ::peclet::core::test::skipMpiTest(argc, argv, "distributed rebalance test");
-}
-#endif  // PECLET_CORE_HAVE_MORTON

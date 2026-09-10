@@ -35,22 +35,23 @@
 // decoupled/held solid value), and the tangential faces must be sufficiently open (openness ≥ 0.5,
 // matching applyLaplacianQuad's gate). With the finest-band contract, level boundaries sit in
 // smooth flow and the gates are inert there.
-#ifndef PECLET_CORE_AMR_CF_SCHEME_HPP
-#define PECLET_CORE_AMR_CF_SCHEME_HPP
+#ifndef PECLET_AMR_CF_SCHEME_HPP
+#define PECLET_AMR_CF_SCHEME_HPP
 
-#ifdef PECLET_CORE_HAVE_MORTON
+#include "peclet/amr/common.hpp"
+
 
 #include <array>
 #include <cstdint>
 #include <utility>
 #include <vector>
 
-#include "peclet/core/amr/block_octree.hpp"
-#include "peclet/core/amr/poisson.hpp"
+#include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/poisson.hpp"
 #include "peclet/core/common/host_parallel.hpp"
 #include "peclet/core/common/types.hpp"
 
-namespace peclet::core::amr {
+namespace peclet::amr {
 
 /// Coarse/fine interface scheme for the collocated flow operators.
 enum class CfScheme : int {
@@ -616,7 +617,6 @@ inline void cfApplyComp(const CfCompCsrDev& c, View<const double> u0, View<const
 
 #endif  // KOKKOS_INLINE_FUNCTION
 
-}  // namespace peclet::core::amr
+}  // namespace peclet::amr
 
-#endif  // PECLET_CORE_HAVE_MORTON
-#endif  // PECLET_CORE_AMR_CF_SCHEME_HPP
+#endif  // PECLET_AMR_CF_SCHEME_HPP

@@ -9,26 +9,26 @@
 // `MomentumSolver<Bits>` alias template below) and holds what IS octree-specific: MomentumMG,
 // whose Galerkin hierarchy is the uniformly-coarsened octree.
 //
-// Requires a Kokkos build + the morton checkout (PECLET_CORE_HAVE_MORTON).
-#ifndef PECLET_CORE_AMR_MOMENTUM_HPP
-#define PECLET_CORE_AMR_MOMENTUM_HPP
+#ifndef PECLET_AMR_MOMENTUM_HPP
+#define PECLET_AMR_MOMENTUM_HPP
 
-#ifdef PECLET_CORE_HAVE_MORTON
+#include "peclet/amr/common.hpp"
+
 
 #include <cstddef>
 #include <map>
 #include <vector>
 
-#include "peclet/core/amr/block_octree.hpp"
-#include "peclet/core/amr/face_csr.hpp"   // shared host+device assembled-operator row kernels
-#include "peclet/core/amr/multigrid.hpp"  // restrictField / prolongAdd transfer kernels
+#include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/face_csr.hpp"   // shared host+device assembled-operator row kernels
+#include "peclet/amr/multigrid.hpp"  // restrictField / prolongAdd transfer kernels
 #include "peclet/core/common/view.hpp"
 #include "peclet/core/solver/coloring.hpp"
 #include "peclet/core/solver/csr_bicgstab.hpp"
 #include "peclet/core/solver/csr_operator.hpp"
 #include "peclet/core/solver/vector_ops.hpp"
 
-namespace peclet::core::amr {
+namespace peclet::amr {
 
 using solver::applyMom;
 using solver::bicgPUpdate;
@@ -236,7 +236,6 @@ class MomentumMG {
   bool useGS_ = false;  // multicolour Gauss–Seidel smoother (opt-in; default weighted Jacobi)
 };
 
-}  // namespace peclet::core::amr
+}  // namespace peclet::amr
 
-#endif  // PECLET_CORE_HAVE_MORTON
-#endif  // PECLET_CORE_AMR_MOMENTUM_HPP
+#endif  // PECLET_AMR_MOMENTUM_HPP

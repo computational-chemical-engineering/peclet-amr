@@ -9,13 +9,15 @@
 // and the two SOU upstream-probe leaves. Per cell: 1/V and a fluid flag.
 //
 // Requires a Kokkos build (View).
-#ifndef PECLET_CORE_AMR_FACE_GEOM_HPP
-#define PECLET_CORE_AMR_FACE_GEOM_HPP
+#ifndef PECLET_AMR_FACE_GEOM_HPP
+#define PECLET_AMR_FACE_GEOM_HPP
+
+#include "peclet/amr/common.hpp"
 
 #include "peclet/core/common/types.hpp"
 #include "peclet/core/common/view.hpp"
 
-namespace peclet::core::amr {
+namespace peclet::amr {
 
 struct FaceGeom {
   View<Index> start;       ///< CSR row offsets, size n+1
@@ -33,6 +35,6 @@ struct FaceGeom {
   Index n = 0;
 };
 
-}  // namespace peclet::core::amr
+}  // namespace peclet::amr
 
-#endif  // PECLET_CORE_AMR_FACE_GEOM_HPP
+#endif  // PECLET_AMR_FACE_GEOM_HPP

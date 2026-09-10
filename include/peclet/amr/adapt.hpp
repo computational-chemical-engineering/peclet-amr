@@ -18,11 +18,11 @@
 // Löhner indicator (indicators.hpp). The level convention is the octree's: refining
 // *decreases* level toward 0 (finest), coarsening increases it toward `lmax` (root).
 //
-// Header-only, guarded by PECLET_CORE_HAVE_MORTON.
-#ifndef PECLET_CORE_AMR_ADAPT_HPP
-#define PECLET_CORE_AMR_ADAPT_HPP
+#ifndef PECLET_AMR_ADAPT_HPP
+#define PECLET_AMR_ADAPT_HPP
 
-#ifdef PECLET_CORE_HAVE_MORTON
+#include "peclet/amr/common.hpp"
+
 
 #include <array>
 #include <cmath>
@@ -30,11 +30,11 @@
 #include <utility>
 #include <vector>
 
-#include "peclet/core/amr/block_octree.hpp"
-#include "peclet/core/amr/indicators.hpp"
+#include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/indicators.hpp"
 #include "peclet/core/common/types.hpp"
 
-namespace peclet::core::amr {
+namespace peclet::amr {
 
 namespace detail {
 inline double minmod(double a, double b) {
@@ -264,7 +264,6 @@ AdaptResult<Dim, Bits> adapt(const BlockOctree<Dim, Bits>& t, const std::vector<
   return adaptField(t, f, flags, linear);
 }
 
-}  // namespace peclet::core::amr
+}  // namespace peclet::amr
 
-#endif  // PECLET_CORE_HAVE_MORTON
-#endif  // PECLET_CORE_AMR_ADAPT_HPP
+#endif  // PECLET_AMR_ADAPT_HPP

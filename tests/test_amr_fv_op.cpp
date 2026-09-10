@@ -1,23 +1,21 @@
-// Device (Kokkos) Poisson operator/smoother (peclet::core::amr::laplacian /
+// Device (Kokkos) Poisson operator/smoother (peclet::amr::laplacian /
 // jacobiSweep) must match the host BlockOctree operator bit-for-bit, on
 // whatever backend Kokkos was built for (CUDA / HIP / OpenMP). Same face-neighbour
 // walk + arithmetic, just run as parallel_for over the leaf Views.
 //
-// Guarded by PECLET_CORE_HAVE_MORTON; a no-op pass without the morton sibling checkout.
 #include "test_util.hpp"
 
-#ifdef PECLET_CORE_HAVE_MORTON
 #include <cmath>
 #include <cstdint>
 #include <Kokkos_Core.hpp>
 #include <vector>
 
-#include "peclet/core/amr/block_octree.hpp"
-#include "peclet/core/amr/block_octree_view.hpp"
-#include "peclet/core/amr/fv_op.hpp"
+#include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/block_octree_view.hpp"
+#include "peclet/amr/fv_op.hpp"
 
 using namespace peclet::core;
-using namespace peclet::core::amr;
+using namespace peclet::amr;
 
 namespace {
 
@@ -73,7 +71,7 @@ void run() {
   for (Index i = 0; i < n; ++i)
     if (hy(i) != hostLap(t, x, i, inv))
       ++mism;
-  PECLET_CORE_CHECK_EQ(mism, 0);
+  PECLET_AMR_CHECK_EQ(mism, 0);
 
   // ---- a few Jacobi sweeps: device == host ----
   std::vector<double> b(static_cast<std::size_t>(n));
@@ -104,7 +102,7 @@ void run() {
   for (Index i = 0; i < n; ++i)
     if (hu(i) != u[static_cast<std::size_t>(i)])
       ++jmis;
-  PECLET_CORE_CHECK_EQ(jmis, 0);
+  PECLET_AMR_CHECK_EQ(jmis, 0);
 }
 
 }  // namespace
@@ -113,11 +111,5 @@ int main(int argc, char** argv) {
   Kokkos::initialize(argc, argv);
   run();
   Kokkos::finalize();
-  PECLET_CORE_RETURN_TEST_RESULT();
+  PECLET_AMR_RETURN_TEST_RESULT();
 }
-#else
-int main() {
-  std::printf("PECLET_CORE_HAVE_MORTON not set — skipping device Poisson test\n");
-  return ::peclet::core::test::kSkipExitCode;
-}
-#endif  // PECLET_CORE_HAVE_MORTON

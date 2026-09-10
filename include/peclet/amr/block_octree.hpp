@@ -21,16 +21,16 @@
 //  * Leaves tile the block without overlap and are stored sorted by code, i.e. in
 //    Z-order — the same order morton's curve and the device leaf arrays use.
 //
-// Header-only, guarded by PECLET_CORE_HAVE_MORTON (set by CMake when the morton sibling
 // checkout is present). The query helpers carry morton's MORTON_HD, so they are
 // device-callable exactly when morton is (KOKKOS_FUNCTION under a Kokkos build);
 // topology mutation (refine/coarsen/balance) is host-side and rebuilds the leaf
 // arrays the device queries read — mirroring grid_halo.hpp (host) vs
 // grid_halo_kokkos.hpp (device).
-#ifndef PECLET_CORE_AMR_BLOCK_OCTREE_HPP
-#define PECLET_CORE_AMR_BLOCK_OCTREE_HPP
+#ifndef PECLET_AMR_BLOCK_OCTREE_HPP
+#define PECLET_AMR_BLOCK_OCTREE_HPP
 
-#ifdef PECLET_CORE_HAVE_MORTON
+#include "peclet/amr/common.hpp"
+
 
 #include <algorithm>
 #include <array>
@@ -40,7 +40,7 @@
 #include "morton/morton.hpp"
 #include "peclet/core/common/types.hpp"
 
-namespace peclet::core::amr {
+namespace peclet::amr {
 
 /// Locate the leaf containing Morton code `p` in sorted leaf arrays.
 ///
@@ -325,7 +325,6 @@ class BlockOctree {
   std::vector<std::uint8_t> levels_;  // parallel to codes_
 };
 
-}  // namespace peclet::core::amr
+}  // namespace peclet::amr
 
-#endif  // PECLET_CORE_HAVE_MORTON
-#endif  // PECLET_CORE_AMR_BLOCK_OCTREE_HPP
+#endif  // PECLET_AMR_BLOCK_OCTREE_HPP

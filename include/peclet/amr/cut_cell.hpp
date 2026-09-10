@@ -14,25 +14,25 @@
 // Cut cells are assumed to have same-level face neighbours (the suite contract:
 // resolve the immersed boundary in a uniformly-finest band, so cut cells never sit
 // on a 2:1 interface — see docs/AMR.md). 3D (flow's 6-direction scheme).
-// Header-only, guarded by PECLET_CORE_HAVE_MORTON. Serial/host first.
-#ifndef PECLET_CORE_AMR_CUT_CELL_HPP
-#define PECLET_CORE_AMR_CUT_CELL_HPP
+#ifndef PECLET_AMR_CUT_CELL_HPP
+#define PECLET_AMR_CUT_CELL_HPP
 
-#ifdef PECLET_CORE_HAVE_MORTON
+#include "peclet/amr/common.hpp"
+
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <vector>
 
-#include "peclet/core/amr/block_octree.hpp"
-#include "peclet/core/amr/face_csr.hpp"  // shared host+device assembled-operator row kernels
-#include "peclet/core/amr/leaf_field.hpp"
-#include "peclet/core/amr/poisson.hpp"
+#include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/face_csr.hpp"  // shared host+device assembled-operator row kernels
+#include "peclet/amr/leaf_field.hpp"
+#include "peclet/amr/poisson.hpp"
 #include "peclet/core/common/host_parallel.hpp"
 #include "peclet/core/common/types.hpp"
 
-namespace peclet::core::amr {
+namespace peclet::amr {
 
 // ---- boundary-distance polynomials (port of flow cut_cell_ibm.hpp, SCHEME 0,
 //      double precision) ----
@@ -758,7 +758,6 @@ class AmrCutCell {
   bool hasAdv_ = false;
 };
 
-}  // namespace peclet::core::amr
+}  // namespace peclet::amr
 
-#endif  // PECLET_CORE_HAVE_MORTON
-#endif  // PECLET_CORE_AMR_CUT_CELL_HPP
+#endif  // PECLET_AMR_CUT_CELL_HPP

@@ -1,23 +1,21 @@
-// Barnes–Hut over the octree (peclet::core::amr::BarnesHut, particle-tree mode):
+// Barnes–Hut over the octree (peclet::amr::BarnesHut, particle-tree mode):
 //   (1) theta = 0 recurses fully, so the approximate acceleration equals the
 //       direct O(N^2) sum to round-off;
 //   (2) theta = 0.3 keeps the per-particle acceleration within a few percent of
 //       direct (controlled multipole error).
 //
-// Guarded by PECLET_CORE_HAVE_MORTON; a no-op pass without the morton sibling checkout.
 #include "test_util.hpp"
 
-#ifdef PECLET_CORE_HAVE_MORTON
 #include <cmath>
 #include <cstdint>
 #include <vector>
 
-#include "peclet/core/amr/barnes_hut.hpp"
-#include "peclet/core/amr/leaf_field.hpp"
+#include "peclet/amr/barnes_hut.hpp"
+#include "peclet/amr/leaf_field.hpp"
 #include "peclet/core/common/types.hpp"
 
 using namespace peclet::core;
-using namespace peclet::core::amr;
+using namespace peclet::amr;
 
 namespace {
 
@@ -64,25 +62,19 @@ void run() {
 
   // (1) theta = 0 == direct sum.
   std::vector<Vec<3>> exact0 = bh.accelerations();
-  PECLET_CORE_CHECK(maxRelErr(exact0, direct) < 1e-9);
+  PECLET_AMR_CHECK(maxRelErr(exact0, direct) < 1e-9);
 
   // (2) theta = 0.3 within a few percent.
   BarnesHut<3> bh2;
   bh2.build(pos, mass, geo, lmax, /*theta=*/0.3, /*soft=*/0.02);
   std::vector<Vec<3>> approx = bh2.accelerations();
   double err = maxRelErr(approx, direct);
-  PECLET_CORE_CHECK(err < 0.05);
+  PECLET_AMR_CHECK(err < 0.05);
 }
 
 }  // namespace
 
 int main() {
   run();
-  PECLET_CORE_RETURN_TEST_RESULT();
+  PECLET_AMR_RETURN_TEST_RESULT();
 }
-#else
-int main() {
-  std::printf("PECLET_CORE_HAVE_MORTON not set — skipping Barnes-Hut test\n");
-  return ::peclet::core::test::kSkipExitCode;
-}
-#endif  // PECLET_CORE_HAVE_MORTON

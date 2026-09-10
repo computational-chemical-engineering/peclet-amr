@@ -1,26 +1,24 @@
-// Device FV (pressure) operator ASSEMBLY (peclet::core::amr::assembleFv, built on the S1 device
+// Device FV (pressure) operator ASSEMBLY (peclet::amr::assembleFv, built on the S1 device
 // CSR-fill primitive) must reproduce the host AmrPoisson::assembleFv weight-CSR bit-for-bit on the
 // OpenMP backend: same face enumeration (forEachFaceNeighbor order, 2:1 sub-faces), same
 // openness·A_f/d_f weights, same invVol/bcDiag. This is the D1+D2 anti-drift lock — the device
 // assembler replaces the host walk + upload in the dynamic-geometry path.
 //
-// Guarded by PECLET_CORE_HAVE_MORTON; a no-op pass without the morton sibling checkout.
 #include "test_util.hpp"
 
-#ifdef PECLET_CORE_HAVE_MORTON
 #include <cmath>
 #include <cstdint>
 #include <Kokkos_Core.hpp>
 #include <vector>
 
-#include "peclet/core/amr/assembly.hpp"
-#include "peclet/core/amr/block_octree.hpp"
-#include "peclet/core/amr/block_octree_view.hpp"
-#include "peclet/core/amr/fv_op.hpp"
-#include "peclet/core/amr/poisson.hpp"
+#include "peclet/amr/assembly.hpp"
+#include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/block_octree_view.hpp"
+#include "peclet/amr/fv_op.hpp"
+#include "peclet/amr/poisson.hpp"
 
 using namespace peclet::core;
-using namespace peclet::core::amr;
+using namespace peclet::amr;
 
 namespace {
 
@@ -99,7 +97,7 @@ void checkCase(const char* name, const BO& t, double h0, bool periodic, bool wal
   FvOp op = assembleFv(ap, dev);
 
   // Sizes
-  PECLET_CORE_CHECK_EQ(static_cast<Index>(op.n), t.numLeaves());
+  PECLET_AMR_CHECK_EQ(static_cast<Index>(op.n), t.numLeaves());
   std::vector<Index> dstart = down(op.faceStart);
   std::vector<Index> dnbr = down(op.faceNbr);
   std::vector<double> dcoef = down(op.faceW);
@@ -109,11 +107,11 @@ void checkCase(const char* name, const BO& t, double h0, bool periodic, bool wal
   std::printf("  [%s] n=%lld nFaces host=%lld dev=%lld\n", name, static_cast<long long>(op.n),
               static_cast<long long>(H.nbr.size()), static_cast<long long>(dnbr.size()));
 
-  PECLET_CORE_CHECK_EQ(countMismatch(H.start, dstart), 0);
-  PECLET_CORE_CHECK_EQ(countMismatch(H.nbr, dnbr), 0);
-  PECLET_CORE_CHECK_EQ(countMismatch(H.coef, dcoef), 0);
-  PECLET_CORE_CHECK_EQ(countMismatch(H.invVol, dinv), 0);
-  PECLET_CORE_CHECK_EQ(countMismatch(H.bcDiag, dbc), 0);
+  PECLET_AMR_CHECK_EQ(countMismatch(H.start, dstart), 0);
+  PECLET_AMR_CHECK_EQ(countMismatch(H.nbr, dnbr), 0);
+  PECLET_AMR_CHECK_EQ(countMismatch(H.coef, dcoef), 0);
+  PECLET_AMR_CHECK_EQ(countMismatch(H.invVol, dinv), 0);
+  PECLET_AMR_CHECK_EQ(countMismatch(H.bcDiag, dbc), 0);
 
   // And the assembled operator APPLIES identically: applyFv == host shared-FV apply.
   const Index n = t.numLeaves();
@@ -129,7 +127,7 @@ void checkCase(const char* name, const BO& t, double h0, bool periodic, bool wal
   View<double> dLu("Lu", static_cast<std::size_t>(n));
   applyFv(op, dx, dLu);
   std::vector<double> dout = down(dLu);
-  PECLET_CORE_CHECK_EQ(applyMismatch(hout, dout), 0);
+  PECLET_AMR_CHECK_EQ(applyMismatch(hout, dout), 0);
 }
 
 void run() {
@@ -160,11 +158,5 @@ int main(int argc, char** argv) {
   Kokkos::initialize(argc, argv);
   run();
   Kokkos::finalize();
-  PECLET_CORE_RETURN_TEST_RESULT();
+  PECLET_AMR_RETURN_TEST_RESULT();
 }
-#else
-int main() {
-  std::printf("PECLET_CORE_HAVE_MORTON not set — skipping device AMR assembly test\n");
-  return ::peclet::core::test::kSkipExitCode;
-}
-#endif  // PECLET_CORE_HAVE_MORTON

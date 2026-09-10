@@ -1,0 +1,238 @@
+name: CI
+
+# Honest CI (suite/docs/QUALITY_PLAN.md §3.D): every test the repository registers is either RUN or
+# reported by ctest as "Not Run (skipped)" — never green by early-return. peclet-amr is header-only
+# over peclet-core + peclet-morton (checked out as SIBLINGS, exactly the suite layout) and always
+# compiles through Kokkos (OpenMP + Serial host backend here, 5.1.1 cached):
+#
+#   kokkos-openmp   gcc / clang, Release, MPI ON: the whole battery — host octree + oracle, the
+#                   device (Kokkos) solver stack, the distributed octree / flow at np=1,2,4 — plus
+#                   (gcc) the Python module peclet.amr with test_amr.py serial + np=2 and the
+#                   state_hash byte gate.
+#   debug           gcc Debug, MPI ON: the same battery with assertions live (single-rank + mpi).
+#   no-mpi          PECLET_AMR_MPI=OFF: the single-rank paths against core's mpi_stub; no Python.
+#
+# What is NOT run here, and why (nothing is hidden — `ctest -N` lists it all):
+#   * label np8   the 8-rank instances: hosted runners have 4 cores and oversubscribed np=8 halo
+#                 tests hung there (peclet-core's NBX tag-race history). np=8 is a LOCAL gate.
+#   * label bench benchmarks + measurement studies (bench_amr_flow, study_amr_*): timings and
+#                 tables, no correctness gate.
+#   * GPU backends (CUDA/HIP): no GPU on free runners.
+#
+# Thread bounds: the hosted runner has 4 cores / 16 GB. Single-rank suites run with
+# OMP_NUM_THREADS=2, the MPI suites with OMP_NUM_THREADS=1 (np=4 x 1 thread), ctest -j1 throughout.
+#
+# core is checked out at PECLET_CORE_REF: peclet-amr needs core's solver layer (lifted out of the AMR
+# tree on 2026-09-10), which ships in the core release AFTER v0.6.1 — until that tag exists this is
+# `main`; the release repins it (and PECLET_CORE_TAG in cmake/PecletDeps.cmake) to the tag.
+
+on:
+  push:
+    branches: [main, "**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  KOKKOS_TAG: "5.1.1"        # keep in lockstep with ../tools/bootstrap_deps.sh and cmake/PecletDeps.cmake
+  PECLET_CORE_REF: "main"    # see the header
+  MORTON_TAG: "v0.2.1"       # keep in lockstep with cmake/PecletDeps.cmake (PECLET_MORTON_TAG)
+  NANOBIND_VERSION: "2.13.0" # the suite venv's nanobind; pinned so a nanobind release cannot break CI
+  OMPI_ALLOW_RUN_AS_ROOT: 1
+  OMPI_ALLOW_RUN_AS_ROOT_CONFIRM: 1
+  OMPI_MCA_rmaps_base_oversubscribe: 1
+  PRTE_MCA_rmaps_default_mapping_policy: ":oversubscribe"
+  OMP_PROC_BIND: "false"
+  CTEST_OUTPUT_ON_FAILURE: 1
+
+jobs:
+  kokkos-openmp:
+    name: ubuntu / ${{ matrix.compiler }} / Kokkos OpenMP + MPI / Release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc, clang]
+        include:
+          - compiler: gcc
+            cc: gcc
+            cxx: g++
+          - compiler: clang
+            cc: clang
+            cxx: clang++
+    env:
+      CC: ${{ matrix.cc }}
+      CXX: ${{ matrix.cxx }}
+    steps:
+      # Sibling layout, exactly as in the suite checkout: cmake/PecletDeps.cmake finds ../core and
+      # ../morton before it would fetch anything.
+      - uses: actions/checkout@v4
+        with:
+          path: amr
+      - name: Checkout core + morton (siblings)
+        uses: actions/checkout@v4
+        with:
+          repository: computational-chemical-engineering/peclet-core
+          ref: ${{ env.PECLET_CORE_REF }}
+          path: core
+      - uses: actions/checkout@v4
+        with:
+          repository: computational-chemical-engineering/peclet-morton
+          ref: ${{ env.MORTON_TAG }}
+          path: morton
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y cmake ninja-build libomp-dev g++ clang libopenmpi-dev openmpi-bin \
+                                  python3-dev python3-pip
+          python3 -m pip install "nanobind==${NANOBIND_VERSION}" numpy mpi4py
+
+      - name: Cache Kokkos install
+        id: kokkos-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/kokkos-install
+          key: kokkos-${{ env.KOKKOS_TAG }}-openmp-cxx20-${{ matrix.compiler }}-${{ runner.os }}
+
+      - name: Build Kokkos (OpenMP + Serial)
+        if: steps.kokkos-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch "$KOKKOS_TAG" https://github.com/kokkos/kokkos.git /tmp/kokkos
+          cmake -S /tmp/kokkos -B /tmp/kokkos/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_STANDARD=20 \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+            -DKokkos_ENABLE_OPENMP=ON -DKokkos_ENABLE_SERIAL=ON \
+            -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/kokkos-install"
+          cmake --build /tmp/kokkos/build -j
+          cmake --install /tmp/kokkos/build
+
+      - name: Configure (MPI + tests + Python)
+        run: |
+          cmake -S amr -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/kokkos-install" \
+            -DPECLET_AMR_MPI=ON -DPECLET_AMR_BUILD_TESTS=ON \
+            -DPECLET_AMR_BUILD_PYTHON=${{ matrix.compiler == 'gcc' && 'ON' || 'OFF' }} \
+            -DPython_EXECUTABLE="$(which python3)"
+
+      - name: Build
+        run: cmake --build build -j
+
+      - name: List tests
+        run: ctest --test-dir build -N
+
+      - name: Test single-rank (OMP_NUM_THREADS=2)
+        run: OMP_NUM_THREADS=2 ctest --test-dir build -LE "mpi|bench" --timeout 1800 --output-on-failure -j1
+
+      - name: Test MPI np=1,2,4 (OMP_NUM_THREADS=1; np8 excluded, see header)
+        run: OMP_NUM_THREADS=1 ctest --test-dir build -L mpi -LE "np8|bench" --timeout 1800 --output-on-failure -j1
+
+      - name: Import peclet.amr
+        if: matrix.compiler == 'gcc'
+        run: PYTHONPATH=$PWD/build python3 -c "import mpi4py.MPI, peclet.amr; print('peclet.amr', peclet.amr.execution_space)"
+
+  debug:
+    name: ubuntu / gcc / Kokkos OpenMP + MPI / Debug
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: amr
+      - uses: actions/checkout@v4
+        with:
+          repository: computational-chemical-engineering/peclet-core
+          ref: ${{ env.PECLET_CORE_REF }}
+          path: core
+      - uses: actions/checkout@v4
+        with:
+          repository: computational-chemical-engineering/peclet-morton
+          ref: ${{ env.MORTON_TAG }}
+          path: morton
+      - name: Install toolchain
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y cmake ninja-build libomp-dev g++ libopenmpi-dev openmpi-bin
+      - name: Cache Kokkos install
+        id: kokkos-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/kokkos-install
+          key: kokkos-${{ env.KOKKOS_TAG }}-openmp-cxx20-gcc-${{ runner.os }}
+      - name: Build Kokkos (OpenMP + Serial)
+        if: steps.kokkos-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch "$KOKKOS_TAG" https://github.com/kokkos/kokkos.git /tmp/kokkos
+          cmake -S /tmp/kokkos -B /tmp/kokkos/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_STANDARD=20 \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+            -DKokkos_ENABLE_OPENMP=ON -DKokkos_ENABLE_SERIAL=ON \
+            -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/kokkos-install"
+          cmake --build /tmp/kokkos/build -j
+          cmake --install /tmp/kokkos/build
+      - name: Configure (Debug, MPI + tests, no Python)
+        run: |
+          cmake -S amr -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/kokkos-install" \
+            -DPECLET_AMR_MPI=ON -DPECLET_AMR_BUILD_TESTS=ON -DPECLET_AMR_BUILD_PYTHON=OFF
+      - name: Build
+        run: cmake --build build -j
+      - name: Test (single-rank + MPI np=1,2,4)
+        run: |
+          ctest --test-dir build -N
+          OMP_NUM_THREADS=2 ctest --test-dir build -LE "mpi|bench" --timeout 2400 --output-on-failure -j1
+          OMP_NUM_THREADS=1 ctest --test-dir build -L mpi -LE "np8|bench" --timeout 2400 --output-on-failure -j1
+
+  no-mpi:
+    name: ubuntu / gcc / Kokkos OpenMP, no MPI (mpi_stub) / Release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: amr
+      - uses: actions/checkout@v4
+        with:
+          repository: computational-chemical-engineering/peclet-core
+          ref: ${{ env.PECLET_CORE_REF }}
+          path: core
+      - uses: actions/checkout@v4
+        with:
+          repository: computational-chemical-engineering/peclet-morton
+          ref: ${{ env.MORTON_TAG }}
+          path: morton
+      - name: Install toolchain
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y cmake ninja-build libomp-dev g++
+      - name: Cache Kokkos install
+        id: kokkos-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/kokkos-install
+          key: kokkos-${{ env.KOKKOS_TAG }}-openmp-cxx20-gcc-${{ runner.os }}
+      - name: Build Kokkos (OpenMP + Serial)
+        if: steps.kokkos-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch "$KOKKOS_TAG" https://github.com/kokkos/kokkos.git /tmp/kokkos
+          cmake -S /tmp/kokkos -B /tmp/kokkos/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_STANDARD=20 \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+            -DKokkos_ENABLE_OPENMP=ON -DKokkos_ENABLE_SERIAL=ON \
+            -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/kokkos-install"
+          cmake --build /tmp/kokkos/build -j
+          cmake --install /tmp/kokkos/build
+      - name: Configure (PECLET_AMR_MPI=OFF)
+        run: |
+          cmake -S amr -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/kokkos-install" \
+            -DPECLET_AMR_MPI=OFF -DPECLET_AMR_BUILD_TESTS=ON
+      - name: Build
+        run: cmake --build build -j
+      - name: Test (single-rank stub)
+        run: |
+          ctest --test-dir build -N
+          OMP_NUM_THREADS=2 ctest --test-dir build -LE bench --timeout 1800 --output-on-failure -j1

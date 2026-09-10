@@ -15,19 +15,19 @@
 // corner-finer neighbour under 2:1 balance); a face with no neighbour (block /
 // domain edge) contributes nothing on that axis.
 //
-// Header-only, guarded by PECLET_CORE_HAVE_MORTON.
-#ifndef PECLET_CORE_AMR_INDICATORS_HPP
-#define PECLET_CORE_AMR_INDICATORS_HPP
+#ifndef PECLET_AMR_INDICATORS_HPP
+#define PECLET_AMR_INDICATORS_HPP
 
-#ifdef PECLET_CORE_HAVE_MORTON
+#include "peclet/amr/common.hpp"
+
 
 #include <cmath>
 #include <vector>
 
-#include "peclet/core/amr/block_octree.hpp"
+#include "peclet/amr/block_octree.hpp"
 #include "peclet/core/common/types.hpp"
 
-namespace peclet::core::amr {
+namespace peclet::amr {
 
 /// Löhner normalized second-difference indicator E_i ∈ [0,1], per leaf, for scalar
 /// `u` (indexed by leaf slot). Along each axis with both neighbours present:
@@ -88,7 +88,6 @@ std::vector<double> secondDiffIndicator(const BlockOctree<Dim, Bits>& t,
   return e;
 }
 
-}  // namespace peclet::core::amr
+}  // namespace peclet::amr
 
-#endif  // PECLET_CORE_HAVE_MORTON
-#endif  // PECLET_CORE_AMR_INDICATORS_HPP
+#endif  // PECLET_AMR_INDICATORS_HPP

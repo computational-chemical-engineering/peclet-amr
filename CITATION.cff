@@ -1,0 +1,31 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata below."
+title: "peclet-amr: block-local-Morton AMR octree and collocated cut-cell Navier–Stokes solver"
+abstract: >-
+  Header-only C++20 adaptive-mesh-refinement package of the peclet suite: a per-block linear octree
+  on Morton codes with 2:1 balance, solution-adaptive refinement and an ORB-distributed (MPI) variant
+  with leaf halos and weighted-ORB rebalancing; on it, a collocated-projection incompressible
+  Navier–Stokes solver with a cut-cell immersed boundary (ghost projection, mixed-level cut band),
+  geometric multigrid (PCG / BiCGStab), scalar transport and VTU output. Kokkos device backends
+  (CUDA / HIP / OpenMP) and nanobind Python bindings (peclet.amr). Relocated out of peclet-core with
+  its history on 2026-09-10.
+type: software
+authors:
+  - family-names: Peters
+    given-names: Frank
+    email: e.a.j.f.peters@gmail.com
+    affiliation: "Eindhoven University of Technology"
+version: 0.1.0
+date-released: 2026-09-10
+license: MIT
+repository-code: "https://github.com/computational-chemical-engineering/peclet-amr"
+keywords:
+  - adaptive mesh refinement
+  - octree
+  - Morton codes
+  - cut-cell immersed boundary
+  - incompressible Navier–Stokes
+  - multigrid
+  - MPI
+  - Kokkos
+  - GPU computing

@@ -1,26 +1,24 @@
-// Device cut-cell MOMENTUM operator ASSEMBLY (peclet::core::amr::assembleMomentum, on the S1 CSR
+// Device cut-cell MOMENTUM operator ASSEMBLY (peclet::amr::assembleMomentum, on the S1 CSR
 // primitive) must reproduce host AmrCutCell::build (Pass 2 buildCutStencil) + assembleOperator
 // bit-for-bit on the OpenMP backend: the ξ-overlay stencil rebuild (AC/off/cut/rscale), and the
 // merged diag + face-CSR over the three per-cell branches (solid identity / ξ-overlay / regular
 // ∇²·μ). This is the D3 anti-drift lock.
 //
-// Guarded by PECLET_CORE_HAVE_MORTON; a no-op pass without the morton sibling checkout.
 #include "test_util.hpp"
 
-#ifdef PECLET_CORE_HAVE_MORTON
 #include <cmath>
 #include <cstdint>
 #include <Kokkos_Core.hpp>
 #include <vector>
 
-#include "peclet/core/amr/block_octree.hpp"
-#include "peclet/core/amr/block_octree_view.hpp"
-#include "peclet/core/amr/cut_cell.hpp"
-#include "peclet/core/amr/momentum.hpp"
-#include "peclet/core/amr/momentum_assembly.hpp"
+#include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/block_octree_view.hpp"
+#include "peclet/amr/cut_cell.hpp"
+#include "peclet/amr/momentum.hpp"
+#include "peclet/amr/momentum_assembly.hpp"
 
 using namespace peclet::core;
-using namespace peclet::core::amr;
+using namespace peclet::amr;
 
 namespace {
 
@@ -92,26 +90,26 @@ void run() {
         rscale("rs", static_cast<std::size_t>(n));
     View<char> cut("cut", static_cast<std::size_t>(n));
     rebuildCutStencil<kBits>(n, beta, AC0, sdfC, nb, fluid, AC, off, cut, rscale);
-    PECLET_CORE_CHECK_EQ(mismatch(cc.acRaw(), down(AC)), 0);
-    PECLET_CORE_CHECK_EQ(mismatch(cc.offRaw(), down(off)), 0);
-    PECLET_CORE_CHECK_EQ(mismatch(cc.cutRaw(), down(cut)), 0);
-    PECLET_CORE_CHECK_EQ(mismatch(cc.rscaleRaw(), down(rscale)), 0);
+    PECLET_AMR_CHECK_EQ(mismatch(cc.acRaw(), down(AC)), 0);
+    PECLET_AMR_CHECK_EQ(mismatch(cc.offRaw(), down(off)), 0);
+    PECLET_AMR_CHECK_EQ(mismatch(cc.cutRaw(), down(cut)), 0);
+    PECLET_AMR_CHECK_EQ(mismatch(cc.rscaleRaw(), down(rscale)), 0);
   }
 
   // ---- (2) device assembled MomentumOp == host assembleOperator (diag/start/nbr/coef) ----
   const auto H = cc.assembleOperator(/*scaleAdvByRscale=*/false);
   MomentumOp op = assembleMomentum<kBits>(cc, dev, /*scaleAdvByRscale=*/false);
-  PECLET_CORE_CHECK_EQ(static_cast<Index>(op.n), n);
+  PECLET_AMR_CHECK_EQ(static_cast<Index>(op.n), n);
   std::vector<double> ddiag = down(op.diag);
   std::vector<Index> dstart = down(op.faceStart);
   std::vector<Index> dnbr = down(op.faceNbr);
   std::vector<double> dcoef = down(op.faceCoef);
   std::printf("  n=%lld nnz host=%lld dev=%lld\n", static_cast<long long>(n),
               static_cast<long long>(H.nbr.size()), static_cast<long long>(dnbr.size()));
-  PECLET_CORE_CHECK_EQ(mismatch(H.diag, ddiag), 0);
-  PECLET_CORE_CHECK_EQ(mismatch(H.start, dstart), 0);
-  PECLET_CORE_CHECK_EQ(mismatch(H.nbr, dnbr), 0);
-  PECLET_CORE_CHECK_EQ(mismatch(H.coef, dcoef), 0);
+  PECLET_AMR_CHECK_EQ(mismatch(H.diag, ddiag), 0);
+  PECLET_AMR_CHECK_EQ(mismatch(H.start, dstart), 0);
+  PECLET_AMR_CHECK_EQ(mismatch(H.nbr, dnbr), 0);
+  PECLET_AMR_CHECK_EQ(mismatch(H.coef, dcoef), 0);
 
   // ---- (3) applyMom == host applyOp over the assembled operator ----
   std::vector<double> x(static_cast<std::size_t>(n));
@@ -148,7 +146,7 @@ void run() {
         ++m;
     }
     std::printf("  apply max rel diff = %.2e (tol %.0e)\n", maxRel, kApplyRelTol);
-    PECLET_CORE_CHECK_EQ(m, 0);
+    PECLET_AMR_CHECK_EQ(m, 0);
   }
 }
 
@@ -158,11 +156,5 @@ int main(int argc, char** argv) {
   Kokkos::initialize(argc, argv);
   run();
   Kokkos::finalize();
-  PECLET_CORE_RETURN_TEST_RESULT();
+  PECLET_AMR_RETURN_TEST_RESULT();
 }
-#else
-int main() {
-  std::printf("PECLET_CORE_HAVE_MORTON not set — skipping device momentum assembly test\n");
-  return ::peclet::core::test::kSkipExitCode;
-}
-#endif  // PECLET_CORE_HAVE_MORTON

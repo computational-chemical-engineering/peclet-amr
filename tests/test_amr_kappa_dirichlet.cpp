@@ -9,19 +9,17 @@
 // should now converge to round-off (no floor), confirming κ-restrict is safe when the
 // operator is non-singular.
 //
-// Guarded by PECLET_CORE_HAVE_MORTON; a no-op pass without the morton sibling checkout.
 #include "test_util.hpp"
 
-#ifdef PECLET_CORE_HAVE_MORTON
 #include <cmath>
 #include <Kokkos_Core.hpp>
 #include <vector>
 
-#include "peclet/core/amr/block_octree.hpp"
-#include "peclet/core/amr/multigrid.hpp"
+#include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/multigrid.hpp"
 
 using namespace peclet::core;
-using namespace peclet::core::amr;
+using namespace peclet::amr;
 
 namespace {
 
@@ -65,7 +63,7 @@ void run() {
   Multigrid<3, kBits> mg;
   mg.build(t, h0, openFn, /*periodic=*/false);
   const Index n0 = mg.numLeaves(0);
-  PECLET_CORE_CHECK(mg.numLevels() >= 3);
+  PECLET_AMR_CHECK(mg.numLevels() >= 3);
 
   // manufactured RHS b = A·u_exact (A non-singular ⇒ unique solution, no null space)
   std::vector<double> uex((std::size_t)n0);
@@ -121,8 +119,8 @@ void run() {
   // prolongation stays plain piecewise-constant (an unmatched transfer pair). So plain
   // volume-average remains the default; κ-restrict is safe on non-singular configs but is
   // not a convergence win in these tests.
-  PECLET_CORE_CHECK(plain.second < plain.first * 1e-8);  // no floor (baseline)
-  PECLET_CORE_CHECK(kap.second < kap.first * 1e-8);      // no floor with κ either (Dirichlet)
+  PECLET_AMR_CHECK(plain.second < plain.first * 1e-8);  // no floor (baseline)
+  PECLET_AMR_CHECK(kap.second < kap.first * 1e-8);      // no floor with κ either (Dirichlet)
 }
 
 }  // namespace
@@ -131,11 +129,5 @@ int main(int argc, char** argv) {
   Kokkos::initialize(argc, argv);
   run();
   Kokkos::finalize();
-  PECLET_CORE_RETURN_TEST_RESULT();
+  PECLET_AMR_RETURN_TEST_RESULT();
 }
-#else
-int main() {
-  std::printf("PECLET_CORE_HAVE_MORTON not set — skipping kappa-dirichlet test\n");
-  return ::peclet::core::test::kSkipExitCode;
-}
-#endif  // PECLET_CORE_HAVE_MORTON

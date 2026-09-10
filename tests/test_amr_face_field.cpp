@@ -2,19 +2,17 @@
 // only makes the *cell* field approximately divergence-free (O(h²)); the face field uf_f =
 // ½(u_i+u_j) − (φ₊−φ₋)/d is divergence-free to the pressure-solve residual, because L = D·G_face on
 // the same (sub)faces ⇒ D(uf) = D u* − Lφ. This must hold across 2:1 interfaces too (the coarse
-// cell sums its fine sub-faces). Guarded by PECLET_CORE_HAVE_MORTON.
 #include "test_util.hpp"
 
-#ifdef PECLET_CORE_HAVE_MORTON
 #include <cmath>
 
-#include "peclet/core/amr/block_octree.hpp"
-#include "peclet/core/amr/flow_oracle.hpp"
-#include "peclet/core/amr/refine.hpp"
+#include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/flow_oracle.hpp"
+#include "peclet/amr/refine.hpp"
 #include "peclet/core/common/types.hpp"
 
 using namespace peclet::core;
-using namespace peclet::core::amr;
+using namespace peclet::amr;
 using BO = BlockOctree<3, 21>;
 using Code = BO::Code;
 
@@ -57,16 +55,16 @@ void run_test() {
   for (unsigned k = 0; k < L; ++k)
     t30.refineIf([](Code, unsigned) { return true; });
   auto [dCell30, dFace30] = run(t30, R, Vec<3>{cc, cc, cc}, 30);
-  PECLET_CORE_CHECK(dFace6 <
+  PECLET_AMR_CHECK(dFace6 <
                     0.05 * dCell6);  // face field ≥20× more divergence-free than the cell field
-  PECLET_CORE_CHECK(dFace30 < 0.05 * dCell30);  // ditto at the tighter solve
+  PECLET_AMR_CHECK(dFace30 < 0.05 * dCell30);  // ditto at the tighter solve
   // The face divergence used to TRACK the pressure-solve residual, so tightening the solve shrank
   // it. Since the gauge-exact cell gradient became the default (2026-08-18) it is ~85x smaller and
   // sits on a floor instead: measured here 5.87e-06 -> 5.54e-06 with the legacy gradient against
   // 6.6992e-08 -> 6.6995e-08 with the gauge-exact one. So assert what still holds -- it does not
   // GROW when the solve is tightened -- and pin the absolute level the floor sits at.
-  PECLET_CORE_CHECK(dFace30 <= 1.05 * dFace6);
-  PECLET_CORE_CHECK(dFace30 < 1e-6);
+  PECLET_AMR_CHECK(dFace30 <= 1.05 * dFace6);
+  PECLET_AMR_CHECK(dFace30 < 1e-6);
   //         (the cell-field divergence is the fixed O(h²) approximate-projection error, ~unchanged)
 
   // (2) graded 2:1 grid: the face field stays divergence-free across the coarse–fine interfaces,
@@ -86,9 +84,9 @@ void run_test() {
         return std::sqrt(dx * dx + dy * dy + dz * dz) - Rg;
       },
       /*target_level=*/0, /*band=*/3.0, /*balance=*/true);
-  PECLET_CORE_CHECK(tg.isBalanced());
+  PECLET_AMR_CHECK(tg.isBalanced());
   auto [dCellG, dFaceG] = run(tg, Rg, Vec<3>{cg, cg, cg}, 30);
-  PECLET_CORE_CHECK(dFaceG <
+  PECLET_AMR_CHECK(dFaceG <
                     0.01 * dCellG);  // across 2:1: face field ≥100× cleaner than the cell field
 }
 
@@ -96,13 +94,7 @@ void run_test() {
 
 int main() {
   run_test();
-  if (peclet::core::test::g_failures == 0)
+  if (peclet::amr::test::g_failures == 0)
     std::printf("OK\n");
-  return peclet::core::test::g_failures == 0 ? 0 : 1;
+  return peclet::amr::test::g_failures == 0 ? 0 : 1;
 }
-#else
-int main() {
-  std::printf("PECLET_CORE_HAVE_MORTON not set — skipping face-field test\n");
-  return ::peclet::core::test::kSkipExitCode;
-}
-#endif

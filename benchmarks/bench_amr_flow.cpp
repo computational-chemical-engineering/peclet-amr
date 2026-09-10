@@ -5,24 +5,22 @@
 //
 //   ./bench_amr_flow [Lmax=5] [steps=10]
 //
-// Guarded by PECLET_CORE_HAVE_MORTON; prints a notice and exits otherwise.
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
 
-#ifdef PECLET_CORE_HAVE_MORTON
 #include <Kokkos_Core.hpp>
 
-#include "peclet/core/amr/block_octree.hpp"
-#include "peclet/core/amr/flow.hpp"
-#include "peclet/core/amr/flow_oracle.hpp"
-#include "peclet/core/amr/multigrid.hpp"
-#include "peclet/core/amr/pcg.hpp"
-#include "peclet/core/amr/poisson.hpp"
+#include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/flow.hpp"
+#include "peclet/amr/flow_oracle.hpp"
+#include "peclet/amr/multigrid.hpp"
+#include "peclet/amr/pcg.hpp"
+#include "peclet/amr/poisson.hpp"
 
 using namespace peclet::core;
-using namespace peclet::core::amr;
+using namespace peclet::amr;
 using Clock = std::chrono::steady_clock;
 using BO = BlockOctree<3, 21>;
 using Code = BO::Code;
@@ -368,9 +366,3 @@ int main(int argc, char** argv) {
   Kokkos::finalize();
   return 0;
 }
-#else
-int main() {
-  std::printf("PECLET_CORE_HAVE_MORTON not set — skipping AMR flow benchmark\n");
-  return 77;  // ctest SKIP_RETURN_CODE (tests/test_util.hpp kSkipExitCode)
-}
-#endif

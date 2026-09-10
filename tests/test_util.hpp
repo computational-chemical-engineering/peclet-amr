@@ -1,46 +1,46 @@
 // Minimal dependency-free test helpers. A test binary returns non-zero on first failure so ctest
 // (and `mpirun`) report it.
-#ifndef PECLET_CORE_TEST_UTIL_HPP
-#define PECLET_CORE_TEST_UTIL_HPP
+#ifndef PECLET_AMR_TEST_UTIL_HPP
+#define PECLET_AMR_TEST_UTIL_HPP
 
 #include <cstdio>
 #include <cstdlib>
 
-namespace peclet::core::test {
+namespace peclet::amr::test {
 inline int g_failures = 0;
 // Exit code for "this test cannot run in this configuration" (no morton sibling, no MPI, ...).
 // Every ctest registered through tests/CMakeLists.txt carries SKIP_RETURN_CODE 77, so ctest reports
 // such a binary as "Not Run (skipped)" -- never as Passed (suite/docs/QUALITY_PLAN.md §3.D).
 inline constexpr int kSkipExitCode = 77;
-}  // namespace peclet::core::test
+}  // namespace peclet::amr::test
 
-#define PECLET_CORE_CHECK(cond)                                                          \
+#define PECLET_AMR_CHECK(cond)                                                          \
   do {                                                                                   \
     if (!(cond)) {                                                                       \
       std::fprintf(stderr, "CHECK failed: %s\n  at %s:%d\n", #cond, __FILE__, __LINE__); \
-      ++::peclet::core::test::g_failures;                                                \
+      ++::peclet::amr::test::g_failures;                                                \
     }                                                                                    \
   } while (0)
 
-#define PECLET_CORE_CHECK_EQ(a, b)                                                            \
+#define PECLET_AMR_CHECK_EQ(a, b)                                                            \
   do {                                                                                        \
     auto _a = (a);                                                                            \
     auto _b = (b);                                                                            \
     if (!(_a == _b)) {                                                                        \
       std::fprintf(stderr, "CHECK_EQ failed: %s == %s  (%lld vs %lld)\n  at %s:%d\n", #a, #b, \
                    (long long)_a, (long long)_b, __FILE__, __LINE__);                         \
-      ++::peclet::core::test::g_failures;                                                     \
+      ++::peclet::amr::test::g_failures;                                                     \
     }                                                                                         \
   } while (0)
 
-#define PECLET_CORE_RETURN_TEST_RESULT()                                       \
+#define PECLET_AMR_RETURN_TEST_RESULT()                                       \
   do {                                                                         \
-    if (::peclet::core::test::g_failures == 0) {                               \
+    if (::peclet::amr::test::g_failures == 0) {                               \
       std::printf("OK\n");                                                     \
       return 0;                                                                \
     }                                                                          \
-    std::fprintf(stderr, "%d failure(s)\n", ::peclet::core::test::g_failures); \
+    std::fprintf(stderr, "%d failure(s)\n", ::peclet::amr::test::g_failures); \
     return 1;                                                                  \
   } while (0)
 
-#endif  // PECLET_CORE_TEST_UTIL_HPP
+#endif  // PECLET_AMR_TEST_UTIL_HPP

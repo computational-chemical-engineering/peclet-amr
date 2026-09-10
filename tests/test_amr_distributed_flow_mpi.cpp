@@ -11,22 +11,20 @@
 //       run keeps the ghost-closed divergence at the single-rank scale.
 // np = 1,2,4,8.
 //
-// Guarded by PECLET_CORE_HAVE_MORTON; a no-op pass without the morton sibling checkout.
 #include "test_util.hpp"
 
-#ifdef PECLET_CORE_HAVE_MORTON
 #include <array>
 #include <cmath>
 #include <Kokkos_Core.hpp>
 #include <vector>
 
-#include "peclet/core/amr/distributed_octree.hpp"
-#include "peclet/core/amr/flow.hpp"
+#include "peclet/amr/distributed_octree.hpp"
+#include "peclet/amr/flow.hpp"
 #include "peclet/core/common/mpi.hpp"
 #include "peclet/core/common/view.hpp"
 
 using namespace peclet::core;
-using namespace peclet::core::amr;
+using namespace peclet::amr;
 
 namespace {
 
@@ -116,9 +114,9 @@ void run() {
     fw.initMpi(world);
     configure(fw, mode);
     if (size > 1)
-      PECLET_CORE_CHECK(fw.numGhostCells() > 0);
+      PECLET_AMR_CHECK(fw.numGhostCells() > 0);
     else
-      PECLET_CORE_CHECK_EQ(fw.numGhostCells(), 0);
+      PECLET_AMR_CHECK_EQ(fw.numGhostCells(), 0);
     Fields w = runSteps(fw, steps);
 
     AmrFlow<kBits> fs;
@@ -141,8 +139,8 @@ void run() {
     MPI_Allreduce(&dmax, &gdmax, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
     // The distributed divergence diagnostic stays at the single-rank scale.
     const double dw = fw.divNormL2(), dsv = fs.divNormL2();
-    PECLET_CORE_CHECK(std::isfinite(dw));
-    PECLET_CORE_CHECK(dw <= 10.0 * dsv + 1e-12);
+    PECLET_AMR_CHECK(std::isfinite(dw));
+    PECLET_AMR_CHECK(dw <= 10.0 * dsv + 1e-12);
   };
 
   // ---- aperture (Stokes) / ghost (Stokes) / NS (auto-ghost + advection halo) ----
@@ -150,9 +148,9 @@ void run() {
     double gdmax = 0.0, scale = 0.0;
     compareMode(mode, gdmax, scale);
     if (size == 1)
-      PECLET_CORE_CHECK(gdmax == 0.0);
+      PECLET_AMR_CHECK(gdmax == 0.0);
     else
-      PECLET_CORE_CHECK(gdmax <= 5e-6 * scale);
+      PECLET_AMR_CHECK(gdmax <= 5e-6 * scale);
   }
 }
 
@@ -165,7 +163,7 @@ int main(int argc, char** argv) {
   Kokkos::finalize();
   int rank = 0;
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-  int fails = peclet::core::test::g_failures, total = 0;
+  int fails = peclet::amr::test::g_failures, total = 0;
   MPI_Reduce(&fails, &total, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
   MPI_Finalize();
   if (rank == 0) {
@@ -178,9 +176,3 @@ int main(int argc, char** argv) {
   }
   return 0;
 }
-#else
-#include "test_skip_mpi.hpp"
-int main(int argc, char** argv) {
-  return ::peclet::core::test::skipMpiTest(argc, argv, "distributed AmrFlow test");
-}
-#endif  // PECLET_CORE_HAVE_MORTON

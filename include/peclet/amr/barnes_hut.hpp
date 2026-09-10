@@ -9,12 +9,12 @@
 // PBD / N-body consumer (e.g. dem) would use; theta = 0 recurses fully and
 // reproduces the direct O(N^2) sum exactly.
 //
-// Header-only, guarded by PECLET_CORE_HAVE_MORTON. Serial/host (the device traversal is a
 // follow-up; the aggregates + leaf arrays are already device-friendly).
-#ifndef PECLET_CORE_AMR_BARNES_HUT_HPP
-#define PECLET_CORE_AMR_BARNES_HUT_HPP
+#ifndef PECLET_AMR_BARNES_HUT_HPP
+#define PECLET_AMR_BARNES_HUT_HPP
 
-#ifdef PECLET_CORE_HAVE_MORTON
+#include "peclet/amr/common.hpp"
+
 
 #include <algorithm>
 #include <array>
@@ -22,11 +22,11 @@
 #include <map>
 #include <vector>
 
-#include "peclet/core/amr/block_octree.hpp"
-#include "peclet/core/amr/leaf_field.hpp"
+#include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/leaf_field.hpp"
 #include "peclet/core/common/types.hpp"
 
-namespace peclet::core::amr {
+namespace peclet::amr {
 
 template <int Dim = 3, unsigned Bits = (Dim == 2 ? 32u : (Dim == 3 ? 21u : 16u))>
 class BarnesHut {
@@ -220,7 +220,6 @@ class BarnesHut {
   std::vector<std::map<Code, Agg>> agg_;  // agg_[level][nodeOriginCode]
 };
 
-}  // namespace peclet::core::amr
+}  // namespace peclet::amr
 
-#endif  // PECLET_CORE_HAVE_MORTON
-#endif  // PECLET_CORE_AMR_BARNES_HUT_HPP
+#endif  // PECLET_AMR_BARNES_HUT_HPP

@@ -18,11 +18,11 @@
 // two coarse-operator strategies can be benchmarked head-to-head on the AMR. The implicit-FOU
 // advection on coarse levels (mirror buildUpwindCoarse) is a follow-up — the viscous staircase is
 // the diffusion preconditioner. Requires a Kokkos build + the morton checkout
-// (PECLET_CORE_HAVE_MORTON).
-#ifndef PECLET_CORE_AMR_VELOCITY_MG_HPP
-#define PECLET_CORE_AMR_VELOCITY_MG_HPP
+#ifndef PECLET_AMR_VELOCITY_MG_HPP
+#define PECLET_AMR_VELOCITY_MG_HPP
 
-#ifdef PECLET_CORE_HAVE_MORTON
+#include "peclet/amr/common.hpp"
+
 
 #include <algorithm>
 #include <cmath>
@@ -30,12 +30,12 @@
 #include <utility>
 #include <vector>
 
-#include "peclet/core/amr/momentum.hpp"
-#include "peclet/core/amr/multigrid.hpp"
-#include "peclet/core/amr/poisson.hpp"
+#include "peclet/amr/momentum.hpp"
+#include "peclet/amr/multigrid.hpp"
+#include "peclet/amr/poisson.hpp"
 #include "peclet/core/common/view.hpp"
 
-namespace peclet::core::amr {
+namespace peclet::amr {
 
 template <unsigned Bits = 21u>
 class VelocityMG {
@@ -295,7 +295,6 @@ class VelocityMG {
   bool useGS_ = false;  // multicolour Gauss–Seidel smoother (opt-in; default weighted Jacobi)
 };
 
-}  // namespace peclet::core::amr
+}  // namespace peclet::amr
 
-#endif  // PECLET_CORE_HAVE_MORTON
-#endif  // PECLET_CORE_AMR_VELOCITY_MG_HPP
+#endif  // PECLET_AMR_VELOCITY_MG_HPP

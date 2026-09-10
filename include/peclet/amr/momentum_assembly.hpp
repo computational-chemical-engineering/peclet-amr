@@ -22,20 +22,20 @@
 // assembleOperator bit-for-bit (test_amr_momentum). GPU is tolerance-not-bit-exact (FMA), per the
 // convention.
 //
-// Requires a Kokkos build + the morton checkout (PECLET_CORE_HAVE_MORTON).
-#ifndef PECLET_CORE_AMR_MOMENTUM_ASSEMBLY_HPP
-#define PECLET_CORE_AMR_MOMENTUM_ASSEMBLY_HPP
+#ifndef PECLET_AMR_MOMENTUM_ASSEMBLY_HPP
+#define PECLET_AMR_MOMENTUM_ASSEMBLY_HPP
 
-#ifdef PECLET_CORE_HAVE_MORTON
+#include "peclet/amr/common.hpp"
 
-#include "peclet/core/amr/assembly.hpp"  // FvFaceEmit (the α=1 ∇² geometry traversal)
-#include "peclet/core/amr/block_octree_view.hpp"
-#include "peclet/core/amr/csr.hpp"
-#include "peclet/core/amr/cut_cell.hpp"
-#include "peclet/core/amr/momentum.hpp"
+
+#include "peclet/amr/assembly.hpp"  // FvFaceEmit (the α=1 ∇² geometry traversal)
+#include "peclet/amr/block_octree_view.hpp"
+#include "peclet/amr/csr.hpp"
+#include "peclet/amr/cut_cell.hpp"
+#include "peclet/amr/momentum.hpp"
 #include "peclet/core/common/view.hpp"
 
-namespace peclet::core::amr {
+namespace peclet::amr {
 
 /// Sink adapter: forwards each face from the FvFaceEmit traversal as (j, factor·coef) to the real
 /// CSR sink — turns the plain geometric coeff into the regular-fluid momentum coupling
@@ -236,7 +236,6 @@ MomentumOp assembleMomentum(const AmrCutCell<Bits>& ccop, const BlockOctreeView<
   return op;
 }
 
-}  // namespace peclet::core::amr
+}  // namespace peclet::amr
 
-#endif  // PECLET_CORE_HAVE_MORTON
-#endif  // PECLET_CORE_AMR_MOMENTUM_ASSEMBLY_HPP
+#endif  // PECLET_AMR_MOMENTUM_ASSEMBLY_HPP

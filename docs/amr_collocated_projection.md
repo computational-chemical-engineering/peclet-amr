@@ -15,8 +15,8 @@ pieces flow's collocated solver already had, so it is robust and conservative:
 3. **`uf` as the NS advecting velocity** — conservative advection (Bell–Colella–Glaz), consistent across
    implicit-FOU + explicit-FOU + SOU. Host + device `9faf5d8`.
 
-Canonical engine = device `peclet::core::amr::AmrFlow` (`include/peclet/core/amr/flow.hpp`), Python-exposed as
-`peclet.core.amr.Flow`. The serial host driver is `peclet::core::amr::oracle::AmrFlow` (`flow_oracle.hpp`) — dev-only
+Canonical engine = device `peclet::amr::AmrFlow` (`include/peclet/amr/flow.hpp`), Python-exposed as
+`peclet.amr.Flow`. The serial host driver is `peclet::amr::oracle::AmrFlow` (`flow_oracle.hpp`) — dev-only
 validation oracle, **not** exposed.
 
 ## The physics that drove this (Frank's framing — keep)
@@ -41,7 +41,7 @@ the Krylov path needed the explicit projection.)
 
 ## What each piece is
 
-### 1. maskSolid (`include/peclet/core/amr/pcg.hpp`)
+### 1. maskSolid (`include/peclet/amr/pcg.hpp`)
 `buildFluidMask(op, mask, n)` sets `mask(i)=1` where the operator diagonal `Σ_f w_f + bcDiag > 1e-30`,
 else 0. `project(u)` = `maskSolid` (zero solid) + (singular only) fluid-only `removeMeanVol`. The mean is
 taken **over fluid cells only** — the old `removeMeanVol` averaged over ALL cells incl. the pinned solid,
@@ -109,7 +109,7 @@ Findings:
 
 ## How to reproduce (GPU) — and the gotchas (these cost time)
 
-Build the CUDA `peclet.core.amr` Python module:
+Build the CUDA `peclet.amr` Python module:
 ```bash
 export PATH=/usr/local/cuda-13.2/bin:$PATH
 cd core && source ../.venv/bin/activate           # THE suite venv; nanobind via SuiteNanobind
@@ -126,12 +126,12 @@ cmake --build build_cuda --target amr_bindings -j
   flush every line + read the file before exit) avoids it.
 - **`pkill -9` a CUDA python can wedge nothing** (GPU frees fine — checked with `nvidia-smi`), but don't
   rely on background runs; prefer foreground with line-buffered prints.
-- flow and peclet.core.amr **cannot share one process** (flow finalizes Kokkos out from under peclet.core.amr's
+- flow and peclet.amr **cannot share one process** (flow finalizes Kokkos out from under peclet.amr's
   Views → abort). Run each engine in its own process.
 - AMR N=128 staircase is genuinely slow (hundreds of seconds); use Galerkin for the converged k (same
   answer) and a short run only to confirm staircase stability.
 
-Driver knobs (Python `peclet.core.amr.Flow`): `set_momentum_mg(True)`, `set_velocity_mg_staircase(True/False)`,
+Driver knobs (Python `peclet.amr.Flow`): `set_momentum_mg(True)`, `set_velocity_mg_staircase(True/False)`,
 `set_momentum_gs(True)`, `set_momentum_mg_solver`, `set_outer_iterations`. Diagnostics:
 `divergence_norm()` (cell), `divergence_norm_face()` (uf), `faceField()`.
 

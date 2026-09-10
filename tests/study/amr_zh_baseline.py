@@ -16,7 +16,7 @@ import sys
 import time
 
 sys.path.insert(0, __file__.rsplit("/tests/", 1)[0] + "/python/build_cuda2")
-from peclet.core import amr  # noqa: E402
+from peclet import amr  # noqa: E402
 
 K_ZH = 4.292
 PHI = 0.125

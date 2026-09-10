@@ -21,23 +21,23 @@
 // convergence scalar, never the solution.) GPU is tolerance-not-bit-exact (FMA) by the documented
 // convention.
 //
-// Requires a Kokkos build + MPI + the morton checkout (PECLET_CORE_HAVE_MORTON).
-#ifndef PECLET_CORE_AMR_DISTRIBUTED_VIEW_HPP
-#define PECLET_CORE_AMR_DISTRIBUTED_VIEW_HPP
+#ifndef PECLET_AMR_DISTRIBUTED_VIEW_HPP
+#define PECLET_AMR_DISTRIBUTED_VIEW_HPP
 
-#ifdef PECLET_CORE_HAVE_MORTON
+#include "peclet/amr/common.hpp"
+
 
 #include <cmath>
 #include <memory>
 #include <vector>
 
-#include "peclet/core/amr/distributed_poisson.hpp"  // DistributedOctree, AmrGeometry, DistributedMultigrid (ref)
-#include "peclet/core/amr/multigrid.hpp"  // restrictField / prolongAdd (bit-exact, reused)
+#include "peclet/amr/distributed_poisson.hpp"  // DistributedOctree, AmrGeometry, DistributedMultigrid (ref)
+#include "peclet/amr/multigrid.hpp"  // restrictField / prolongAdd (bit-exact, reused)
 #include "peclet/core/common/mpi.hpp"
 #include "peclet/core/common/view.hpp"
 #include "peclet/core/halo/grid_halo.hpp"  // detail::gpuAwareMpi() (PECLET_CORE_GPU_AWARE_MPI opt-in, H1)
 
-namespace peclet::core::amr {
+namespace peclet::amr {
 
 /// Value-only, device-resident face-neighbour gather over a fixed topology (C2). Built once from a
 /// DistributedOctree::GatherHaloTopology; thereafter `gather(x, g)` moves only the compact
@@ -361,7 +361,6 @@ class DistributedMultigridView {
   std::vector<std::unique_ptr<Level>> levels_;
 };
 
-}  // namespace peclet::core::amr
+}  // namespace peclet::amr
 
-#endif  // PECLET_CORE_HAVE_MORTON
-#endif  // PECLET_CORE_AMR_DISTRIBUTED_VIEW_HPP
+#endif  // PECLET_AMR_DISTRIBUTED_VIEW_HPP

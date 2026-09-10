@@ -1,4 +1,4 @@
-// Robust-Scaled cut-cell Dirichlet operator (peclet::core::amr::AmrCutCell) — the port of
+// Robust-Scaled cut-cell Dirichlet operator (peclet::amr::AmrCutCell) — the port of
 // sdflow's ξ-polynomial sub-cell BC onto the octree:
 //   (1) 2nd-order accuracy on an embedded-Dirichlet problem with an exact
 //       solution: fluid = inside a sphere, u = 0 on the surface, u = R^2 - r^2
@@ -6,19 +6,17 @@
 //   (2) the cell volume fraction κ integrates to the sphere volume (4/3 π R^3);
 //   (3) solid cells are held at the wall value u_bc.
 //
-// Guarded by PECLET_CORE_HAVE_MORTON; a no-op pass without the morton sibling checkout.
 #include "test_util.hpp"
 
-#ifdef PECLET_CORE_HAVE_MORTON
 #include <cmath>
 #include <vector>
 
-#include "peclet/core/amr/block_octree.hpp"
-#include "peclet/core/amr/cut_cell.hpp"
+#include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/cut_cell.hpp"
 #include "peclet/core/common/types.hpp"
 
 using namespace peclet::core;
-using namespace peclet::core::amr;
+using namespace peclet::amr;
 
 namespace {
 
@@ -84,7 +82,7 @@ Result solveSphere(unsigned L) {
       mg = std::max(mg, std::fabs(ag[static_cast<std::size_t>(i)]));
     }
     std::printf("[cut] shared-CSR vs geometric applyOp: max|Δ| = %.3e (mag %.3e)\n", de, mg);
-    PECLET_CORE_CHECK(de < 1e-12 * (1.0 + mg));
+    PECLET_AMR_CHECK(de < 1e-12 * (1.0 + mg));
   }
 
   std::vector<double> u(static_cast<std::size_t>(n), 0.0), res;
@@ -112,7 +110,7 @@ Result solveSphere(unsigned L) {
   for (Index i = 0; i < n; ++i)
     if (!cc.isFluid(i) && std::fabs(u[static_cast<std::size_t>(i)]) > 1e-9)
       solidHeld = false;
-  PECLET_CORE_CHECK(solidHeld);
+  PECLET_AMR_CHECK(solidHeld);
 
   return {std::sqrt(e / nf), vol, nf};
 }
@@ -123,23 +121,17 @@ void run() {
 
   // (1) 2nd-order convergence.
   double order = a.err / b.err;
-  PECLET_CORE_CHECK(order > 3.3);
+  PECLET_AMR_CHECK(order > 3.3);
 
   // (2) κ integrates to the sphere volume.
   const double exactVol = 4.0 / 3.0 * M_PI * kR * kR * kR;
-  PECLET_CORE_CHECK(std::fabs(b.fluidVol - exactVol) < 0.03 * exactVol);
-  PECLET_CORE_CHECK(b.nfluid > a.nfluid);
+  PECLET_AMR_CHECK(std::fabs(b.fluidVol - exactVol) < 0.03 * exactVol);
+  PECLET_AMR_CHECK(b.nfluid > a.nfluid);
 }
 
 }  // namespace
 
 int main() {
   run();
-  PECLET_CORE_RETURN_TEST_RESULT();
+  PECLET_AMR_RETURN_TEST_RESULT();
 }
-#else
-int main() {
-  std::printf("PECLET_CORE_HAVE_MORTON not set — skipping cut-cell test\n");
-  return ::peclet::core::test::kSkipExitCode;
-}
-#endif  // PECLET_CORE_HAVE_MORTON

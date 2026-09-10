@@ -1,4 +1,4 @@
-// Distributed geometric-multigrid V-cycle (peclet::core::amr::DistributedMultigrid): a full
+// Distributed geometric-multigrid V-cycle (peclet::amr::DistributedMultigrid): a full
 // V-cycle hierarchy on the ORB-decomposed octree (MPI_COMM_WORLD) must (1) match the
 // same V-cycle on the whole domain as one block (MPI_COMM_SELF) bit-for-bit, and
 // (2) actually solve — the Poisson residual drops by orders of magnitude in a handful
@@ -9,20 +9,18 @@
 // cell are all on one rank — the nested ORB decompositions guarantee it), and
 // piecewise-constant prolongation.
 //
-// Guarded by PECLET_CORE_HAVE_MORTON; a no-op pass without the morton sibling checkout.
 #include "test_util.hpp"
 
-#ifdef PECLET_CORE_HAVE_MORTON
 #include <cmath>
 #include <vector>
 
-#include "peclet/core/amr/distributed_octree.hpp"
-#include "peclet/core/amr/distributed_poisson.hpp"
-#include "peclet/core/amr/leaf_field.hpp"
+#include "peclet/amr/distributed_octree.hpp"
+#include "peclet/amr/distributed_poisson.hpp"
+#include "peclet/amr/leaf_field.hpp"
 #include "peclet/core/common/mpi.hpp"
 
 using namespace peclet::core;
-using namespace peclet::core::amr;
+using namespace peclet::amr;
 
 namespace {
 
@@ -84,10 +82,10 @@ void run() {
     maxdiff = std::max(
         maxdiff, std::fabs(xw[static_cast<std::size_t>(i)] - xs[static_cast<std::size_t>(si)]));
   }
-  PECLET_CORE_CHECK_EQ(mism, 0);
-  PECLET_CORE_CHECK(maxdiff == 0.0);  // bit-for-bit across rank counts
-  PECLET_CORE_CHECK(mgw.numLevels() == 4);
-  PECLET_CORE_CHECK(r1 < r0 * 1e-3);  // MG actually solves (≥ 3 orders in 8 cycles)
+  PECLET_AMR_CHECK_EQ(mism, 0);
+  PECLET_AMR_CHECK(maxdiff == 0.0);  // bit-for-bit across rank counts
+  PECLET_AMR_CHECK(mgw.numLevels() == 4);
+  PECLET_AMR_CHECK(r1 < r0 * 1e-3);  // MG actually solves (≥ 3 orders in 8 cycles)
 }
 
 }  // namespace
@@ -97,7 +95,7 @@ int main(int argc, char** argv) {
   run();
   int rank = 0;
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-  int fails = peclet::core::test::g_failures, total = 0;
+  int fails = peclet::amr::test::g_failures, total = 0;
   MPI_Reduce(&fails, &total, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
   MPI_Finalize();
   if (rank == 0) {
@@ -110,9 +108,3 @@ int main(int argc, char** argv) {
   }
   return 0;
 }
-#else
-#include "test_skip_mpi.hpp"
-int main(int argc, char** argv) {
-  return ::peclet::core::test::skipMpiTest(argc, argv, "distributed MG test");
-}
-#endif  // PECLET_CORE_HAVE_MORTON

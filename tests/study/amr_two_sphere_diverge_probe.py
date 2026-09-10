@@ -22,7 +22,7 @@ sys.path.insert(0, __file__.rsplit("/", 1)[0])
 
 import numpy as np  # noqa: E402
 from amr_two_sphere_gap import FX, MU, build, make_sdf  # noqa: E402
-from peclet.core import amr  # noqa: E402
+from peclet import amr  # noqa: E402
 
 
 def probe(N, g, n, cf, dt, mom_mg, steps):

@@ -11,22 +11,20 @@
 //  (4) momentum ∇² (the velocity operator): the tangential-only flux correction restores
 //      ~2nd order at C/F rows (the P5b result, now on the velocity path).
 //
-// Guarded by PECLET_CORE_HAVE_MORTON; a no-op pass without the morton sibling checkout.
 #include "test_util.hpp"
 
-#ifdef PECLET_CORE_HAVE_MORTON
 #include <array>
 #include <cmath>
 #include <cstdio>
 #include <vector>
 
-#include "peclet/core/amr/block_octree.hpp"
-#include "peclet/core/amr/cf_scheme.hpp"
-#include "peclet/core/amr/poisson.hpp"
+#include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/cf_scheme.hpp"
+#include "peclet/amr/poisson.hpp"
 #include "peclet/core/common/types.hpp"
 
 using namespace peclet::core;
-using namespace peclet::core::amr;
+using namespace peclet::amr;
 
 namespace {
 
@@ -175,7 +173,7 @@ void run() {
             dmax, std::fabs(dl[static_cast<std::size_t>(i)] -
                             (lq[static_cast<std::size_t>(i)] - ls[static_cast<std::size_t>(i)])));
       }
-      PECLET_CORE_CHECK(dmax < 1e-12 * scale);  // the delta IS the P5b quad correction
+      PECLET_AMR_CHECK(dmax < 1e-12 * scale);  // the delta IS the P5b quad correction
     }
     // fields
     std::array<std::vector<double>, 3> u;
@@ -200,7 +198,7 @@ void run() {
       eDs = std::max(eDs, std::fabs(ds[static_cast<std::size_t>(i)] - ex));
       eDq = std::max(eDq, std::fabs(dq[static_cast<std::size_t>(i)] - ex));
     }
-    PECLET_CORE_CHECK(std::fabs(consQ) < 1e-10);  // quad D exactly conservative (periodic)
+    PECLET_AMR_CHECK(std::fabs(consQ) < 1e-10);  // quad D exactly conservative (periodic)
     // (3) gradient
     std::array<CfCsr, 3> gd = buildCfGradDelta(g.ap, g.t, all, all, CfScheme::quadratic);
     std::array<std::vector<double>, 3> gq;
@@ -369,9 +367,9 @@ void run() {
       pAq = eAq;
       pAs = eAs;
       if (N == 64) {
-        PECLET_CORE_CHECK(oAq >= 1.7);        // steady advecting velocity ~2nd order
-        PECLET_CORE_CHECK(oAs <= oAq - 0.5);  // standard average is lower order
-        PECLET_CORE_CHECK(oUq >= 0.9);        // whole uf ≥ O(h) (φ part, transient-only)
+        PECLET_AMR_CHECK(oAq >= 1.7);        // steady advecting velocity ~2nd order
+        PECLET_AMR_CHECK(oAs <= oAq - 0.5);  // standard average is lower order
+        PECLET_AMR_CHECK(oUq >= 0.9);        // whole uf ≥ O(h) (φ part, transient-only)
       }
     }
     oDs = pN ? orderOf(pDs, eDs, pN, N) : 0;
@@ -463,8 +461,8 @@ void run() {
           "  [corners] N=%3ld branch |delta-p5b| = %.2e; L trunc: upgraded %.3e "
           "(ord %5.2f) vs p5b-fallback %.3e (ord %5.2f)\n",
           N, branch, eCorner, oC, eP5b, oP);
-      PECLET_CORE_CHECK(branch > 0.0);            // the corner branch fires on this mesh
-      PECLET_CORE_CHECK(eCorner <= eP5b * 1.02);  // upgraded stencil never worse, at worst ties
+      PECLET_AMR_CHECK(branch > 0.0);            // the corner branch fires on this mesh
+      PECLET_AMR_CHECK(eCorner <= eP5b * 1.02);  // upgraded stencil never worse, at worst ties
       pC = eCorner;
       pP = eP5b;
       pNc = N;
@@ -473,23 +471,17 @@ void run() {
 
   // Gates: the scheme restores ~2nd order at C/F rows for all three operators; the standard
   // treatment is measurably lower order there.
-  PECLET_CORE_CHECK(oDq >= 1.7);
-  PECLET_CORE_CHECK(oGq >= 1.7);
-  PECLET_CORE_CHECK(oLq >= 1.7);
-  PECLET_CORE_CHECK(oDs <= oDq - 0.5);
-  PECLET_CORE_CHECK(oGs <= oGq - 0.5);
-  PECLET_CORE_CHECK(oLs <= oLq - 0.5);
+  PECLET_AMR_CHECK(oDq >= 1.7);
+  PECLET_AMR_CHECK(oGq >= 1.7);
+  PECLET_AMR_CHECK(oLq >= 1.7);
+  PECLET_AMR_CHECK(oDs <= oDq - 0.5);
+  PECLET_AMR_CHECK(oGs <= oGq - 0.5);
+  PECLET_AMR_CHECK(oLs <= oLq - 0.5);
 }
 
 }  // namespace
 
 int main() {
   run();
-  PECLET_CORE_RETURN_TEST_RESULT();
+  PECLET_AMR_RETURN_TEST_RESULT();
 }
-#else
-int main() {
-  std::printf("PECLET_CORE_HAVE_MORTON not set — skipping cf-scheme test\n");
-  return ::peclet::core::test::kSkipExitCode;
-}
-#endif  // PECLET_CORE_HAVE_MORTON

@@ -1,5 +1,5 @@
 // Cut-cell openness coarsened across the device (Kokkos) MG levels
-// (peclet::core::amr::Multigrid::build(finest, h0, openFn)). The openness is set on the
+// (peclet::amr::Multigrid::build(finest, h0, openFn)). The openness is set on the
 // finest level and area-averaged to every coarser level (via AmrMultigrid::setOpenness),
 // so each level is a consistent cut-cell operator. Validates:
 //   (1) the device operator on EVERY level == host AmrMultigrid::op(L).applyLaplacian
@@ -8,20 +8,18 @@
 //   (2) the openness V-cycle converges on the graded mesh (manufactured RHS).
 // Runs on whatever backend Kokkos was built for (CUDA / HIP / OpenMP).
 //
-// Guarded by PECLET_CORE_HAVE_MORTON; a no-op pass without the morton sibling checkout.
 #include "test_util.hpp"
 
-#ifdef PECLET_CORE_HAVE_MORTON
 #include <cmath>
 #include <Kokkos_Core.hpp>
 #include <vector>
 
-#include "peclet/core/amr/block_octree.hpp"
-#include "peclet/core/amr/multigrid.hpp"
-#include "peclet/core/amr/poisson.hpp"
+#include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/multigrid.hpp"
+#include "peclet/amr/poisson.hpp"
 
 using namespace peclet::core;
-using namespace peclet::core::amr;
+using namespace peclet::amr;
 
 namespace {
 
@@ -71,8 +69,8 @@ void run() {
   // Device MG with the same openFn (coarsened across levels internally).
   Multigrid<3, kBits> mg;
   mg.build(t, h0, openFn);
-  PECLET_CORE_CHECK(mg.numLevels() == hmg.numLevels());
-  PECLET_CORE_CHECK(mg.numLevels() >= 3);
+  PECLET_AMR_CHECK(mg.numLevels() == hmg.numLevels());
+  PECLET_AMR_CHECK(mg.numLevels() >= 3);
 
   // ===== (1) device operator == host op(L).applyLaplacian on EVERY level. Bit-exact on
   // host-parallel backends; round-off-scale relative tolerance on GPU backends (FMA contraction
@@ -87,7 +85,7 @@ void run() {
   double maxRel = 0.0;
   for (std::size_t L = 0; L < hmg.numLevels(); ++L) {
     const Index n = hmg.op(L).octree().numLeaves();
-    PECLET_CORE_CHECK(mg.numLeaves(L) == n);
+    PECLET_AMR_CHECK(mg.numLeaves(L) == n);
     std::vector<double> x((std::size_t)n);
     for (auto& v : x) {
       s = s * 6364136223846793005ULL + 1442695040888963407ULL;
@@ -112,7 +110,7 @@ void run() {
     }
   }
   std::printf("  per-level apply max rel diff = %.2e (tol %.0e)\n", maxRel, kGpuRelTol);
-  PECLET_CORE_CHECK_EQ(totalMism, 0);
+  PECLET_AMR_CHECK_EQ(totalMism, 0);
 
   // ===== (2) openness V-cycle converges on the graded mesh (manufactured RHS) =====
   const Index n0 = mg.numLeaves(0);
@@ -147,7 +145,7 @@ void run() {
   for (int c = 0; c < 40; ++c)
     mg.vcycle(2, 2, 60, 0.8);
   const double r1 = resNorm();
-  PECLET_CORE_CHECK(r1 < r0 * 1e-3);
+  PECLET_AMR_CHECK(r1 < r0 * 1e-3);
 }
 
 }  // namespace
@@ -156,11 +154,5 @@ int main(int argc, char** argv) {
   Kokkos::initialize(argc, argv);
   run();
   Kokkos::finalize();
-  PECLET_CORE_RETURN_TEST_RESULT();
+  PECLET_AMR_RETURN_TEST_RESULT();
 }
-#else
-int main() {
-  std::printf("PECLET_CORE_HAVE_MORTON not set — skipping device openness test\n");
-  return ::peclet::core::test::kSkipExitCode;
-}
-#endif  // PECLET_CORE_HAVE_MORTON

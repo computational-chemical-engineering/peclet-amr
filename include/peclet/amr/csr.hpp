@@ -18,14 +18,15 @@
 // reuses one `forEachFaceNeighbor` lambda for both passes.
 //
 // Requires a Kokkos build; included only by the device-assembly headers (themselves
-// PECLET_CORE_HAVE_MORTON).
-#ifndef PECLET_CORE_AMR_CSR_HPP
-#define PECLET_CORE_AMR_CSR_HPP
+#ifndef PECLET_AMR_CSR_HPP
+#define PECLET_AMR_CSR_HPP
+
+#include "peclet/amr/common.hpp"
 
 #include "peclet/core/common/types.hpp"
 #include "peclet/core/common/view.hpp"
 
-namespace peclet::core::amr {
+namespace peclet::amr {
 
 /// Sink passed to the emit functor during the COUNT pass: just tallies faces.
 struct CsrCountSink {
@@ -53,10 +54,10 @@ struct CsrFillSink {
 /// i) const.
 template <class CountFn>
 View<Index> scanOffsets(Index n, const CountFn& countFn, Index& nTotal) {
-  View<Index> start(Kokkos::view_alloc("peclet::core::amr::csr_off", Kokkos::WithoutInitializing),
+  View<Index> start(Kokkos::view_alloc("peclet::amr::csr_off", Kokkos::WithoutInitializing),
                     static_cast<std::size_t>(n) + 1);
   Kokkos::parallel_scan(
-      "peclet::core::amr::csr_off_scan", n + 1,
+      "peclet::amr::csr_off_scan", n + 1,
       KOKKOS_LAMBDA(const Index i, Index& partial, const bool final_pass) {
         const Index c = (i < n) ? countFn(i) : Index(0);
         if (final_pass)
@@ -88,10 +89,10 @@ struct Csr {
 template <class Emit>
 Csr buildFaceCsr(Index n, const Emit& emit) {
   Csr csr;
-  View<Index> start(Kokkos::view_alloc("peclet::core::amr::csr_start", Kokkos::WithoutInitializing),
+  View<Index> start(Kokkos::view_alloc("peclet::amr::csr_start", Kokkos::WithoutInitializing),
                     static_cast<std::size_t>(n) + 1);
   Kokkos::parallel_scan(
-      "peclet::core::amr::csr_scan", n + 1,
+      "peclet::amr::csr_scan", n + 1,
       KOKKOS_LAMBDA(const Index i, Index& partial, const bool final_pass) {
         Index c = 0;
         if (i < n) {
@@ -106,21 +107,21 @@ Csr buildFaceCsr(Index n, const Emit& emit) {
   Kokkos::deep_copy(csr.nFaces, Kokkos::subview(start, n));
   csr.start = start;
   csr.nbr =
-      View<Index>(Kokkos::view_alloc("peclet::core::amr::csr_nbr", Kokkos::WithoutInitializing),
+      View<Index>(Kokkos::view_alloc("peclet::amr::csr_nbr", Kokkos::WithoutInitializing),
                   static_cast<std::size_t>(csr.nFaces));
   csr.coef =
-      View<double>(Kokkos::view_alloc("peclet::core::amr::csr_coef", Kokkos::WithoutInitializing),
+      View<double>(Kokkos::view_alloc("peclet::amr::csr_coef", Kokkos::WithoutInitializing),
                    static_cast<std::size_t>(csr.nFaces));
   View<Index> nbr = csr.nbr;
   View<double> coef = csr.coef;
   Kokkos::parallel_for(
-      "peclet::core::amr::csr_fill", n, KOKKOS_LAMBDA(const Index i) {
+      "peclet::amr::csr_fill", n, KOKKOS_LAMBDA(const Index i) {
         CsrFillSink sink{nbr, coef, start(i)};
         emit(i, sink);
       });
   return csr;
 }
 
-}  // namespace peclet::core::amr
+}  // namespace peclet::amr
 
-#endif  // PECLET_CORE_AMR_CSR_HPP
+#endif  // PECLET_AMR_CSR_HPP

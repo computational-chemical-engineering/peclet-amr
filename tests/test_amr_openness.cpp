@@ -1,5 +1,5 @@
 // Cut-cell openness folded into the operator + multigrid coarsening, together with
-// the quadratic coarse-fine flux (peclet::core::amr::AmrPoisson / AmrMultigrid):
+// the quadratic coarse-fine flux (peclet::amr::AmrPoisson / AmrMultigrid):
 //   (1) regression — openness ≡ 1 reproduces the no-openness quadratic solve
 //       bit-for-bit (the openness path is a pure generalisation);
 //   (2) conservation — the openness-weighted quadratic operator still conserves
@@ -9,19 +9,17 @@
 //       area-averaged (coarsened) openness on every multigrid level, i.e. the
 //       rediscretized coarse operators are consistent with the fine one.
 //
-// Guarded by PECLET_CORE_HAVE_MORTON; a no-op pass without the morton sibling checkout.
 #include "test_util.hpp"
 
-#ifdef PECLET_CORE_HAVE_MORTON
 #include <cmath>
 #include <vector>
 
-#include "peclet/core/amr/block_octree.hpp"
-#include "peclet/core/amr/poisson.hpp"
+#include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/poisson.hpp"
 #include "peclet/core/common/types.hpp"
 
 using namespace peclet::core;
-using namespace peclet::core::amr;
+using namespace peclet::amr;
 
 namespace {
 
@@ -84,7 +82,7 @@ void run() {
     for (Index i = 0; i < n; ++i)
       dmax = std::max(dmax,
                       std::fabs(u0[static_cast<std::size_t>(i)] - u1[static_cast<std::size_t>(i)]));
-    PECLET_CORE_CHECK(dmax < 1e-12);
+    PECLET_AMR_CHECK(dmax < 1e-12);
   }
 
   // A smooth, strictly-positive openness field (variable-coefficient Poisson).
@@ -107,7 +105,7 @@ void run() {
       integ += P.cellVolume(i) * lq[static_cast<std::size_t>(i)];
       scale += P.cellVolume(i) * std::fabs(lq[static_cast<std::size_t>(i)]);
     }
-    PECLET_CORE_CHECK(std::fabs(integ) < 1e-9 * (scale + 1e-30));
+    PECLET_AMR_CHECK(std::fabs(integ) < 1e-9 * (scale + 1e-30));
   }
 
   // (3) variable-openness solve converges with coarsened openness on every level.
@@ -120,7 +118,7 @@ void run() {
     std::vector<double> u(static_cast<std::size_t>(n), 0.0), res;
     double r0 = P.residualQuad(u, rhs, res);
     double r = mg.solveQuad(u, rhs, 60, 1);
-    PECLET_CORE_CHECK(r0 / r > 1e8);
+    PECLET_AMR_CHECK(r0 / r > 1e8);
   }
 }
 
@@ -128,11 +126,5 @@ void run() {
 
 int main() {
   run();
-  PECLET_CORE_RETURN_TEST_RESULT();
+  PECLET_AMR_RETURN_TEST_RESULT();
 }
-#else
-int main() {
-  std::printf("PECLET_CORE_HAVE_MORTON not set — skipping AMR openness test\n");
-  return ::peclet::core::test::kSkipExitCode;
-}
-#endif  // PECLET_CORE_HAVE_MORTON

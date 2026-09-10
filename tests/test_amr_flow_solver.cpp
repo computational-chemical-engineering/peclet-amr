@@ -1,4 +1,4 @@
-// Device (Kokkos) collocated Stokes step on the octree (peclet::core::amr::AmrFlow) —
+// Device (Kokkos) collocated Stokes step on the octree (peclet::amr::AmrFlow) —
 // the device counterpart of oracle::AmrFlow. Validates:
 //   (1) Poiseuille — body-force-driven Stokes flow between immersed no-slip walls
 //       converges to the analytic parabola u = G/(2μ)(y-y0)(y1-y) to ~round-off, solids
@@ -10,24 +10,22 @@
 // Runs on whatever backend Kokkos targets (CUDA / HIP / OpenMP). Validation is host-vs-
 // device agreement + the analytic solution (the GPU differs from host only in FP last bits).
 //
-// Guarded by PECLET_CORE_HAVE_MORTON; a no-op pass without the morton sibling checkout.
 #include "test_util.hpp"
 
-#ifdef PECLET_CORE_HAVE_MORTON
 #include <algorithm>
 #include <cmath>
 #include <Kokkos_Core.hpp>
 #include <stdexcept>
 #include <vector>
 
-#include "peclet/core/amr/block_octree.hpp"
-#include "peclet/core/amr/flow.hpp"
-#include "peclet/core/amr/flow_oracle.hpp"
-#include "peclet/core/amr/refine.hpp"
+#include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/flow.hpp"
+#include "peclet/amr/flow_oracle.hpp"
+#include "peclet/amr/refine.hpp"
 #include "peclet/core/common/types.hpp"
 
 using namespace peclet::core;
-using namespace peclet::core::amr;
+using namespace peclet::amr;
 
 namespace {
 
@@ -86,7 +84,7 @@ void test_poiseuille() {
     } catch (const std::runtime_error&) {
       threwProj = true;
     }
-    PECLET_CORE_CHECK(threwStep && threwProj);
+    PECLET_AMR_CHECK(threwStep && threwProj);
   }
   dfl.setSolid(sdf);
   for (int s = 0; s < 5; ++s)
@@ -113,10 +111,10 @@ void test_poiseuille() {
   }
   double l2 = std::sqrt(e / nf);
   std::printf("[flow] poiseuille: device L2 vs analytic = %.3e, max|dev-host| = %.3e\n", l2, dh);
-  PECLET_CORE_CHECK(l2 < 1e-6);
-  PECLET_CORE_CHECK(solidsZero);
-  PECLET_CORE_CHECK(fluidPositive);
-  PECLET_CORE_CHECK(dh < 1e-7);  // device matches host
+  PECLET_AMR_CHECK(l2 < 1e-6);
+  PECLET_AMR_CHECK(solidsZero);
+  PECLET_AMR_CHECK(fluidPositive);
+  PECLET_AMR_CHECK(dh < 1e-7);  // device matches host
 }
 
 void test_sphere() {
@@ -168,9 +166,9 @@ void test_sphere() {
   double hmean = hsum / nf, dmean = dsum / nf;
   std::printf("[flow] sphere: Umean host %.6e dev %.6e (rel %.2e), max|dev-host| %.3e (mag %.3e)\n",
               hmean, dmean, std::fabs(dmean - hmean) / hmean, dmax, hmax);
-  PECLET_CORE_CHECK(dmean > 0.0);
-  PECLET_CORE_CHECK(std::fabs(dmean - hmean) / hmean < 2e-3);  // same permeability
-  PECLET_CORE_CHECK(dmax < 5e-3 * hmax);                       // fields agree
+  PECLET_AMR_CHECK(dmean > 0.0);
+  PECLET_AMR_CHECK(std::fabs(dmean - hmean) / hmean < 2e-3);  // same permeability
+  PECLET_AMR_CHECK(dmax < 5e-3 * hmax);                       // fields agree
 }
 
 // Same sphere case with the directional ghost gradient (setGhostGradient) on BOTH engines: the
@@ -227,9 +225,9 @@ void test_sphere_ghost() {
       "[flow] sphere+ghostgrad: Umean host %.6e dev %.6e (rel %.2e), max|dev-host| %.3e "
       "(mag %.3e)\n",
       hmean, dmean, std::fabs(dmean - hmean) / hmean, dmax, hmax);
-  PECLET_CORE_CHECK(dmean > 0.0);
-  PECLET_CORE_CHECK(std::fabs(dmean - hmean) / hmean < 2e-3);  // device == oracle permeability
-  PECLET_CORE_CHECK(dmax < 5e-3 * hmax);                       // fields agree
+  PECLET_AMR_CHECK(dmean > 0.0);
+  PECLET_AMR_CHECK(std::fabs(dmean - hmean) / hmean < 2e-3);  // device == oracle permeability
+  PECLET_AMR_CHECK(dmax < 5e-3 * hmax);                       // fields agree
 }
 
 // FULL ghost projection (setGhostProjection, (2,2) production pair) on BOTH engines:
@@ -287,9 +285,9 @@ void test_sphere_ghostproj() {
       "[flow] sphere+ghostproj: Umean host %.6e dev %.6e (rel %.2e), max|dev-host| %.3e "
       "(mag %.3e), dev ghost-div %.2e\n",
       hmean, dmean, std::fabs(dmean - hmean) / hmean, dmax, hmax, dfl.divNormL2());
-  PECLET_CORE_CHECK(dmean > 0.0);
-  PECLET_CORE_CHECK(std::fabs(dmean - hmean) / hmean < 2e-3);  // device == oracle permeability
-  PECLET_CORE_CHECK(dmax < 5e-3 * hmax);                       // fields agree
+  PECLET_AMR_CHECK(dmean > 0.0);
+  PECLET_AMR_CHECK(std::fabs(dmean - hmean) / hmean < 2e-3);  // device == oracle permeability
+  PECLET_AMR_CHECK(dmax < 5e-3 * hmax);                       // fields agree
 }
 
 // Ghost projection on a GRADED octree: (a) a too-thin finest band must THROW in setSolid (the
@@ -327,12 +325,12 @@ void test_graded_ghostproj() {
     } catch (const std::runtime_error&) {
       threw = true;
     }
-    PECLET_CORE_CHECK(threw);
+    PECLET_AMR_CHECK(threw);
   }
 
   {  // (b) adequate band: stable graded solve, sane drag, genuinely coarsened mesh
     BO t = makeTree(3.0);
-    PECLET_CORE_CHECK(t.numLeaves() < N * N * N);
+    PECLET_AMR_CHECK(t.numLeaves() < N * N * N);
     AmrFlow<21> fl;
     fl.init(t, 1.0, Vec<3>{0, 0, 0});
     fl.setViscosity(0.1);
@@ -349,13 +347,13 @@ void test_graded_ghostproj() {
       usup += u[(std::size_t)i] * w * w * w;
     }
     usup /= static_cast<double>(N * N * N);
-    PECLET_CORE_CHECK(std::isfinite(usup) && usup > 0.0 && usup < 1.0);  // stable
+    PECLET_AMR_CHECK(std::isfinite(usup) && usup > 0.0 && usup < 1.0);  // stable
     const double k = 1e-3 * N * N * N / (6.0 * M_PI * 0.1 * R * usup);
     std::printf(
         "[flow] graded ghostproj (band 3): K=%.4f (Z&H 4.292; band-dominated), "
         "leaves=%lld/%lld\n",
         k, static_cast<long long>(t.numLeaves()), static_cast<long long>(N * N * N));
-    PECLET_CORE_CHECK(k > 3.0 && k < 6.5);  // sane drag (machinery lock, not accuracy)
+    PECLET_AMR_CHECK(k > 3.0 && k < 6.5);  // sane drag (machinery lock, not accuracy)
   }
 }
 
@@ -410,7 +408,7 @@ void test_seam_sampled() {
         "[flow] seam-sampled (a) uniform band: |Us-Uc|max %.2e (mag %.2e), Umean rel "
         "%.2e\n",
         dmax, cmax, std::fabs(ssum - csum) / std::fabs(csum));
-    PECLET_CORE_CHECK(dmax < 1e-9 * cmax);  // identity slots: bit-comparable paths
+    PECLET_AMR_CHECK(dmax < 1e-9 * cmax);  // identity slots: bit-comparable paths
   }
 
   {  // (b) two-level latitude band: device sampled == oracle sampled
@@ -474,9 +472,9 @@ void test_seam_sampled() {
         "[flow] seam-sampled (b) two-level: Umean host %.6e dev %.6e (rel %.2e), "
         "max|dev-host| %.3e (mag %.3e)\n",
         hmean, dmean, std::fabs(dmean - hmean) / std::fabs(hmean), dmax, hmax);
-    PECLET_CORE_CHECK(dmean > 0.0);
-    PECLET_CORE_CHECK(std::fabs(dmean - hmean) / std::fabs(hmean) < 2e-3);
-    PECLET_CORE_CHECK(dmax < 5e-3 * hmax);
+    PECLET_AMR_CHECK(dmean > 0.0);
+    PECLET_AMR_CHECK(std::fabs(dmean - hmean) / std::fabs(hmean) < 2e-3);
+    PECLET_AMR_CHECK(dmax < 5e-3 * hmax);
   }
 }
 
@@ -493,7 +491,7 @@ void test_graded_cf_quadratic() {
   AmrGeometry<3> geo;
   geo.setIsotropic(1.0);
   refineToSdf(t, geo, sdf, /*target*/ 0, /*band*/ 3.0, /*balance*/ true);
-  PECLET_CORE_CHECK(t.numLeaves() < N * N * N);
+  PECLET_AMR_CHECK(t.numLeaves() < N * N * N);
 
   auto runDev = [&](int cf) {
     AmrFlow<21> fl;
@@ -541,10 +539,10 @@ void test_graded_cf_quadratic() {
       "(mag %.3e); dev cf0 Usup %.6e (cf1 shift %.2e rel)\n",
       hsum, dsum, std::fabs(dsum - hsum) / std::fabs(hsum), dmax, hmax, d0sum,
       std::fabs(dsum - d0sum) / std::fabs(d0sum));
-  PECLET_CORE_CHECK(std::isfinite(dsum) && dsum > 0.0);
-  PECLET_CORE_CHECK(std::fabs(dsum - hsum) / std::fabs(hsum) < 2e-3);  // device == oracle
-  PECLET_CORE_CHECK(dmax < 5e-3 * hmax);
-  PECLET_CORE_CHECK(std::fabs(dsum - d0sum) / std::fabs(d0sum) > 1e-4);  // the scheme acts
+  PECLET_AMR_CHECK(std::isfinite(dsum) && dsum > 0.0);
+  PECLET_AMR_CHECK(std::fabs(dsum - hsum) / std::fabs(hsum) < 2e-3);  // device == oracle
+  PECLET_AMR_CHECK(dmax < 5e-3 * hmax);
+  PECLET_AMR_CHECK(std::fabs(dsum - d0sum) / std::fabs(d0sum) > 1e-4);  // the scheme acts
 }
 
 // NAVIER–STOKES with the ghost projection (ladder step 4): the immersed sphere at finite Re
@@ -619,11 +617,11 @@ void test_sphere_ghostproj_adv() {
       "(scheme gap %.2e rel), max|dev-host| %.3e (mag %.3e), div ghost %.2e aperture %.2e\n",
       hmean, dmean, std::fabs(dmean - hmean) / hmean, amean, std::fabs(dmean - amean) / amean, dmax,
       hmax, gdiv, adiv);
-  PECLET_CORE_CHECK(dmean > 0.0 && std::isfinite(dmean));
-  PECLET_CORE_CHECK(std::fabs(dmean - hmean) / hmean < 2e-3);    // device == oracle
-  PECLET_CORE_CHECK(dmax < 5e-3 * hmax);                         // fields agree
-  PECLET_CORE_CHECK(std::fabs(dmean - amean) / amean < 5e-2);    // ghost ≈ aperture NS physics
-  PECLET_CORE_CHECK(std::isfinite(gdiv) && gdiv < 10.0 * adiv);  // same residual class
+  PECLET_AMR_CHECK(dmean > 0.0 && std::isfinite(dmean));
+  PECLET_AMR_CHECK(std::fabs(dmean - hmean) / hmean < 2e-3);    // device == oracle
+  PECLET_AMR_CHECK(dmax < 5e-3 * hmax);                         // fields agree
+  PECLET_AMR_CHECK(std::fabs(dmean - amean) / amean < 5e-2);    // ghost ≈ aperture NS physics
+  PECLET_AMR_CHECK(std::isfinite(gdiv) && gdiv < 10.0 * adiv);  // same residual class
   {  // the DEFAULT must have resolved to the GHOST projection (== the explicit-ghost device
      // run, identical configuration and kernels — the 2026-08-25 default switch)
     const auto uux = ufl.velocity(0);
@@ -631,7 +629,7 @@ void test_sphere_ghostproj_adv() {
     for (Index i = 0; i < n; ++i)
       umax = std::max(umax, std::fabs(uux[(std::size_t)i] - dux[(std::size_t)i]));
     std::printf("[flow] NS default: max|default-ghost| = %.2e\n", umax);
-    PECLET_CORE_CHECK(umax < 1e-10 * hmax);  // identical configuration, identical kernels
+    PECLET_AMR_CHECK(umax < 1e-10 * hmax);  // identical configuration, identical kernels
   }
 }
 
@@ -679,7 +677,7 @@ void test_adapt_midrun() {
   const double uMid = usup(t, fl);
   fl.beginAdapt();
   refineToSdf(t, geo, sdf, 0, 5.0, true);  // widen the band ON THE SAME octree
-  PECLET_CORE_CHECK(t.numLeaves() > leaves3);
+  PECLET_AMR_CHECK(t.numLeaves() > leaves3);
   fl.finishAdapt(sdf);
   const double uAfter = usup(t, fl);  // transferred state, before any new step
   for (int s = 0; s < 400; ++s)
@@ -699,10 +697,10 @@ void test_adapt_midrun() {
       "(rel %.2e); leaves %lld -> %lld\n",
       uMid, uAfter, uCont, uCold, std::fabs(uCont - uCold) / uCold, static_cast<long long>(leaves3),
       static_cast<long long>(t.numLeaves()));
-  PECLET_CORE_CHECK(std::isfinite(uAfter) && uAfter > 0.0);
-  PECLET_CORE_CHECK(std::fabs(uAfter - uMid) / uMid < 0.05);  // transfer preserves the state
-  PECLET_CORE_CHECK(std::isfinite(uCont) && uCont > 0.0);
-  PECLET_CORE_CHECK(std::fabs(uCont - uCold) / uCold < 1e-3);  // same fixed point
+  PECLET_AMR_CHECK(std::isfinite(uAfter) && uAfter > 0.0);
+  PECLET_AMR_CHECK(std::fabs(uAfter - uMid) / uMid < 0.05);  // transfer preserves the state
+  PECLET_AMR_CHECK(std::isfinite(uCont) && uCont > 0.0);
+  PECLET_AMR_CHECK(std::fabs(uCont - uCold) / uCold < 1e-3);  // same fixed point
 }
 
 // Fragmentation guard: a hollow solid shell seals an interior fluid pocket — the binary
@@ -752,12 +750,12 @@ void test_pocket_guard() {
   mean /= nf;
   std::printf("[flow] pocket-guard: Umean %.6e, outer max %.3e, sealed-pocket max %.3e\n", mean,
               outMax, inMax);
-  PECLET_CORE_CHECK(std::isfinite(mean) && mean > 0.0);  // no breakdown / blow-up
-  PECLET_CORE_CHECK(outMax < 1.0);                       // bounded outer flow
+  PECLET_AMR_CHECK(std::isfinite(mean) && mean > 0.0);  // no breakdown / blow-up
+  PECLET_AMR_CHECK(outMax < 1.0);                       // bounded outer flow
   // The decoupled pocket cannot build a counter-pressure, so the body force drives a small
   // viscous-limited creep (~f·L²/μ) — bounded and well below the outer flow, not exactly zero
   // (the guard sacrifices pocket physics for solvability, as in flow).
-  PECLET_CORE_CHECK(inMax < 0.05 * outMax);
+  PECLET_AMR_CHECK(inMax < 0.05 * outMax);
 }
 
 // The optional Helmholtz-MG momentum preconditioner (setMomentumMG) must not change the
@@ -793,7 +791,7 @@ void test_momentum_mg_option() {
     mag = std::max(mag, std::fabs(uoff[(std::size_t)i]));
   }
   std::printf("[flow] momentum-MG option: max|on-off| = %.3e (mag %.3e)\n", dmax, mag);
-  PECLET_CORE_CHECK(dmax < 1e-3 * mag);  // same converged step regardless of preconditioner
+  PECLET_AMR_CHECK(dmax < 1e-3 * mag);  // same converged step regardless of preconditioner
 }
 
 // Phase 2 scalability guard: with the Galerkin velocity multigrid the per-step momentum
@@ -823,8 +821,8 @@ void test_momentum_scaling() {
   int m4 = momIters(4), m5 = momIters(5);  // 16³, 32³
   std::printf("[flow] velocity-MG momentum iters: 16³=%d  32³=%d  (ratio %.2f)\n", m4, m5,
               (double)m5 / std::max(1, m4));
-  PECLET_CORE_CHECK(m5 < 2 * m4);  // near-flat (multigrid) — would ~double without it
-  PECLET_CORE_CHECK(m5 < 150);  // absolute bound (3 components × a few dozen MG-accelerated iters)
+  PECLET_AMR_CHECK(m5 < 2 * m4);  // near-flat (multigrid) — would ~double without it
+  PECLET_AMR_CHECK(m5 < 150);  // absolute bound (3 components × a few dozen MG-accelerated iters)
 }
 
 // Implicit-FOU + deferred-correction SOU advection (Navier–Stokes), validated against the host
@@ -890,7 +888,7 @@ void test_advection_kernel() {
     }
     std::printf("[flow] advect-kernel (%s): max|dev-host SOU| = %.3e (mag %.3e)\n",
                 which == 0 ? "all-fluid" : "sphere", emax, mag);
-    PECLET_CORE_CHECK(emax < 1e-10 * (1.0 + mag));
+    PECLET_AMR_CHECK(emax < 1e-10 * (1.0 + mag));
   }
 }
 
@@ -940,8 +938,8 @@ void test_advection() {
       }
     std::printf("[flow] poiseuille+adv: device L2 vs analytic = %.3e, max|dev-host| = %.3e\n",
                 std::sqrt(e / nf), dh);
-    PECLET_CORE_CHECK(std::sqrt(e / nf) < 1e-6);  // ∇·(u u)=0 ⇒ unchanged parabola
-    PECLET_CORE_CHECK(dh < 1e-6);
+    PECLET_AMR_CHECK(std::sqrt(e / nf) < 1e-6);  // ∇·(u u)=0 ⇒ unchanged parabola
+    PECLET_AMR_CHECK(dh < 1e-6);
   }
 
   // (b) immersed sphere at finite Re (non-trivial advection): device == host steady field.
@@ -996,8 +994,8 @@ void test_advection() {
         "%.3e (mag %.3e)\n",
         G * (hsum / nf) * 0.4 / mu, hsum / nf, dsum / nf, std::fabs(dsum - hsum) / std::fabs(hsum),
         dmax, hmax);
-    PECLET_CORE_CHECK(std::fabs(dsum - hsum) / std::fabs(hsum) < 5e-3);  // same steady permeability
-    PECLET_CORE_CHECK(dmax < 1e-2 * hmax);                               // fields agree
+    PECLET_AMR_CHECK(std::fabs(dsum - hsum) / std::fabs(hsum) < 5e-3);  // same steady permeability
+    PECLET_AMR_CHECK(dmax < 1e-2 * hmax);                               // fields agree
   }
 }
 
@@ -1037,7 +1035,7 @@ void test_staircase_mg() {
   }
   std::printf("[flow] staircase-vs-Galerkin MG: max|stair-galerkin| = %.3e (mag %.3e)\n", dmax,
               mag);
-  PECLET_CORE_CHECK(dmax <
+  PECLET_AMR_CHECK(dmax <
                     1e-4 * mag);  // same converged step regardless of coarse-operator strategy
 }
 
@@ -1080,7 +1078,7 @@ void test_momentum_gs() {
     }
     std::printf("[flow] GS-vs-Jacobi MG (%s): max|gs-jac| = %.3e (mag %.3e)\n",
                 staircase ? "staircase" : "Galerkin", dmax, mag);
-    PECLET_CORE_CHECK(dmax < 1e-4 * mag);
+    PECLET_AMR_CHECK(dmax < 1e-4 * mag);
   }
 }
 
@@ -1125,7 +1123,7 @@ void test_momentum_mgsolver() {
     }
     std::printf("[flow] MG-solver-vs-BiCGStab (%s): max|mg-bicg| = %.3e (mag %.3e)\n",
                 staircase ? "staircase" : "Galerkin", dmax, mag);
-    PECLET_CORE_CHECK(dmax < 1e-4 * mag);
+    PECLET_AMR_CHECK(dmax < 1e-4 * mag);
   }
 }
 
@@ -1175,9 +1173,9 @@ void test_picard_outer() {
     }
     std::printf("[flow] picard outer Stokes: max|n5-n1| = %.3e (mag %.3e), lastOuter n1=%d n5=%d\n",
                 dmax, mag, lo1, lo5);
-    PECLET_CORE_CHECK(dmax < 1e-6 * mag);  // extra outer iters change nothing without advection
-    PECLET_CORE_CHECK(lo1 == 1);           // default cap = a single outer iteration
-    PECLET_CORE_CHECK(lo5 <= 3);           // early-stop engages well below the cap of 5
+    PECLET_AMR_CHECK(dmax < 1e-6 * mag);  // extra outer iters change nothing without advection
+    PECLET_AMR_CHECK(lo1 == 1);           // default cap = a single outer iteration
+    PECLET_AMR_CHECK(lo5 <= 3);           // early-stop engages well below the cap of 5
   }
 
   // (b) Navier–Stokes: valid steady close to the single lagged step.
@@ -1210,7 +1208,7 @@ void test_picard_outer() {
       mag = std::max(mag, std::fabs(u1[(std::size_t)i]));
     }
     std::printf("[flow] picard outer NS (n=4): max|picard-single| = %.3e (mag %.3e)\n", dmax, mag);
-    PECLET_CORE_CHECK(dmax <
+    PECLET_AMR_CHECK(dmax <
                       1e-2 * mag);  // same NS steady field (transient-level gap, sibling's bar)
   }
 }
@@ -1238,11 +1236,5 @@ int main(int argc, char** argv) {
   test_advection();
   test_picard_outer();
   Kokkos::finalize();
-  PECLET_CORE_RETURN_TEST_RESULT();
+  PECLET_AMR_RETURN_TEST_RESULT();
 }
-#else
-int main() {
-  std::printf("PECLET_CORE_HAVE_MORTON not set — skipping device flow test\n");
-  return ::peclet::core::test::kSkipExitCode;
-}
-#endif  // PECLET_CORE_HAVE_MORTON

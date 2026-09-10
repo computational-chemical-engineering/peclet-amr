@@ -8,22 +8,20 @@
 //       conservation since α is symmetric across each face) and is bit-exact WORLD==SELF.
 // np = 1,2,4,8.
 //
-// Guarded by PECLET_CORE_HAVE_MORTON; a no-op pass without the morton sibling checkout.
 #include "test_util.hpp"
 
-#ifdef PECLET_CORE_HAVE_MORTON
 #include <cmath>
 #include <vector>
 
-#include "peclet/core/amr/distributed_fv.hpp"
-#include "peclet/core/amr/distributed_octree.hpp"
-#include "peclet/core/amr/leaf_field.hpp"
-#include "peclet/core/amr/poisson.hpp"
+#include "peclet/amr/distributed_fv.hpp"
+#include "peclet/amr/distributed_octree.hpp"
+#include "peclet/amr/leaf_field.hpp"
+#include "peclet/amr/poisson.hpp"
 #include "peclet/core/common/mpi.hpp"
 #include "peclet/core/common/types.hpp"
 
 using namespace peclet::core;
-using namespace peclet::core::amr;
+using namespace peclet::amr;
 
 namespace {
 
@@ -102,7 +100,7 @@ void run() {
     for (Index i = 0; i < ns; ++i)
       if (opLu[(std::size_t)i] != hostLu[(std::size_t)i])
         ++mism;
-    PECLET_CORE_CHECK_EQ(mism, 0);
+    PECLET_AMR_CHECK_EQ(mism, 0);
   }
 
   // ===== (1a) apply: WORLD == SELF bit-for-bit =====
@@ -115,7 +113,7 @@ void run() {
     if (si < 0 || luw[(std::size_t)i] != lus[(std::size_t)si])
       ++amis;
   }
-  PECLET_CORE_CHECK_EQ(amis, 0);
+  PECLET_AMR_CHECK_EQ(amis, 0);
 
   // ===== (2) graded MG with openness: converges + WORLD == SELF bit-for-bit =====
   GradedDistributedMultigrid<3, kBits> mgw;
@@ -139,8 +137,8 @@ void run() {
     if (si < 0 || xw[(std::size_t)i] != xs[(std::size_t)si])
       ++jmis;
   }
-  PECLET_CORE_CHECK_EQ(jmis, 0);
-  PECLET_CORE_CHECK(r1 < r0 * 1e-6);
+  PECLET_AMR_CHECK_EQ(jmis, 0);
+  PECLET_AMR_CHECK(r1 < r0 * 1e-6);
 }
 
 }  // namespace
@@ -150,7 +148,7 @@ int main(int argc, char** argv) {
   run();
   int rank = 0;
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-  int fails = peclet::core::test::g_failures, total = 0;
+  int fails = peclet::amr::test::g_failures, total = 0;
   MPI_Reduce(&fails, &total, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
   MPI_Finalize();
   if (rank == 0) {
@@ -163,9 +161,3 @@ int main(int argc, char** argv) {
   }
   return 0;
 }
-#else
-#include "test_skip_mpi.hpp"
-int main(int argc, char** argv) {
-  return ::peclet::core::test::skipMpiTest(argc, argv, "distributed openness test");
-}
-#endif  // PECLET_CORE_HAVE_MORTON

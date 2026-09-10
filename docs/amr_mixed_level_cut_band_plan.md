@@ -361,7 +361,7 @@ L(x) on the surface = union of criteria, then D4-quantized:
 
 ### 8a. The host-oracle prototype (built 2026-08-25, pre-gate — doubles as the Phase-1 oracle)
 
-`include/peclet/core/amr/ghost_projection_sampled.hpp` (host-only) + `flow_oracle.hpp`
+`include/peclet/amr/ghost_projection_sampled.hpp` (host-only) + `flow_oracle.hpp`
 `setGhostSampled(true)`: chain entries → sample-slot CSR functionals (identity at same level —
 bit-exact on uniform bands; degree-2 LS virtual samples across 2:1 boundaries per M2;
 fluid-only fallback), face classification FORCED to the canonical actual-center openness

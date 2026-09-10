@@ -13,10 +13,8 @@
 //   (3) np>1: the distributed BiCGStab converges and matches the single-rank solution to
 //       Krylov tolerance (the iterate sequence differs only through dot reduction order).
 //
-// Guarded by PECLET_CORE_HAVE_MORTON; a no-op pass without the morton sibling checkout.
 #include "test_util.hpp"
 
-#ifdef PECLET_CORE_HAVE_MORTON
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -24,15 +22,15 @@
 #include <utility>
 #include <vector>
 
-#include "peclet/core/amr/cut_cell.hpp"
-#include "peclet/core/amr/distributed_octree.hpp"
-#include "peclet/core/amr/leaf_halo.hpp"
-#include "peclet/core/amr/momentum.hpp"
+#include "peclet/amr/cut_cell.hpp"
+#include "peclet/amr/distributed_octree.hpp"
+#include "peclet/amr/leaf_halo.hpp"
+#include "peclet/amr/momentum.hpp"
 #include "peclet/core/common/mpi.hpp"
 #include "peclet/core/common/view.hpp"
 
 using namespace peclet::core;
-using namespace peclet::core::amr;
+using namespace peclet::amr;
 
 namespace {
 
@@ -160,9 +158,9 @@ void run() {
 
   long lw = (long)n, gw = 0;
   MPI_Allreduce(&lw, &gw, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
-  PECLET_CORE_CHECK(gw == (long)ns);
+  PECLET_AMR_CHECK(gw == (long)ns);
   if (size > 1)
-    PECLET_CORE_CHECK(halo.numGhosts() > 0);  // the seam is actually exercised
+    PECLET_AMR_CHECK(halo.numGhosts() > 0);  // the seam is actually exercised
 
   // ---- (1) operator CSR row-for-row bit-exact vs the single-rank reference ----
   auto codeOfExt = [&](Index slot) -> Code {
@@ -173,7 +171,7 @@ void run() {
   Index mismRow = 0;
   for (Index i = 0; i < n; ++i) {
     const Index si = self.local().find(world.globalCode(i));
-    PECLET_CORE_CHECK(si >= 0);
+    PECLET_AMR_CHECK(si >= 0);
     bool ok = Aw.diag[(std::size_t)i] == As.diag[(std::size_t)si] &&
               mom.rhsScale(i) == momS.rhsScale(si) && mom.isFluid(i) == momS.isFluid(si) &&
               mom.isCut(i) == momS.isCut(si);
@@ -191,7 +189,7 @@ void run() {
     if (!ok)
       ++mismRow;
   }
-  PECLET_CORE_CHECK_EQ(mismRow, 0);
+  PECLET_AMR_CHECK_EQ(mismRow, 0);
 
   // ---- (2)+(3) distributed device BiCGStab vs the single-rank solve ----
   LeafHaloExchange ex;
@@ -222,8 +220,8 @@ void run() {
   Kokkos::deep_copy(uS, 0.0);
   auto rW = solW.solveBiCGStab(opW, uW, View<const double>(bW), 400, 1e-11);
   auto rS = solS.solveBiCGStab(opS, uS, View<const double>(bS), 400, 1e-11);
-  PECLET_CORE_CHECK(rW.res <= 1e-10 * rW.res0 || rW.res <= 1e-13);
-  PECLET_CORE_CHECK(rS.res <= 1e-10 * rS.res0 || rS.res <= 1e-13);
+  PECLET_AMR_CHECK(rW.res <= 1e-10 * rW.res0 || rW.res <= 1e-13);
+  PECLET_AMR_CHECK(rS.res <= 1e-10 * rS.res0 || rS.res <= 1e-13);
 
   std::vector<double> hW = down(uW), hS = down(uS);
   double umax = 0.0;
@@ -237,9 +235,9 @@ void run() {
   double gdmax = 0.0;
   MPI_Allreduce(&dmax, &gdmax, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
   if (size == 1) {
-    PECLET_CORE_CHECK(gdmax == 0.0);  // np=1: distributed == single-rank bit-for-bit
+    PECLET_AMR_CHECK(gdmax == 0.0);  // np=1: distributed == single-rank bit-for-bit
   } else {
-    PECLET_CORE_CHECK(gdmax <= 1e-7 * umax);  // Krylov tolerance (dot order differs)
+    PECLET_AMR_CHECK(gdmax <= 1e-7 * umax);  // Krylov tolerance (dot order differs)
   }
 }
 
@@ -252,7 +250,7 @@ int main(int argc, char** argv) {
   Kokkos::finalize();
   int rank = 0;
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-  int fails = peclet::core::test::g_failures, total = 0;
+  int fails = peclet::amr::test::g_failures, total = 0;
   MPI_Reduce(&fails, &total, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
   MPI_Finalize();
   if (rank == 0) {
@@ -265,9 +263,3 @@ int main(int argc, char** argv) {
   }
   return 0;
 }
-#else
-#include "test_skip_mpi.hpp"
-int main(int argc, char** argv) {
-  return ::peclet::core::test::skipMpiTest(argc, argv, "distributed momentum test");
-}
-#endif  // PECLET_CORE_HAVE_MORTON

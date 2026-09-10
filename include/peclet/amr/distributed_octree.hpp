@@ -23,12 +23,12 @@
 // coordinates — the same owner-based, no-Cartesian-assumption pattern GridHaloTopology
 // uses. Self-addressed messages are handled locally (no MPI send-to-self).
 //
-// Header-only, guarded by PECLET_CORE_HAVE_MORTON; uses the MPI shim (peclet/core/common/mpi.hpp,
 // real MPI or the single-rank stub) and the NBX engine.
-#ifndef PECLET_CORE_AMR_DISTRIBUTED_OCTREE_HPP
-#define PECLET_CORE_AMR_DISTRIBUTED_OCTREE_HPP
+#ifndef PECLET_AMR_DISTRIBUTED_OCTREE_HPP
+#define PECLET_AMR_DISTRIBUTED_OCTREE_HPP
 
-#ifdef PECLET_CORE_HAVE_MORTON
+#include "peclet/amr/common.hpp"
+
 
 #include <algorithm>
 #include <array>
@@ -39,14 +39,14 @@
 #include <vector>
 
 #include "morton/morton.hpp"
-#include "peclet/core/amr/block_octree.hpp"
-#include "peclet/core/amr/leaf_field.hpp"
+#include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/leaf_field.hpp"
 #include "peclet/core/common/mpi.hpp"
 #include "peclet/core/common/types.hpp"
 #include "peclet/core/decomp/block_decomposer.hpp"
 #include "peclet/core/halo/nbx.hpp"
 
-namespace peclet::core::amr {
+namespace peclet::amr {
 
 template <int Dim, unsigned Bits = (Dim == 2 ? 32u : (Dim == 3 ? 21u : 16u))>
 class DistributedOctree {
@@ -867,7 +867,6 @@ class DistributedOctree {
   Index rootSpan_ = 1;
 };
 
-}  // namespace peclet::core::amr
+}  // namespace peclet::amr
 
-#endif  // PECLET_CORE_HAVE_MORTON
-#endif  // PECLET_CORE_AMR_DISTRIBUTED_OCTREE_HPP
+#endif  // PECLET_AMR_DISTRIBUTED_OCTREE_HPP

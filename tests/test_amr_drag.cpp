@@ -11,22 +11,20 @@
 //   O(dt) splitting error -> ~ -11% at N=32; the rotational term fixed it.)
 // This test runs the cheapest resolved point and asserts a tight match.
 //
-// Guarded by PECLET_CORE_HAVE_MORTON; a no-op pass without the morton sibling checkout.
 #include "test_util.hpp"
 
-#ifdef PECLET_CORE_HAVE_MORTON
 #include <cmath>
 #include <vector>
 
-#include "peclet/core/amr/block_octree.hpp"
-#include "peclet/core/amr/flow_oracle.hpp"
-#include "peclet/core/amr/leaf_field.hpp"
-#include "peclet/core/amr/refine.hpp"
+#include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/flow_oracle.hpp"
+#include "peclet/amr/leaf_field.hpp"
+#include "peclet/amr/refine.hpp"
 #include "peclet/core/common/types.hpp"
 #include "peclet/core/geom/sdf.hpp"
 
 using namespace peclet::core;
-using namespace peclet::core::amr;
+using namespace peclet::amr;
 
 namespace {
 
@@ -114,8 +112,8 @@ void run() {
   const double kZH = 4.292;  // Zick & Homsy (1982), SC, phi=0.125
   double k = dragK(3, phi);  // N=8 (cheapest); finer N tightens further (see header)
   double err = std::fabs(k - kZH) / kZH;
-  PECLET_CORE_CHECK(k > 0);
-  PECLET_CORE_CHECK(err < 0.03);  // tight match to Z&H (== sdflow); N=8 is ~ -0.8%
+  PECLET_AMR_CHECK(k > 0);
+  PECLET_AMR_CHECK(err < 0.03);  // tight match to Z&H (== sdflow); N=8 is ~ -0.8%
 
   // --- GRADED mesh: sphere band refined to the finest level, far field coarse ---
   // With the C/F-consistent momentum diffusion + FV divergence/ABC gradient, the
@@ -133,7 +131,7 @@ void run() {
   peclet::core::geom::Sphere sph{{c, c, c}, R};
   refineToSdf(
       t, geo, [&](const Vec<3>& p) { return -sph.eval(p); }, /*target*/ 0, /*band*/ 2.5, true);
-  PECLET_CORE_CHECK(t.numLeaves() < Nf * Nf * Nf);  // genuinely coarsened (graded)
+  PECLET_AMR_CHECK(t.numLeaves() < Nf * Nf * Nf);  // genuinely coarsened (graded)
 
   oracle::AmrFlow<21> fl;
   fl.init(t, 1.0, Vec<3>{0, 0, 0});
@@ -157,9 +155,9 @@ void run() {
     usup += u[static_cast<std::size_t>(i)] * w * w * w;  // volume-weighted over the cell
   }
   usup /= nuni;
-  PECLET_CORE_CHECK(std::isfinite(usup) && std::fabs(usup) < 1.0);  // STABLE (no blow-up)
+  PECLET_AMR_CHECK(std::isfinite(usup) && std::fabs(usup) < 1.0);  // STABLE (no blow-up)
   double kg = f * nuni / (6.0 * M_PI * mu * R * usup);
-  PECLET_CORE_CHECK(std::fabs(kg - kZH) / kZH < 0.10);  // graded drag within ~10% of Z&H
+  PECLET_AMR_CHECK(std::fabs(kg - kZH) / kZH < 0.10);  // graded drag within ~10% of Z&H
 
   // ---- PHASE 3 GATE A4: the same drag on a BOX mesh -----------------------------------------
   // h0 = (1, 1/2, 1) with brick (1,2,1): the physical box is the SAME cube, the cells are not.
@@ -170,10 +168,10 @@ void run() {
         "A4 anisotropic Z&H: h0 = (1, 0.5, 1), cells = (8, 16, 8), K = %.4f vs %.4f "
         "(%.2f %%); the CUBIC rung of the same box reads %.4f (%.2f %%)\n",
         kA, kZH, 100.0 * (kA / kZH - 1.0), k, 100.0 * (k / kZH - 1.0));
-    PECLET_CORE_CHECK(kA > 0);
-    PECLET_CORE_CHECK(errA < 0.03);
+    PECLET_AMR_CHECK(kA > 0);
+    PECLET_AMR_CHECK(errA < 0.03);
     // Refining ONE axis must not make the answer worse than the cubic rung it refines.
-    PECLET_CORE_CHECK(errA < 1.5 * err + 1e-3);
+    PECLET_AMR_CHECK(errA < 1.5 * err + 1e-3);
   }
 }
 
@@ -181,11 +179,5 @@ void run() {
 
 int main() {
   run();
-  PECLET_CORE_RETURN_TEST_RESULT();
+  PECLET_AMR_RETURN_TEST_RESULT();
 }
-#else
-int main() {
-  std::printf("PECLET_CORE_HAVE_MORTON not set — skipping Stokes drag test\n");
-  return ::peclet::core::test::kSkipExitCode;
-}
-#endif  // PECLET_CORE_HAVE_MORTON

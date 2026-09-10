@@ -1,23 +1,21 @@
-// Portable device-resident block-octree queries (peclet::core::amr::BlockOctreeView):
+// Portable device-resident block-octree queries (peclet::amr::BlockOctreeView):
 // the device point-location and face-neighbour walk must match the host
 // BlockOctree bit-for-bit, on whatever backend Kokkos was built for (CUDA / HIP /
 // OpenMP). Compiled as CXX — Kokkos routes it to the device compiler.
 //
-// Guarded by PECLET_CORE_HAVE_MORTON; a no-op pass without the morton sibling checkout.
 #include "test_util.hpp"
 
-#ifdef PECLET_CORE_HAVE_MORTON
 #include <array>
 #include <cstdint>
 #include <Kokkos_Core.hpp>
 #include <vector>
 
-#include "peclet/core/amr/block_octree.hpp"
-#include "peclet/core/amr/block_octree_view.hpp"
+#include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/block_octree_view.hpp"
 
 using namespace peclet::core;
-using peclet::core::amr::BlockOctree;
-using peclet::core::amr::BlockOctreeView;
+using peclet::amr::BlockOctree;
+using peclet::amr::BlockOctreeView;
 
 namespace {
 
@@ -39,11 +37,11 @@ void run() {
   refineAt({0, 0, 0});
   refineAt({3, 0, 0});
   t.balance2to1();
-  PECLET_CORE_CHECK(t.isBalanced());
+  PECLET_AMR_CHECK(t.isBalanced());
 
   BlockOctreeView<3, kBits> dev;
   dev.upload(t);
-  PECLET_CORE_CHECK_EQ((long long)dev.numLeaves(), (long long)t.numLeaves());
+  PECLET_AMR_CHECK_EQ((long long)dev.numLeaves(), (long long)t.numLeaves());
 
   // ---- point location: device locate(probe) == host find(probe) ----
   std::vector<Code> probes;
@@ -67,7 +65,7 @@ void run() {
   for (std::size_t i = 0; i < probes.size(); ++i)
     if (hOut(i) != t.find(probes[i]))
       ++mism;
-  PECLET_CORE_CHECK_EQ(mism, 0);
+  PECLET_AMR_CHECK_EQ(mism, 0);
 
   // ---- face neighbours: device == host for every leaf, every face ----
   const Index nleaf = t.numLeaves();
@@ -89,7 +87,7 @@ void run() {
       if (hNbr(i * 6 + axis * 2 + 1) != t.faceNeighbor(i, axis, -1))
         ++nmis;
     }
-  PECLET_CORE_CHECK_EQ(nmis, 0);
+  PECLET_AMR_CHECK_EQ(nmis, 0);
 }
 
 }  // namespace
@@ -98,11 +96,5 @@ int main(int argc, char** argv) {
   Kokkos::initialize(argc, argv);
   run();
   Kokkos::finalize();
-  PECLET_CORE_RETURN_TEST_RESULT();
+  PECLET_AMR_RETURN_TEST_RESULT();
 }
-#else
-int main() {
-  std::printf("PECLET_CORE_HAVE_MORTON not set — skipping device block octree test\n");
-  return ::peclet::core::test::kSkipExitCode;
-}
-#endif  // PECLET_CORE_HAVE_MORTON

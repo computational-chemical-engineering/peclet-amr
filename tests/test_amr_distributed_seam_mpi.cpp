@@ -20,17 +20,16 @@
 
 #include "test_util.hpp"
 
-#ifdef PECLET_CORE_HAVE_MORTON
 #include <mpi.h>
 
 #include <Kokkos_Core.hpp>
 
-#include "peclet/core/amr/distributed_octree.hpp"
-#include "peclet/core/amr/flow.hpp"
+#include "peclet/amr/distributed_octree.hpp"
+#include "peclet/amr/flow.hpp"
 #include "peclet/core/common/types.hpp"
 
 using namespace peclet::core;
-using namespace peclet::core::amr;
+using namespace peclet::amr;
 
 namespace {
 
@@ -132,9 +131,9 @@ void run() {
           size, ntot, tmax, 1e6 * tmax / ((double)ntot / size), ntot / size);
   }
   if (size > 1)
-    PECLET_CORE_CHECK(fw.numGhostCells() > 0);
+    PECLET_AMR_CHECK(fw.numGhostCells() > 0);
   else
-    PECLET_CORE_CHECK_EQ(fw.numGhostCells(), 0);  // np=1: every wrapped probe lands back in-block
+    PECLET_AMR_CHECK_EQ(fw.numGhostCells(), 0);  // np=1: every wrapped probe lands back in-block
   // Two diagnostic knobs, both defaulting to the gated configuration: SEAM_STEPS shortens or
   // lengthens the march (the WORLD/SELF difference peaks mid-transient and DECAYS, so a single
   // step count hides the shape), and SEAM_UNIFORM rebuilds the band uniform, which turns every
@@ -151,7 +150,7 @@ void run() {
   double dmax = 0.0, scale = 0.0;
   for (Index i = 0; i < n; ++i) {
     const Index si = self.local().find(world.globalCode(i));
-    PECLET_CORE_CHECK(si >= 0);
+    PECLET_AMR_CHECK(si >= 0);
     for (int c = 0; c < 3; ++c) {
       scale = std::max(scale, std::fabs(s.u[(std::size_t)c][(std::size_t)si]));
       dmax = std::max(dmax, std::fabs(w.u[(std::size_t)c][(std::size_t)i] -
@@ -168,9 +167,9 @@ void run() {
         "%.3e)\n",
         size, gdmax, gscale, gdmax / (gscale + 1e-300));
   if (size == 1)
-    PECLET_CORE_CHECK(gdmax == 0.0);  // BITWISE, the np=1 contract
+    PECLET_AMR_CHECK(gdmax == 0.0);  // BITWISE, the np=1 contract
   else
-    PECLET_CORE_CHECK(gdmax <= 5e-6 * gscale);  // decomposition independence (DD4)
+    PECLET_AMR_CHECK(gdmax <= 5e-6 * gscale);  // decomposition independence (DD4)
 }
 
 }  // namespace
@@ -182,7 +181,7 @@ int main(int argc, char** argv) {
   Kokkos::finalize();
   int rank = 0;
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-  int fails = peclet::core::test::g_failures, total = 0;
+  int fails = peclet::amr::test::g_failures, total = 0;
   MPI_Reduce(&fails, &total, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
   MPI_Finalize();
   if (rank == 0) {
@@ -195,9 +194,3 @@ int main(int argc, char** argv) {
   }
   return 0;
 }
-#else
-#include "test_skip_mpi.hpp"
-int main(int argc, char** argv) {
-  return ::peclet::core::test::skipMpiTest(argc, argv, "distributed seam test");
-}
-#endif  // PECLET_CORE_HAVE_MORTON

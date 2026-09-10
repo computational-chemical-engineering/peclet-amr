@@ -26,13 +26,12 @@
 #include <string_view>
 #include <vector>
 
-#ifdef PECLET_CORE_HAVE_MORTON
-#include "peclet/core/amr/block_octree.hpp"
-#include "peclet/core/amr/flow_oracle.hpp"
+#include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/flow_oracle.hpp"
 #include "peclet/core/common/types.hpp"
 
 using namespace peclet::core;
-using namespace peclet::core::amr;
+using namespace peclet::amr;
 
 namespace {
 
@@ -212,10 +211,3 @@ int main(int argc, char** argv) {
   std::printf("usage: %s parity | march {seam|ctrl} {dt} | cycle {seam|ctrl}\n", argv[0]);
   return 2;
 }
-#else
-#include <cstdio>
-int main() {
-  std::printf("PECLET_CORE_HAVE_MORTON not set — skipping\n");
-  return 77;  // ctest SKIP_RETURN_CODE (tests/test_util.hpp kSkipExitCode)
-}
-#endif

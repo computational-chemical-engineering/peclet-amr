@@ -16,11 +16,11 @@
 // deferred correction, advected by the divergence-free face field uf (built each projection;
 // falls back to ½(u_i+u_j) until the first projection) — conservative (∇·uf = 0).
 //
-// Requires a Kokkos build + the morton checkout (PECLET_CORE_HAVE_MORTON).
-#ifndef PECLET_CORE_AMR_FLOW_HPP
-#define PECLET_CORE_AMR_FLOW_HPP
+#ifndef PECLET_AMR_FLOW_HPP
+#define PECLET_AMR_FLOW_HPP
 
-#ifdef PECLET_CORE_HAVE_MORTON
+#include "peclet/amr/common.hpp"
+
 
 #include <array>
 #include <cmath>
@@ -31,32 +31,32 @@
 #include <memory>
 #include <vector>
 
-#include "peclet/core/amr/adapt.hpp"  // transferField (conservative remap for finishAdapt)
+#include "peclet/amr/adapt.hpp"  // transferField (conservative remap for finishAdapt)
 
-#include "peclet/core/amr/advect_recon.hpp"  // shared high-order face reconstruction (host+device)
-#include "peclet/core/amr/block_octree.hpp"
-#include "peclet/core/amr/cut_cell.hpp"
-#include "peclet/core/amr/face_geom.hpp"          // FaceGeom (shared with the device assembler)
-#include "peclet/core/amr/cf_scheme.hpp"          // pluggable 2:1 C/F schemes (setCfScheme)
-#include "peclet/core/amr/facegeom_assembly.hpp"  // assembleFaceGeom (D4/D6)
-#include "peclet/core/amr/ghost_projection.hpp"   // directional ghost overlay (setGhostProjection)
-#include "peclet/core/amr/ghost_projection_sampled.hpp"  // mixed-level sampled overlay (setGhostSampled)
-#include "peclet/core/amr/momentum.hpp"
-#include "peclet/core/amr/momentum_assembly.hpp"  // assembleMomentum (D3/D6)
-#include "peclet/core/amr/multigrid.hpp"
-#include "peclet/core/amr/pcg.hpp"
-#include "peclet/core/amr/poisson.hpp"
-#include "peclet/core/amr/velocity_mg.hpp"
+#include "peclet/amr/advect_recon.hpp"  // shared high-order face reconstruction (host+device)
+#include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/cut_cell.hpp"
+#include "peclet/amr/face_geom.hpp"          // FaceGeom (shared with the device assembler)
+#include "peclet/amr/cf_scheme.hpp"          // pluggable 2:1 C/F schemes (setCfScheme)
+#include "peclet/amr/facegeom_assembly.hpp"  // assembleFaceGeom (D4/D6)
+#include "peclet/amr/ghost_projection.hpp"   // directional ghost overlay (setGhostProjection)
+#include "peclet/amr/ghost_projection_sampled.hpp"  // mixed-level sampled overlay (setGhostSampled)
+#include "peclet/amr/momentum.hpp"
+#include "peclet/amr/momentum_assembly.hpp"  // assembleMomentum (D3/D6)
+#include "peclet/amr/multigrid.hpp"
+#include "peclet/amr/pcg.hpp"
+#include "peclet/amr/poisson.hpp"
+#include "peclet/amr/velocity_mg.hpp"
 #include "peclet/core/common/host_parallel.hpp"
 #include "peclet/core/common/types.hpp"
 #include "peclet/core/common/view.hpp"
 
-#include "peclet/core/amr/distributed_adapt.hpp"    // transferGradients (distributed finishAdapt)
-#include "peclet/core/amr/distributed_flow_mg.hpp"  // distributed pressure MG (initMpi mode)
-#include "peclet/core/amr/distributed_octree.hpp"
-#include "peclet/core/amr/leaf_halo.hpp"
+#include "peclet/amr/distributed_adapt.hpp"    // transferGradients (distributed finishAdapt)
+#include "peclet/amr/distributed_flow_mg.hpp"  // distributed pressure MG (initMpi mode)
+#include "peclet/amr/distributed_octree.hpp"
+#include "peclet/amr/leaf_halo.hpp"
 
-namespace peclet::core::amr {
+namespace peclet::amr {
 
 /// Truthy environment flag (unset / "" / "0" ⇒ false). Characterisation knobs only — never a
 /// production configuration channel (those are the set* methods).
@@ -1293,9 +1293,9 @@ class AmrFlow {
     // projection (maskSolid + volume-weighted fluid-mean removal) deflates exactly that component,
     // so CG is valid and healthy: measured flat 15–17 iters/step (tol 1e-10) across the whole
     // impulsive N=32 transient, steady K identical to the V-cycle path to 4+ digits.
-    // Debug knob (env, default-off): PECLET_CORE_AMR_PRES_DEBUG=1 — per-cycle/-solve residual +
+    // Debug knob (env, default-off): PECLET_AMR_PRES_DEBUG=1 — per-cycle/-solve residual +
     // RHS-compatibility trace to stderr (the characterisation instrumentation, kept).
-    const bool dbg = amrEnvFlag("PECLET_CORE_AMR_PRES_DEBUG");
+    const bool dbg = amrEnvFlag("PECLET_AMR_PRES_DEBUG");
     if (dbg && !dist_) {
       // RHS compatibility: the operator's left null vector is the constant over fluid cells in the
       // volume-weighted inner product, so a solvable RHS needs Σ V_i·div_i ≈ 0 over fluid cells.
@@ -2072,7 +2072,7 @@ class AmrFlow {
   double rho_ = 1.0, mu_ = 1.0, dt_ = 1e6;
   Vec<3> f_{};
   bool presPCG_ = true;
-  bool presDbgSpdDone_ = false;  // one-shot debug SPD probe (PECLET_CORE_AMR_PRES_DEBUG)
+  bool presDbgSpdDone_ = false;  // one-shot debug SPD probe (PECLET_AMR_PRES_DEBUG)
   bool momMGon_ = true;  // velocity-MG momentum preconditioner (scalable; see setMomentumMG)
   bool useStaircaseMG_ = false;  // false = Galerkin (MomentumMG), true = staircase (VelocityMG)
   int mgVcPre_ = 2, mgVcBottom_ = 30;  // momentum-MG V-cycle pre/post sweeps + bottom sweeps
@@ -2162,7 +2162,6 @@ class AmrFlow {
   std::function<double(double)> allred_;        // Allreduce hook (empty single-rank)
 };
 
-}  // namespace peclet::core::amr
+}  // namespace peclet::amr
 
-#endif  // PECLET_CORE_HAVE_MORTON
-#endif  // PECLET_CORE_AMR_FLOW_HPP
+#endif  // PECLET_AMR_FLOW_HPP

@@ -34,10 +34,11 @@
 // Krylov contract.
 //
 // Kokkos + MPI header (include in device TUs; the AmrFlow oracle stays single-rank).
-#ifndef PECLET_CORE_AMR_DISTRIBUTED_FLOW_MG_HPP
-#define PECLET_CORE_AMR_DISTRIBUTED_FLOW_MG_HPP
+#ifndef PECLET_AMR_DISTRIBUTED_FLOW_MG_HPP
+#define PECLET_AMR_DISTRIBUTED_FLOW_MG_HPP
 
-#ifdef PECLET_CORE_HAVE_MORTON
+#include "peclet/amr/common.hpp"
+
 
 #include <array>
 #include <memory>
@@ -45,14 +46,14 @@
 
 #include "peclet/core/common/view.hpp"
 
-#include "peclet/core/amr/distributed_octree.hpp"
-#include "peclet/core/amr/fv_op.hpp"
-#include "peclet/core/amr/leaf_halo.hpp"
-#include "peclet/core/amr/multigrid.hpp"  // restrictField / prolongAdd (shared transfer kernels)
-#include "peclet/core/amr/poisson.hpp"
+#include "peclet/amr/distributed_octree.hpp"
+#include "peclet/amr/fv_op.hpp"
+#include "peclet/amr/leaf_halo.hpp"
+#include "peclet/amr/multigrid.hpp"  // restrictField / prolongAdd (shared transfer kernels)
+#include "peclet/amr/poisson.hpp"
 #include "peclet/core/common/mpi.hpp"
 
-namespace peclet::core::amr {
+namespace peclet::amr {
 
 /// removeMeanFv with the two mean sums folded across ranks (identical kernels; the Allreduce
 /// sits between the reduce and the subtract). np=1 == removeMeanFv bit-for-bit.
@@ -398,7 +399,6 @@ class DistributedFlowMultigrid {
   bool removeMean_ = false;
 };
 
-}  // namespace peclet::core::amr
+}  // namespace peclet::amr
 
-#endif  // PECLET_CORE_HAVE_MORTON
-#endif  // PECLET_CORE_AMR_DISTRIBUTED_FLOW_MG_HPP
+#endif  // PECLET_AMR_DISTRIBUTED_FLOW_MG_HPP

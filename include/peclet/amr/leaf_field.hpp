@@ -7,20 +7,20 @@
 // The on-device counterpart is simply a peclet::core::View<T> of length numLeaves(); this
 // host container is the I/O / setup form.
 //
-// Header-only, guarded by PECLET_CORE_HAVE_MORTON (so it tracks block_octree.hpp).
-#ifndef PECLET_CORE_AMR_LEAF_FIELD_HPP
-#define PECLET_CORE_AMR_LEAF_FIELD_HPP
+#ifndef PECLET_AMR_LEAF_FIELD_HPP
+#define PECLET_AMR_LEAF_FIELD_HPP
 
-#ifdef PECLET_CORE_HAVE_MORTON
+#include "peclet/amr/common.hpp"
+
 
 #include <array>
 #include <cstddef>
 #include <vector>
 
-#include "peclet/core/amr/block_octree.hpp"
+#include "peclet/amr/block_octree.hpp"
 #include "peclet/core/common/types.hpp"
 
-namespace peclet::core::amr {
+namespace peclet::amr {
 
 namespace detail {
 /// `Vec<Dim>` with every component set to `v` (C++ has no aggregate-fill initializer).
@@ -139,7 +139,6 @@ struct LeafField {
   const T* data() const { return values.data(); }
 };
 
-}  // namespace peclet::core::amr
+}  // namespace peclet::amr
 
-#endif  // PECLET_CORE_HAVE_MORTON
-#endif  // PECLET_CORE_AMR_LEAF_FIELD_HPP
+#endif  // PECLET_AMR_LEAF_FIELD_HPP

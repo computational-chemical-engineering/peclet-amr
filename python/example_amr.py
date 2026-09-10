@@ -1,4 +1,4 @@
-"""Worked example of the core AMR Python bindings (peclet.core.amr).
+"""Worked example of the core AMR Python bindings (peclet.amr).
 
 Run (after building the module — see python/CMakeLists.txt):
     PYTHONPATH=<python build tree> python3 python/example_amr.py
@@ -16,7 +16,7 @@ adapt — see python/test_amr.py, which drives it under mpi4py.
 """
 import numpy as np
 
-from peclet.core import amr as core_amr
+from peclet import amr as core_amr
 
 
 def example_refine_and_export() -> None:

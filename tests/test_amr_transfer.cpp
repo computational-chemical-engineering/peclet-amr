@@ -1,4 +1,4 @@
-// Field remap between octrees (peclet::core::amr::transferField), the core of dynamic AMR:
+// Field remap between octrees (peclet::amr::transferField), the core of dynamic AMR:
 //   (1) conservation — the volume-weighted integral Σ V·f is preserved when the mesh
 //       is refined (piecewise-constant prolong) and when it is coarsened (volume
 //       average);
@@ -9,20 +9,18 @@
 //   (4) linear > PC accuracy — minmod-limited linear prolongation beats PC injection
 //       on a smooth (quadratic) field, and is itself conservative.
 //
-// Guarded by PECLET_CORE_HAVE_MORTON; a no-op pass without the morton sibling checkout.
 #include "test_util.hpp"
 
-#ifdef PECLET_CORE_HAVE_MORTON
 #include <array>
 #include <cmath>
 #include <vector>
 
-#include "peclet/core/amr/adapt.hpp"
-#include "peclet/core/amr/block_octree.hpp"
+#include "peclet/amr/adapt.hpp"
+#include "peclet/amr/block_octree.hpp"
 #include "peclet/core/common/types.hpp"
 
 using namespace peclet::core;
-using namespace peclet::core::amr;
+using namespace peclet::amr;
 
 namespace {
 
@@ -80,12 +78,12 @@ void run() {
     BO tr = t;
     tr.refineIf([](Code, unsigned l) { return l > 0; });  // refine all eligible one level
     auto fr = transferField(t, f, tr, /*linear=*/false);  // PC prolong
-    PECLET_CORE_CHECK(std::fabs(relIntegral(tr, fr) - I0) < 1e-9 * (std::fabs(I0) + 1e-30));
+    PECLET_AMR_CHECK(std::fabs(relIntegral(tr, fr) - I0) < 1e-9 * (std::fabs(I0) + 1e-30));
 
     BO tc = t;
     tc.coarsenIf([](Code, unsigned) { return true; });  // coarsen all full groups
     auto fc = transferField(t, f, tc, false);
-    PECLET_CORE_CHECK(std::fabs(relIntegral(tc, fc) - I0) < 1e-9 * (std::fabs(I0) + 1e-30));
+    PECLET_AMR_CHECK(std::fabs(relIntegral(tc, fc) - I0) < 1e-9 * (std::fabs(I0) + 1e-30));
   }
 
   // (2) round-trip identity on a uniform mesh: refine-all then coarsen-all
@@ -101,13 +99,13 @@ void run() {
     tc.coarsenIf([](Code, unsigned) { return true; });
     auto fc = transferField(tr, fr, tc, false);
 
-    PECLET_CORE_CHECK(tc.numLeaves() == t.numLeaves());
+    PECLET_AMR_CHECK(tc.numLeaves() == t.numLeaves());
     double maxd = 0.0;
     for (Index i = 0; i < t.numLeaves(); ++i) {
       Index k = tc.find(t.code(i));
       maxd = std::max(maxd, std::fabs(fc[(std::size_t)k] - f[(std::size_t)i]));
     }
-    PECLET_CORE_CHECK(maxd < 1e-12);
+    PECLET_AMR_CHECK(maxd < 1e-12);
   }
 
   // (3) restrict of a linear field is exact (volume avg = centroid value)
@@ -123,7 +121,7 @@ void run() {
     double maxd = 0.0;
     for (Index i = 0; i < coarse.numLeaves(); ++i)
       maxd = std::max(maxd, std::fabs(fc[(std::size_t)i] - exact[(std::size_t)i]));
-    PECLET_CORE_CHECK(maxd < 1e-9);
+    PECLET_AMR_CHECK(maxd < 1e-9);
   }
 
   // (4) minmod-linear prolong beats PC on a smooth quadratic, and conserves
@@ -149,8 +147,8 @@ void run() {
       ePC += std::fabs(fpc[(std::size_t)i] - exact[(std::size_t)i]);
       eLIN += std::fabs(flin[(std::size_t)i] - exact[(std::size_t)i]);
     }
-    PECLET_CORE_CHECK(eLIN < ePC);  // more accurate
-    PECLET_CORE_CHECK(std::fabs(relIntegral(fine, flin) - I0) <
+    PECLET_AMR_CHECK(eLIN < ePC);  // more accurate
+    PECLET_AMR_CHECK(std::fabs(relIntegral(fine, flin) - I0) <
                       1e-9 * std::fabs(I0));  // still conservative
   }
 }
@@ -159,11 +157,5 @@ void run() {
 
 int main() {
   run();
-  PECLET_CORE_RETURN_TEST_RESULT();
+  PECLET_AMR_RETURN_TEST_RESULT();
 }
-#else
-int main() {
-  std::printf("PECLET_CORE_HAVE_MORTON not set — skipping transfer test\n");
-  return ::peclet::core::test::kSkipExitCode;
-}
-#endif  // PECLET_CORE_HAVE_MORTON

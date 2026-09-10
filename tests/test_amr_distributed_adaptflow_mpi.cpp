@@ -12,23 +12,21 @@
 //   np>1: Krylov tolerance — which also proves the rebalance migrated the state exactly
 //   (any migration error would break the continued trajectory).
 //
-// Guarded by PECLET_CORE_HAVE_MORTON; a no-op pass without the morton sibling checkout.
 #include "test_util.hpp"
 
-#ifdef PECLET_CORE_HAVE_MORTON
 #include <array>
 #include <cmath>
 #include <Kokkos_Core.hpp>
 #include <vector>
 
-#include "peclet/core/amr/distributed_adapt.hpp"
-#include "peclet/core/amr/distributed_octree.hpp"
-#include "peclet/core/amr/flow.hpp"
+#include "peclet/amr/distributed_adapt.hpp"
+#include "peclet/amr/distributed_octree.hpp"
+#include "peclet/amr/flow.hpp"
 #include "peclet/core/common/mpi.hpp"
 #include "peclet/core/common/view.hpp"
 
 using namespace peclet::core;
-using namespace peclet::core::amr;
+using namespace peclet::amr;
 
 namespace {
 
@@ -137,7 +135,7 @@ void run() {
     const Index n = world.local().numLeaves();
     for (Index i = 0; i < n; ++i) {
       const Index si = self.local().find(world.globalCode(i));
-      PECLET_CORE_CHECK(si >= 0);
+      PECLET_AMR_CHECK(si >= 0);
       for (int c = 0; c < 3; ++c)
         dmax = std::max(dmax, std::fabs(uw[(std::size_t)c][(std::size_t)i] -
                                         us[(std::size_t)c][(std::size_t)si]));
@@ -149,9 +147,9 @@ void run() {
       std::printf("[%s] gdmax=%.3e scale=%.3e rel=%.3e\n", what, gdmax, scale,
                   scale > 0 ? gdmax / scale : 0.0);
     if (size == 1)
-      PECLET_CORE_CHECK(gdmax == 0.0);
+      PECLET_AMR_CHECK(gdmax == 0.0);
     else
-      PECLET_CORE_CHECK(gdmax <= 1e-5 * scale);
+      PECLET_AMR_CHECK(gdmax <= 1e-5 * scale);
   };
 
   // Phase 1: NS steps on the initial mesh.
@@ -168,7 +166,7 @@ void run() {
   {  // the adapted meshes agree globally (bit-identical flags + deterministic balance)
     long lw = (long)world.local().numLeaves(), gw = 0;
     MPI_Allreduce(&lw, &gw, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
-    PECLET_CORE_CHECK(gw == (long)self.local().numLeaves());
+    PECLET_AMR_CHECK(gw == (long)self.local().numLeaves());
   }
   stepBoth(2);
   compare("post-adapt");
@@ -191,7 +189,7 @@ int main(int argc, char** argv) {
   Kokkos::finalize();
   int rank = 0;
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-  int fails = peclet::core::test::g_failures, total = 0;
+  int fails = peclet::amr::test::g_failures, total = 0;
   MPI_Reduce(&fails, &total, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
   MPI_Finalize();
   if (rank == 0) {
@@ -204,9 +202,3 @@ int main(int argc, char** argv) {
   }
   return 0;
 }
-#else
-#include "test_skip_mpi.hpp"
-int main(int argc, char** argv) {
-  return ::peclet::core::test::skipMpiTest(argc, argv, "distributed adapt-flow test");
-}
-#endif  // PECLET_CORE_HAVE_MORTON

@@ -13,22 +13,22 @@
 // buildFaceGeom bit-for-bit (test_amr_facegeom). GPU is tolerance-not-bit-exact (FMA), per the
 // convention.
 //
-// Requires a Kokkos build + the morton checkout (PECLET_CORE_HAVE_MORTON).
-#ifndef PECLET_CORE_AMR_FACEGEOM_ASSEMBLY_HPP
-#define PECLET_CORE_AMR_FACEGEOM_ASSEMBLY_HPP
+#ifndef PECLET_AMR_FACEGEOM_ASSEMBLY_HPP
+#define PECLET_AMR_FACEGEOM_ASSEMBLY_HPP
 
-#ifdef PECLET_CORE_HAVE_MORTON
+#include "peclet/amr/common.hpp"
+
 
 #include <array>
 
-#include "peclet/core/amr/assembly.hpp"  // FvFaceEmit (shared geometry traversal helpers)
-#include "peclet/core/amr/block_octree_view.hpp"
-#include "peclet/core/amr/csr.hpp"        // scanOffsets
-#include "peclet/core/amr/face_geom.hpp"  // FaceGeom (the produced type)
-#include "peclet/core/amr/poisson.hpp"
+#include "peclet/amr/assembly.hpp"  // FvFaceEmit (shared geometry traversal helpers)
+#include "peclet/amr/block_octree_view.hpp"
+#include "peclet/amr/csr.hpp"        // scanOffsets
+#include "peclet/amr/face_geom.hpp"  // FaceGeom (the produced type)
+#include "peclet/amr/poisson.hpp"
 #include "peclet/core/common/view.hpp"
 
-namespace peclet::core::amr {
+namespace peclet::amr {
 
 /// The device face-geometry walker: replicates AmrPoisson::forEachFaceFull + periodicNeighbor over
 /// the device octree, using FvFaceEmit's geometry helpers. `g` carries the octree view + openness +
@@ -180,7 +180,6 @@ FaceGeom assembleFaceGeom(const AmrPoisson<3, Bits>& ap, const std::vector<char>
   return fg;
 }
 
-}  // namespace peclet::core::amr
+}  // namespace peclet::amr
 
-#endif  // PECLET_CORE_HAVE_MORTON
-#endif  // PECLET_CORE_AMR_FACEGEOM_ASSEMBLY_HPP
+#endif  // PECLET_AMR_FACEGEOM_ASSEMBLY_HPP

@@ -1,0 +1,21 @@
+build/
+build_*/
+build-*/
+*.o
+*.so
+.cache/
+compile_commands.json
+
+# Generated Doxygen output (built in CI, published to Pages)
+docs/html/
+
+# Python build/test artifacts
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+
+# Scratch output of the examples / studies
+*.vtu
+*.log
+!docs/data/*.log

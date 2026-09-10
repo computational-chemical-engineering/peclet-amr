@@ -3,7 +3,7 @@
 // Formerly morton/octree (`morton_octree::Octree`, the "early scaffold" that was
 // going to become its own project). Removed from morton on 2026-09-08 — the
 // suite's AMR uses the morton library (`morton/morton.hpp`) directly and its own
-// peclet::core::amr::BlockOctree; the scaffold's only consumer was
+// peclet::amr::BlockOctree; the scaffold's only consumer was
 // core/tests/test_block_octree.cpp, which uses it as an independent oracle for
 // the leaf set. The last morton tree that carried it is commit b502598
 // (also reachable at the morton tag `pre-legacy-removal`, one comment line older).

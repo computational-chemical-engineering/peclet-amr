@@ -1,0 +1,45 @@
+name: Quality
+
+# Code-quality gates. Python hard-fails on critical errors only. The C++ clang-format check is
+# BLOCKING from the package's first push (suite/docs/QUALITY_PLAN.md §3.D.7): clang-format is pinned
+# to 18.1.8 (the suite venv's version, installed from PyPI — the apt package drifts) and the whole
+# tree — include/ tests/ python/ benchmarks/ — is formatted against the suite-wide .clang-format
+# (the AMR tree was reformatted once on relocation, 2026-09-10; core had excluded it until then).
+
+on:
+  push:
+    branches: [main, "**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  python-lint:
+    name: ruff (critical errors)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install ruff
+      - name: Ruff critical-error check
+        run: |
+          ruff check . --select E9,F63,F7,F82 \
+            --exclude ".venv,venv,build,build_*,__pycache__,_deps,extern"
+
+  cpp-format:
+    name: clang-format 18.1.8 (blocking)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install "clang-format==18.1.8"
+      - name: clang-format dry-run (uses the repo .clang-format)
+        run: |
+          files=$(git ls-files 'include/*.hpp' 'tests/*.hpp' 'tests/*.cpp' 'benchmarks/*.cpp' 'python/*.cpp')
+          [ -z "$files" ] && { echo "no C++ sources"; exit 0; }
+          clang-format --version
+          echo "$files" | wc -l
+          clang-format --dry-run --Werror $files

@@ -25,7 +25,7 @@ import time
 
 sys.path.insert(0, __file__.rsplit("/tests/", 1)[0] + "/python/build_cuda2")
 import numpy as np  # noqa: E402
-from peclet.core import amr  # noqa: E402
+from peclet import amr  # noqa: E402
 
 PACK = __file__.rsplit("/tests/", 1)[0] + "/tests/data/rcp_pack_seed3_unit.txt"
 LFAR = 3      # background level above finest

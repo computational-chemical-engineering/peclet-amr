@@ -1,4 +1,4 @@
-// Cell-centered FV Poisson on the octree + geometric multigrid (peclet::core::amr):
+// Cell-centered FV Poisson on the octree + geometric multigrid (peclet::amr):
 //   (1) conservation — the global volume-weighted integral of L u is ~0 on a
 //       periodic domain for arbitrary u, on uniform AND 2:1-graded meshes (proves
 //       the interface flux is conservative);
@@ -8,23 +8,21 @@
 //   (3) graded solvability — Gauss-Seidel reduces the residual on an adaptive mesh
 //       (the graded operator is a consistent, solvable system).
 //
-// Guarded by PECLET_CORE_HAVE_MORTON; a no-op pass without the morton sibling checkout.
 #include "test_util.hpp"
 
-#ifdef PECLET_CORE_HAVE_MORTON
 #include <cmath>
 #include <cstdint>
 #include <vector>
 
-#include "peclet/core/amr/block_octree.hpp"
-#include "peclet/core/amr/leaf_field.hpp"
-#include "peclet/core/amr/poisson.hpp"
-#include "peclet/core/amr/refine.hpp"
+#include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/leaf_field.hpp"
+#include "peclet/amr/poisson.hpp"
+#include "peclet/amr/refine.hpp"
 #include "peclet/core/common/types.hpp"
 #include "peclet/core/geom/sdf.hpp"
 
 using namespace peclet::core;
-using namespace peclet::core::amr;
+using namespace peclet::amr;
 
 namespace {
 
@@ -59,7 +57,7 @@ void test_conservation(const BO& t, Real h0) {
     integral += P.cellVolume(i) * Lu[static_cast<std::size_t>(i)];
     scale += P.cellVolume(i) * std::fabs(Lu[static_cast<std::size_t>(i)]);
   }
-  PECLET_CORE_CHECK(std::fabs(integral) < 1e-9 * (scale + 1e-30));
+  PECLET_AMR_CHECK(std::fabs(integral) < 1e-9 * (scale + 1e-30));
 
   // Anti-drift lock: the shared face_csr.hpp FV kernel over the assembled CSR (the same arithmetic
   // the device applyFv runs) must reproduce the geometric applyLaplacian. Validates the shared
@@ -74,7 +72,7 @@ void test_conservation(const BO& t, Real h0) {
   }
   std::printf("[poisson] shared-CSR vs geometric applyLaplacian: max|Δ| = %.3e (mag %.3e)\n", de,
               mg);
-  PECLET_CORE_CHECK(de < 1e-12 * (1.0 + mg));
+  PECLET_AMR_CHECK(de < 1e-12 * (1.0 + mg));
 }
 
 // Manufactured solve on a uniform 2^L grid over [0,1)^3; returns the L2 error.
@@ -217,7 +215,7 @@ void test_anisotropic_mg() {
   // GATED: the CUBIC path must be untouched by the per-axis conversion — that is the bit-identity
   // statement this gate is here to protect. The anisotropic rows are reported, not asserted: see
   // the header for why, and core/docs/amr_anisotropic.md §4 for the remedies.
-  PECLET_CORE_CHECK(it[0] > 0 && it[0] <= 12);
+  PECLET_AMR_CHECK(it[0] > 0 && it[0] <= 12);
   std::printf(
       "A3 VERDICT: the octree V-cycle is a convergent SOLVER only on (near-)cubic cells; "
       "on a box mesh it is a preconditioner (see A2 = 1e-15 exact, A4 = -0.76%% drag).\n");
@@ -230,7 +228,7 @@ void test_graded_solvable() {
   geo.setIsotropic(1.0);
   peclet::core::geom::Sphere sph{{16.0, 16.0, 16.0}, 8.0};
   refineToSdf(t, geo, [&](const Vec<3>& p) { return sph.eval(p); }, 1, 1.0, true);
-  PECLET_CORE_CHECK(t.isBalanced());
+  PECLET_AMR_CHECK(t.isBalanced());
   test_conservation(t, geo.hMin());  // conservation must hold on the graded mesh too
 
   AmrPoisson<3, kBits> P(t, geo.h0);
@@ -254,7 +252,7 @@ void test_graded_solvable() {
   P.gaussSeidel(u, rhs, 300);
   P.removeMean(u);
   double r = P.residual(u, rhs, res);
-  PECLET_CORE_CHECK(r < r0 * 1e-2);  // GS makes clear progress -> operator is solvable
+  PECLET_AMR_CHECK(r < r0 * 1e-2);  // GS makes clear progress -> operator is solvable
 }
 
 void run() {
@@ -265,11 +263,11 @@ void run() {
   double d4 = 0, d5 = 0;
   double e4 = solveError(4, d4);
   double e5 = solveError(5, d5);
-  PECLET_CORE_CHECK(d4 > 1e8);  // V-cycle drives residual down by >1e8
-  PECLET_CORE_CHECK(d5 > 1e8);
+  PECLET_AMR_CHECK(d4 > 1e8);  // V-cycle drives residual down by >1e8
+  PECLET_AMR_CHECK(d5 > 1e8);
   double ratio = e4 / e5;
   // 2nd order => error quarters when h halves; allow slack.
-  PECLET_CORE_CHECK(ratio > 3.3);
+  PECLET_AMR_CHECK(ratio > 3.3);
 
   // (3) graded operator: conservative + solvable.
   test_graded_solvable();
@@ -280,11 +278,5 @@ void run() {
 int main() {
   run();
   test_anisotropic_mg();
-  PECLET_CORE_RETURN_TEST_RESULT();
+  PECLET_AMR_RETURN_TEST_RESULT();
 }
-#else
-int main() {
-  std::printf("PECLET_CORE_HAVE_MORTON not set — skipping AMR Poisson test\n");
-  return ::peclet::core::test::kSkipExitCode;
-}
-#endif  // PECLET_CORE_HAVE_MORTON

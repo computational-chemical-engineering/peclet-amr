@@ -21,7 +21,7 @@ import time
 
 sys.path.insert(0, __file__.rsplit("/tests/", 1)[0] + "/python/build_cuda2")
 import numpy as np  # noqa: E402
-from peclet.core import amr  # noqa: E402
+from peclet import amr  # noqa: E402
 
 MU = 0.1
 F = 1e-3

@@ -44,10 +44,11 @@
 // KNOWN GAPS, in the plan's risk register: sub-face closures are unimplemented (the closed
 // sub-faces of a mixed face are Neumann-zero — counted by `nMixedFace`, measured non-vanishing)
 // and pocket cells are not excluded from LS clouds.
-#ifndef PECLET_CORE_AMR_GHOST_PROJECTION_SAMPLED_HPP
-#define PECLET_CORE_AMR_GHOST_PROJECTION_SAMPLED_HPP
+#ifndef PECLET_AMR_GHOST_PROJECTION_SAMPLED_HPP
+#define PECLET_AMR_GHOST_PROJECTION_SAMPLED_HPP
 
-#ifdef PECLET_CORE_HAVE_MORTON
+#include "peclet/amr/common.hpp"
+
 
 #include <algorithm>
 #include <array>
@@ -59,15 +60,15 @@
 #include <utility>
 #include <vector>
 
-#include "peclet/core/amr/block_octree.hpp"
-#include "peclet/core/amr/cf_scheme.hpp"  // CfCsr + detail::{ScalarEnt, compactCsr} (mom seam delta)
-#include "peclet/core/amr/ghost_projection.hpp"
-#include "peclet/core/amr/poisson.hpp"
+#include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/cf_scheme.hpp"  // CfCsr + detail::{ScalarEnt, compactCsr} (mom seam delta)
+#include "peclet/amr/ghost_projection.hpp"
+#include "peclet/amr/poisson.hpp"
 #include "peclet/core/common/host_parallel.hpp"
 #include "peclet/core/common/types.hpp"
 #include "peclet/core/scheme/ghost_closure.hpp"
 
-namespace peclet::core::amr {
+namespace peclet::amr {
 
 /// Sampled overlay: the classic per-row fields (weights, states, rescale — `base`; base.nbr is
 /// UNUSED) plus one linear functional per chain slot (r*15 + a*5 + (q+2)) in CSR form. An empty
@@ -839,7 +840,7 @@ inline GhostOverlaySampled buildGhostOverlaySampled(const BlockOctree<3, Bits>& 
   ov.sampIdx = std::move(sIdx);
   ov.sampW = std::move(sW);
   std::fprintf(stderr,
-               "[peclet.core.amr] sampled ghost overlay: %lld rows | slots identity %ld, LS2 %ld, "
+               "[peclet.amr] sampled ghost overlay: %lld rows | slots identity %ld, LS2 %ld, "
                "LS1 %ld, degraded %ld, solid %ld | csr %lld | sign-forced faces %ld, closed mixed "
                "faces %ld\n",
                static_cast<long long>(ov.base.n), ov.nIdentity, ov.nLS2, ov.nLS1, ov.nDegraded,
@@ -1412,7 +1413,6 @@ inline void applyGhostGradCsr(const GhostGradCsrDev& ov, View<const double> f, V
 
 #endif  // KOKKOS_INLINE_FUNCTION
 
-}  // namespace peclet::core::amr
+}  // namespace peclet::amr
 
-#endif  // PECLET_CORE_HAVE_MORTON
-#endif  // PECLET_CORE_AMR_GHOST_PROJECTION_SAMPLED_HPP
+#endif  // PECLET_AMR_GHOST_PROJECTION_SAMPLED_HPP

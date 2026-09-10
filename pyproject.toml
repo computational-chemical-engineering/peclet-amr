@@ -1,0 +1,49 @@
+# Python packaging for peclet-amr: the AMR octree + collocated-projection Navier–Stokes solver on it
+# (`peclet.amr`: Octree, DistributedOctree, Poisson, Flow), relocated out of peclet-core on 2026-09-10
+# (suite/docs/QUALITY_PLAN.md D6 / G.2). peclet-amr itself is a header-only C++20 library; this is
+# its nanobind module (python/amr_bindings.cpp). The `version` below is THE version source:
+# CMakeLists.txt reads it, and CITATION.cff / docs/Doxyfile are checked against it by the release
+# pre-flight (../tools/release/check_release_state.sh).
+#
+# 0.1.0 is the package's initial version; the family release session sets the family version (every
+# package ships 1.0.0 at the clean break, QUALITY_PLAN D9).
+#
+# `pip install .` builds the module via scikit-build-core. Like peclet-core's Python surface it links
+# MPI (mpi4py at runtime must be built against the same MPI) and a Kokkos backend prefix on
+# CMAKE_PREFIX_PATH (or the vendored OpenMP build, PECLET_VENDOR_DEPS=ON); the peclet-core and
+# peclet-morton HEADERS are taken from the sibling checkouts ../core and ../morton in a suite
+# checkout, or fetched at their pinned tags (cmake/PecletDeps.cmake) in an isolated sdist build:
+#
+#   CMAKE_PREFIX_PATH=/path/to/extern/install/host-openmp pip install .
+
+[build-system]
+requires = ["scikit-build-core>=0.8", "nanobind>=2.0"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "peclet-amr"
+version = "0.1.0"
+description = "peclet.amr — block-local-Morton AMR octree and the collocated cut-cell Navier–Stokes solver on it (Kokkos + MPI)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Frank Peters", email = "e.a.j.f.peters@gmail.com" }]
+dependencies = ["numpy>=1.20"]
+
+[project.urls]
+Homepage = "https://github.com/computational-chemical-engineering/peclet"
+Documentation = "https://github.com/computational-chemical-engineering/peclet"
+Source = "https://github.com/computational-chemical-engineering/peclet-amr"
+
+[tool.scikit-build]
+minimum-version = "0.8"
+cmake.version = ">=3.24"
+# The extension + the peclet/amr package __init__.py and stub are placed by the CMake install() rules
+# (guarded by SKBUILD) into the peclet namespace; disable package auto-discovery so nothing else is added.
+wheel.install-dir = "."
+wheel.packages = []
+sdist.include = ["include", "python/amr_bindings.cpp", "packaging", "cmake", "CMakeLists.txt", "README.md", "LICENSE"]
+
+[tool.scikit-build.cmake.define]
+PECLET_AMR_BUILD_TESTS = "OFF"

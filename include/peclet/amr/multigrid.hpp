@@ -22,25 +22,25 @@
 // as a second precomputed CSR (quadDelta). Openness (cut-cell) flows in for
 // free: build with an AmrPoisson that has openness set and w_f carries it.
 //
-// Requires a Kokkos build + the morton checkout (PECLET_CORE_HAVE_MORTON).
-#ifndef PECLET_CORE_AMR_MULTIGRID_HPP
-#define PECLET_CORE_AMR_MULTIGRID_HPP
+#ifndef PECLET_AMR_MULTIGRID_HPP
+#define PECLET_AMR_MULTIGRID_HPP
 
-#ifdef PECLET_CORE_HAVE_MORTON
+#include "peclet/amr/common.hpp"
+
 
 #include <cmath>
 #include <memory>
 #include <utility>
 #include <vector>
 
-#include "peclet/core/amr/assembly.hpp"  // assembleFv (device per-level operator rebuild, D5)
-#include "peclet/core/amr/block_octree.hpp"
-#include "peclet/core/amr/fv_op.hpp"
-#include "peclet/core/amr/poisson.hpp"
+#include "peclet/amr/assembly.hpp"  // assembleFv (device per-level operator rebuild, D5)
+#include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/fv_op.hpp"
+#include "peclet/amr/poisson.hpp"
 #include "peclet/core/common/host_parallel.hpp"
 #include "peclet/core/common/view.hpp"
 
-namespace peclet::core::amr {
+namespace peclet::amr {
 
 /// Restrict: coarse(p) = mean over p's children (CSR fixed order ⇒ deterministic).
 inline void restrictField(View<const Index> childStart, View<const Index> childIdx,
@@ -453,7 +453,6 @@ class Multigrid {
   View<double> dq_, b0true_;  // finest-level deferred-correction scratch
 };
 
-}  // namespace peclet::core::amr
+}  // namespace peclet::amr
 
-#endif  // PECLET_CORE_HAVE_MORTON
-#endif  // PECLET_CORE_AMR_MULTIGRID_HPP
+#endif  // PECLET_AMR_MULTIGRID_HPP

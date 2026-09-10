@@ -1,4 +1,4 @@
-"""Test of the peclet.core.amr Python module (the core AMR octree via numpy / mpi4py).
+"""Test of the peclet.amr Python module (the core AMR octree via numpy / mpi4py).
 
 Run: PYTHONPATH=<python build tree> mpirun -np 4 python3 python/test_amr.py
 (also valid serially: PYTHONPATH=<python build tree> python3 python/test_amr.py)
@@ -17,7 +17,7 @@ import os
 import sys
 import numpy as np
 from mpi4py import MPI
-from peclet.core import amr as core_amr
+from peclet import amr as core_amr
 
 comm = MPI.COMM_WORLD
 rank, size = comm.rank, comm.size
@@ -25,9 +25,9 @@ fail = 0
 
 # ctest passes the rank count it launched; a mismatch means mpi4py and the launcher are different
 # MPIs (N singletons that never communicate) — fail loudly instead of "passing" (core/CLAUDE.md).
-_np = os.environ.get("PECLET_CORE_TEST_NP")
+_np = os.environ.get("PECLET_AMR_TEST_NP")
 if _np is not None and int(_np) != size:
-    sys.exit(f"[rank {rank}] launched with PECLET_CORE_TEST_NP={_np} but MPI.COMM_WORLD.size={size}: "
+    sys.exit(f"[rank {rank}] launched with PECLET_AMR_TEST_NP={_np} but MPI.COMM_WORLD.size={size}: "
              "the launcher and mpi4py are different MPIs")
 
 
@@ -409,10 +409,10 @@ check(global_far <= 3.0 * gw, f"distributed finest leaves not localized (max |x-
 # ----------------------------------------------------------------------------------------------
 total = comm.allreduce(fail, MPI.SUM)
 if rank == 0:
-    print(f"# peclet.core.amr: serial_leaves={serial_leaves} dist_leaves {gleaves}->{gleaves2} "
+    print(f"# peclet.amr: serial_leaves={serial_leaves} dist_leaves {gleaves}->{gleaves2} "
           f"imbalance {imb_before:.3f}->{imb_after:.3f}")
     if total == 0:
-        print(f"OK (np={size}): peclet.core.amr Octree + DistributedOctree work from Python/mpi4py")
+        print(f"OK (np={size}): peclet.amr Octree + DistributedOctree work from Python/mpi4py")
     else:
         sys.stderr.write(f"FAILED (np={size}): {total}\n")
 sys.exit(0 if total == 0 else 1)

@@ -28,11 +28,11 @@
 // ⇒ Stokes. 3D. Cut cells and the
 // ±2-cell advection stencil assume same-level neighbours (resolve the boundary in a
 // uniformly-finest band, so the stencils never sit on a 2:1 interface — docs/AMR.md).
-// Header-only, guarded by PECLET_CORE_HAVE_MORTON. Serial/host first.
-#ifndef PECLET_CORE_AMR_FLOW_ORACLE_HPP
-#define PECLET_CORE_AMR_FLOW_ORACLE_HPP
+#ifndef PECLET_AMR_FLOW_ORACLE_HPP
+#define PECLET_AMR_FLOW_ORACLE_HPP
 
-#ifdef PECLET_CORE_HAVE_MORTON
+#include "peclet/amr/common.hpp"
+
 
 #include <algorithm>
 #include <array>
@@ -41,20 +41,20 @@
 #include <memory>
 #include <vector>
 
-#include "peclet/core/amr/adapt.hpp"         // transferField (conservative remap for finishAdapt)
-#include "peclet/core/amr/advect_recon.hpp"  // shared high-order face reconstruction (host+device)
-#include "peclet/core/amr/block_octree.hpp"
-#include "peclet/core/amr/cf_scheme.hpp"  // pluggable 2:1 C/F interface schemes (setCfScheme)
-#include "peclet/core/amr/cut_cell.hpp"
-#include "peclet/core/amr/ghost_projection.hpp"  // directional ghost overlay (setGhostProjection)
-#include "peclet/core/amr/ghost_projection_sampled.hpp"  // mixed-level sampled overlay (setGhostSampled)
-#include "peclet/core/amr/poisson.hpp"
+#include "peclet/amr/adapt.hpp"         // transferField (conservative remap for finishAdapt)
+#include "peclet/amr/advect_recon.hpp"  // shared high-order face reconstruction (host+device)
+#include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/cf_scheme.hpp"  // pluggable 2:1 C/F interface schemes (setCfScheme)
+#include "peclet/amr/cut_cell.hpp"
+#include "peclet/amr/ghost_projection.hpp"  // directional ghost overlay (setGhostProjection)
+#include "peclet/amr/ghost_projection_sampled.hpp"  // mixed-level sampled overlay (setGhostSampled)
+#include "peclet/amr/poisson.hpp"
 #include "peclet/core/common/types.hpp"
 
 // Retired from the production path: this serial Gauss-Seidel host driver is kept ONLY as the
 // development-stage oracle that the device AmrFlow (flow_device.hpp) is validated bit-for-bit
 // against. It is NOT exposed by the Python bindings. Production AMR flow runs on the device path.
-namespace peclet::core::amr::oracle {
+namespace peclet::amr::oracle {
 
 template <unsigned Bits = 21u>
 class AmrFlow {
@@ -171,7 +171,7 @@ class AmrFlow {
                                        &momSkipped);
       if (momSkipped)
         std::fprintf(stderr,
-                     "[peclet.core.amr] mom seam delta: %ld raw-regular/virtually-ghost rows "
+                     "[peclet.amr] mom seam delta: %ld raw-regular/virtually-ghost rows "
                      "skipped (rung-1 scope)\n",
                      momSkipped);
     }
@@ -821,7 +821,6 @@ class AmrFlow {
       false;  // uf_ populated by a projection (else advection falls back to ½(u_i+u_j))
 };
 
-}  // namespace peclet::core::amr::oracle
+}  // namespace peclet::amr::oracle
 
-#endif  // PECLET_CORE_HAVE_MORTON
-#endif  // PECLET_CORE_AMR_FLOW_ORACLE_HPP
+#endif  // PECLET_AMR_FLOW_ORACLE_HPP

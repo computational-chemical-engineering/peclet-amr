@@ -1,4 +1,4 @@
-// Device LeafHaloExchange (peclet::core::amr::LeafHaloExchange): the device-resident value
+// Device LeafHaloExchange (peclet::amr::LeafHaloExchange): the device-resident value
 // refresh over a finalized LeafHalo — device pack/scatter, compact host-staged MPI buffers
 // (docs/amr_distributed_flow.md, rung 1). Validates on a graded cross-block octree:
 //   (1) exchange() == exchangeHost() bit-for-bit (ghost values are unmodified double copies);
@@ -7,22 +7,20 @@
 //   (3) the local part of the extended field is untouched by the exchange.
 // np = 1,2,4,8.
 //
-// Guarded by PECLET_CORE_HAVE_MORTON; a no-op pass without the morton sibling checkout.
 #include "test_util.hpp"
 
-#ifdef PECLET_CORE_HAVE_MORTON
 #include <array>
 #include <cmath>
 #include <Kokkos_Core.hpp>
 #include <vector>
 
-#include "peclet/core/amr/distributed_octree.hpp"
-#include "peclet/core/amr/leaf_halo.hpp"
+#include "peclet/amr/distributed_octree.hpp"
+#include "peclet/amr/leaf_halo.hpp"
 #include "peclet/core/common/mpi.hpp"
 #include "peclet/core/common/view.hpp"
 
 using namespace peclet::core;
-using namespace peclet::core::amr;
+using namespace peclet::amr;
 
 namespace {
 
@@ -117,7 +115,7 @@ void run() {
 
   LeafHaloExchange ex;
   ex.init(halo);
-  PECLET_CORE_CHECK_EQ(ex.numGhosts(), halo.numGhosts());
+  PECLET_AMR_CHECK_EQ(ex.numGhosts(), halo.numGhosts());
 
   // (1) single-field device exchange == host exchange bit-for-bit; locals untouched.
   {
@@ -125,7 +123,7 @@ void run() {
     ex.exchange(x);
     std::vector<double> got = down(x);
     for (Index i = 0; i < ext; ++i)
-      PECLET_CORE_CHECK(got[static_cast<std::size_t>(i)] == ref[0][static_cast<std::size_t>(i)]);
+      PECLET_AMR_CHECK(got[static_cast<std::size_t>(i)] == ref[0][static_cast<std::size_t>(i)]);
   }
 
   // (2) batched 3-component exchange == three single exchanges bit-for-bit.
@@ -134,9 +132,9 @@ void run() {
     ex.exchange3(x0, x1, x2);
     std::vector<double> g0 = down(x0), g1 = down(x1), g2 = down(x2);
     for (Index i = 0; i < ext; ++i) {
-      PECLET_CORE_CHECK(g0[static_cast<std::size_t>(i)] == ref[0][static_cast<std::size_t>(i)]);
-      PECLET_CORE_CHECK(g1[static_cast<std::size_t>(i)] == ref[1][static_cast<std::size_t>(i)]);
-      PECLET_CORE_CHECK(g2[static_cast<std::size_t>(i)] == ref[2][static_cast<std::size_t>(i)]);
+      PECLET_AMR_CHECK(g0[static_cast<std::size_t>(i)] == ref[0][static_cast<std::size_t>(i)]);
+      PECLET_AMR_CHECK(g1[static_cast<std::size_t>(i)] == ref[1][static_cast<std::size_t>(i)]);
+      PECLET_AMR_CHECK(g2[static_cast<std::size_t>(i)] == ref[2][static_cast<std::size_t>(i)]);
     }
   }
 }
@@ -150,7 +148,7 @@ int main(int argc, char** argv) {
   Kokkos::finalize();
   int rank = 0;
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-  int fails = peclet::core::test::g_failures, total = 0;
+  int fails = peclet::amr::test::g_failures, total = 0;
   MPI_Reduce(&fails, &total, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
   MPI_Finalize();
   if (rank == 0) {
@@ -163,9 +161,3 @@ int main(int argc, char** argv) {
   }
   return 0;
 }
-#else
-#include "test_skip_mpi.hpp"
-int main(int argc, char** argv) {
-  return ::peclet::core::test::skipMpiTest(argc, argv, "LeafHaloExchange test");
-}
-#endif  // PECLET_CORE_HAVE_MORTON

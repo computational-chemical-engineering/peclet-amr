@@ -22,11 +22,11 @@
 // Scope: openness-free (w_f = A_f/d_f); the smoother is weighted Jacobi. Openness
 // (cut-cell) and a graded distributed *multigrid* hierarchy build on this.
 //
-// Header-only, guarded by PECLET_CORE_HAVE_MORTON.
-#ifndef PECLET_CORE_AMR_DISTRIBUTED_FV_HPP
-#define PECLET_CORE_AMR_DISTRIBUTED_FV_HPP
+#ifndef PECLET_AMR_DISTRIBUTED_FV_HPP
+#define PECLET_AMR_DISTRIBUTED_FV_HPP
 
-#ifdef PECLET_CORE_HAVE_MORTON
+#include "peclet/amr/common.hpp"
+
 
 #include <array>
 #include <cmath>
@@ -34,12 +34,12 @@
 #include <memory>
 #include <vector>
 
-#include "peclet/core/amr/distributed_octree.hpp"
-#include "peclet/core/amr/distributed_poisson.hpp"
+#include "peclet/amr/distributed_octree.hpp"
+#include "peclet/amr/distributed_poisson.hpp"
 #include "peclet/core/common/mpi.hpp"
 #include "peclet/core/common/types.hpp"
 
-namespace peclet::core::amr {
+namespace peclet::amr {
 
 template <int Dim, unsigned Bits = (Dim == 2 ? 32u : (Dim == 3 ? 21u : 16u))>
 class DistributedFvOperator {
@@ -581,7 +581,6 @@ class GradedDistributedMultigrid {
   int bottomSweeps_ = 400;  // Jacobi sweeps on the coarsest op when openness present
 };
 
-}  // namespace peclet::core::amr
+}  // namespace peclet::amr
 
-#endif  // PECLET_CORE_HAVE_MORTON
-#endif  // PECLET_CORE_AMR_DISTRIBUTED_FV_HPP
+#endif  // PECLET_AMR_DISTRIBUTED_FV_HPP

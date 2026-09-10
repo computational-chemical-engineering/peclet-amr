@@ -1,25 +1,23 @@
-// Leaf fields + AMR visualization (peclet::core::amr::LeafField / writeVtu): a refined,
+// Leaf fields + AMR visualization (peclet::amr::LeafField / writeVtu): a refined,
 // balanced octree written as a VTK UnstructuredGrid must round-trip its structure
 // — one cell per leaf, 2^Dim points per cell, and a per-leaf CellData scalar that
 // reads back exactly.
 //
-// Guarded by PECLET_CORE_HAVE_MORTON; a no-op pass without the morton sibling checkout.
 #include "peclet/core/common/types.hpp"
 #include "test_util.hpp"
 
-#ifdef PECLET_CORE_HAVE_MORTON
 #include <cstdio>
 #include <fstream>
 #include <sstream>
 #include <string>
 #include <vector>
 
-#include "peclet/core/amr/block_octree.hpp"
-#include "peclet/core/amr/leaf_field.hpp"
-#include "peclet/core/amr/vtu_io.hpp"
+#include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/leaf_field.hpp"
+#include "peclet/amr/vtu_io.hpp"
 
 using namespace peclet::core;
-using namespace peclet::core::amr;
+using namespace peclet::amr;
 
 namespace {
 
@@ -48,7 +46,7 @@ void run() {
   refineAt({0, 0, 0});
   refineAt({15, 15, 15});
   t.balance2to1();
-  PECLET_CORE_CHECK(t.isBalanced());
+  PECLET_AMR_CHECK(t.isBalanced());
 
   // Per-leaf field = refinement level, plus geometry placing the block at a
   // non-trivial world origin / spacing.
@@ -64,15 +62,15 @@ void run() {
 
   // Re-read and validate structure.
   std::ifstream f(path);
-  PECLET_CORE_CHECK(static_cast<bool>(f));
+  PECLET_AMR_CHECK(static_cast<bool>(f));
   std::stringstream buf;
   buf << f.rdbuf();
   const std::string s = buf.str();
 
   long npts = std::stol(attr(s, "NumberOfPoints"));
   long ncells = std::stol(attr(s, "NumberOfCells"));
-  PECLET_CORE_CHECK_EQ((long long)ncells, (long long)t.numLeaves());
-  PECLET_CORE_CHECK_EQ((long long)npts, (long long)(8 * t.numLeaves()));
+  PECLET_AMR_CHECK_EQ((long long)ncells, (long long)t.numLeaves());
+  PECLET_AMR_CHECK_EQ((long long)npts, (long long)(8 * t.numLeaves()));
 
   // CellData scalar reads back exactly equal to the leaf levels.
   auto cd = s.find("<CellData");
@@ -88,8 +86,8 @@ void run() {
       ok = false;
     ++count;
   }
-  PECLET_CORE_CHECK(ok);
-  PECLET_CORE_CHECK_EQ((long long)count, (long long)t.numLeaves());
+  PECLET_AMR_CHECK(ok);
+  PECLET_AMR_CHECK_EQ((long long)count, (long long)t.numLeaves());
 
   std::remove(path.c_str());
 }
@@ -98,11 +96,5 @@ void run() {
 
 int main() {
   run();
-  PECLET_CORE_RETURN_TEST_RESULT();
+  PECLET_AMR_RETURN_TEST_RESULT();
 }
-#else
-int main() {
-  std::printf("PECLET_CORE_HAVE_MORTON not set — skipping AMR VTU test\n");
-  return ::peclet::core::test::kSkipExitCode;
-}
-#endif  // PECLET_CORE_HAVE_MORTON

@@ -23,21 +23,21 @@
 // on global-reduction summation order, so this is the *performance* path — validated by
 // convergence + matching the V-cycle's converged solution, not by host bit-exactness.
 //
-// Requires a Kokkos build + the morton checkout (PECLET_CORE_HAVE_MORTON).
-#ifndef PECLET_CORE_AMR_PCG_HPP
-#define PECLET_CORE_AMR_PCG_HPP
+#ifndef PECLET_AMR_PCG_HPP
+#define PECLET_AMR_PCG_HPP
 
-#ifdef PECLET_CORE_HAVE_MORTON
+#include "peclet/amr/common.hpp"
+
 
 #include <cmath>
 #include <functional>
 
-#include "peclet/core/amr/fv_op.hpp"
-#include "peclet/core/amr/multigrid.hpp"
+#include "peclet/amr/fv_op.hpp"
+#include "peclet/amr/multigrid.hpp"
 #include "peclet/core/common/view.hpp"
 #include "peclet/core/solver/vector_ops.hpp"
 
-namespace peclet::core::amr {
+namespace peclet::amr {
 
 // ---- small device vector primitives (volume-weighted where the FV operator needs it) ----
 
@@ -278,7 +278,6 @@ class PCG {
   Index nExt_ = 0;                            // extended (local+ghost) scratch size
 };
 
-}  // namespace peclet::core::amr
+}  // namespace peclet::amr
 
-#endif  // PECLET_CORE_HAVE_MORTON
-#endif  // PECLET_CORE_AMR_PCG_HPP
+#endif  // PECLET_AMR_PCG_HPP

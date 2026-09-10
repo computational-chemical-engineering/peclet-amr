@@ -1,4 +1,4 @@
-// Solution-adaptive AMR cycle (peclet::core::amr::adapt + lohnerIndicator): on a field with a
+// Solution-adaptive AMR cycle (peclet::amr::adapt + lohnerIndicator): on a field with a
 // localized steep front, the Löhner indicator flags the front, and adapt() refines
 // there + coarsens the flat far field while conservatively remapping the field.
 //   (1) the indicator is large at the front, small in flat regions;
@@ -7,21 +7,19 @@
 //   (3) iterating adapt drives the finest cells to the front only (an order of
 //       magnitude fewer leaves than a uniform-fine grid) and keeps the far field coarse.
 //
-// Guarded by PECLET_CORE_HAVE_MORTON; a no-op pass without the morton sibling checkout.
 #include "test_util.hpp"
 
-#ifdef PECLET_CORE_HAVE_MORTON
 #include <array>
 #include <cmath>
 #include <vector>
 
-#include "peclet/core/amr/adapt.hpp"
-#include "peclet/core/amr/block_octree.hpp"
-#include "peclet/core/amr/indicators.hpp"
+#include "peclet/amr/adapt.hpp"
+#include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/indicators.hpp"
 #include "peclet/core/common/types.hpp"
 
 using namespace peclet::core;
-using namespace peclet::core::amr;
+using namespace peclet::amr;
 
 namespace {
 
@@ -89,8 +87,8 @@ void run() {
       if (d > 0.3)
         eFar = std::max(eFar, e[(std::size_t)i]);
     }
-    PECLET_CORE_CHECK(eFront > 0.3);  // strong signal at the front
-    PECLET_CORE_CHECK(eFar < 0.05);   // quiet far field
+    PECLET_AMR_CHECK(eFront > 0.3);  // strong signal at the front
+    PECLET_AMR_CHECK(eFar < 0.05);   // quiet far field
   }
 
   // (2) one adapt step: refine near front, coarsen far, conserve
@@ -105,10 +103,10 @@ void run() {
       minL = std::min(minL, r.octree.level(i));
       maxL = std::max(maxL, r.octree.level(i));
     }
-    PECLET_CORE_CHECK(minL < 1);  // refined below the base level 1
-    PECLET_CORE_CHECK(maxL > 1);  // coarsened above it
+    PECLET_AMR_CHECK(minL < 1);  // refined below the base level 1
+    PECLET_AMR_CHECK(maxL > 1);  // coarsened above it
     // conservative remap (front integrates ~0, so compare against Σ V·|f|)
-    PECLET_CORE_CHECK(std::fabs(relIntegral(r.octree, r.field) - I0) < 1e-9 * scale);
+    PECLET_AMR_CHECK(std::fabs(relIntegral(r.octree, r.field) - I0) < 1e-9 * scale);
   }
 
   // (3) iterate to a front-tracking mesh: finest cells only near x=0.5, far field
@@ -129,10 +127,10 @@ void run() {
         ++nFinest;
         maxFineDist = std::max(maxFineDist, std::fabs(xWorld(t, i) - 0.5));
       }
-    PECLET_CORE_CHECK(nFinest > 0);        // reached the finest level
-    PECLET_CORE_CHECK(maxFineDist < 0.2);  // finest cells hug the front
+    PECLET_AMR_CHECK(nFinest > 0);        // reached the finest level
+    PECLET_AMR_CHECK(maxFineDist < 0.2);  // finest cells hug the front
     // adaptive mesh is smaller than uniform-fine (32^3 = 32768)
-    PECLET_CORE_CHECK(t.numLeaves() < 32768);
+    PECLET_AMR_CHECK(t.numLeaves() < 32768);
   }
 }
 
@@ -140,11 +138,5 @@ void run() {
 
 int main() {
   run();
-  PECLET_CORE_RETURN_TEST_RESULT();
+  PECLET_AMR_RETURN_TEST_RESULT();
 }
-#else
-int main() {
-  std::printf("PECLET_CORE_HAVE_MORTON not set — skipping adapt test\n");
-  return ::peclet::core::test::kSkipExitCode;
-}
-#endif  // PECLET_CORE_HAVE_MORTON

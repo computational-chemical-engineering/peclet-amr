@@ -1,5 +1,5 @@
 // Distributed device openness multigrid + MG-PCG for the AMR flow pressure
-// (peclet::core::amr::DistributedFlowMultigrid, docs/amr_distributed_flow.md rung 3).
+// (peclet::amr::DistributedFlowMultigrid, docs/amr_distributed_flow.md rung 3).
 // On a graded, cross-block 2:1-balanced octree with a genuine cut-cell aperture openness
 // (sphere) it validates, at np = 1,2,4,8:
 //   (1) hierarchy parity: the distributed ladder has exactly the single-rank level count
@@ -12,24 +12,22 @@
 //       the singular periodic openness Poisson and matches the single-rank PCG solution:
 //       np=1 bit-exact, np>1 to Krylov tolerance (dot reduction order).
 //
-// Guarded by PECLET_CORE_HAVE_MORTON; a no-op pass without the morton sibling checkout.
 #include "test_util.hpp"
 
-#ifdef PECLET_CORE_HAVE_MORTON
 #include <array>
 #include <cmath>
 #include <Kokkos_Core.hpp>
 #include <vector>
 
-#include "peclet/core/amr/distributed_flow_mg.hpp"
-#include "peclet/core/amr/distributed_octree.hpp"
-#include "peclet/core/amr/multigrid.hpp"
-#include "peclet/core/amr/pcg.hpp"
+#include "peclet/amr/distributed_flow_mg.hpp"
+#include "peclet/amr/distributed_octree.hpp"
+#include "peclet/amr/multigrid.hpp"
+#include "peclet/amr/pcg.hpp"
 #include "peclet/core/common/mpi.hpp"
 #include "peclet/core/common/view.hpp"
 
 using namespace peclet::core;
-using namespace peclet::core::amr;
+using namespace peclet::amr;
 
 namespace {
 
@@ -110,11 +108,11 @@ void run() {
   smg.build(self.local(), h0, openFn, /*periodic=*/true);
 
   // (1) hierarchy parity.
-  PECLET_CORE_CHECK_EQ((long)dmg.numLevels(), (long)smg.numLevels());
+  PECLET_AMR_CHECK_EQ((long)dmg.numLevels(), (long)smg.numLevels());
   if (size > 1)
-    PECLET_CORE_CHECK(dmg.halo(0).numGhosts() > 0);
+    PECLET_AMR_CHECK(dmg.halo(0).numGhosts() > 0);
   if (size == 1)
-    PECLET_CORE_CHECK_EQ(dmg.halo(0).numGhosts(), 0);
+    PECLET_AMR_CHECK_EQ(dmg.halo(0).numGhosts(), 0);
 
   // RHS keyed on the global code (WORLD and SELF agree per cell).
   std::vector<double> bw((std::size_t)dmg.extendedSize(0), 0.0), bs((std::size_t)ns);
@@ -144,7 +142,7 @@ void run() {
     }
     double gdmax = 0.0;
     MPI_Allreduce(&dmax, &gdmax, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
-    PECLET_CORE_CHECK(gdmax == 0.0);  // bit-for-bit across rank counts
+    PECLET_AMR_CHECK(gdmax == 0.0);  // bit-for-bit across rank counts
   }
 
   // (3) distributed MG-PCG vs single-rank MG-PCG on the singular periodic openness Poisson.
@@ -169,8 +167,8 @@ void run() {
     // The single-rank reference must run the SAME mean-removal policy in the preconditioner.
     smg.setRemoveMean(true);
     auto rs = spcg.solve(smg, xs, View<const double>(bsv), 200, 1e-10);
-    PECLET_CORE_CHECK(rw.res <= 1e-9 * rw.res0);
-    PECLET_CORE_CHECK(rs.res <= 1e-9 * rs.res0);
+    PECLET_AMR_CHECK(rw.res <= 1e-9 * rw.res0);
+    PECLET_AMR_CHECK(rs.res <= 1e-9 * rs.res0);
     std::vector<double> hw = down(xw), hs = down(xs);
     double umax = 0.0;
     for (Index i = 0; i < ns; ++i)
@@ -183,9 +181,9 @@ void run() {
     double gdmax = 0.0;
     MPI_Allreduce(&dmax, &gdmax, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
     if (size == 1) {
-      PECLET_CORE_CHECK(gdmax == 0.0);  // np=1: bit-exact vs single-rank
+      PECLET_AMR_CHECK(gdmax == 0.0);  // np=1: bit-exact vs single-rank
     } else {
-      PECLET_CORE_CHECK(gdmax <= 1e-7 * umax);  // Krylov tolerance (dot order differs)
+      PECLET_AMR_CHECK(gdmax <= 1e-7 * umax);  // Krylov tolerance (dot order differs)
     }
   }
 }
@@ -199,7 +197,7 @@ int main(int argc, char** argv) {
   Kokkos::finalize();
   int rank = 0;
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-  int fails = peclet::core::test::g_failures, total = 0;
+  int fails = peclet::amr::test::g_failures, total = 0;
   MPI_Reduce(&fails, &total, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
   MPI_Finalize();
   if (rank == 0) {
@@ -212,9 +210,3 @@ int main(int argc, char** argv) {
   }
   return 0;
 }
-#else
-#include "test_skip_mpi.hpp"
-int main(int argc, char** argv) {
-  return ::peclet::core::test::skipMpiTest(argc, argv, "distributed flow-MG test");
-}
-#endif  // PECLET_CORE_HAVE_MORTON

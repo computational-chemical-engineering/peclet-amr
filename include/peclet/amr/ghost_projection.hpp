@@ -45,22 +45,23 @@
 // Host-only-safe: the overlay build + host delta appliers compile without Kokkos (the oracle
 // path); the device mirror + kernels are guarded on KOKKOS_INLINE_FUNCTION (include this header
 // AFTER a Kokkos-carrying header in device TUs).
-#ifndef PECLET_CORE_AMR_GHOST_PROJECTION_HPP
-#define PECLET_CORE_AMR_GHOST_PROJECTION_HPP
+#ifndef PECLET_AMR_GHOST_PROJECTION_HPP
+#define PECLET_AMR_GHOST_PROJECTION_HPP
 
-#ifdef PECLET_CORE_HAVE_MORTON
+#include "peclet/amr/common.hpp"
+
 
 #include <array>
 #include <cstdint>
 #include <stdexcept>
 #include <vector>
 
-#include "peclet/core/amr/block_octree.hpp"
-#include "peclet/core/amr/poisson.hpp"
+#include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/poisson.hpp"
 #include "peclet/core/common/types.hpp"
 #include "peclet/core/scheme/ghost_closure.hpp"
 
-namespace peclet::core::amr {
+namespace peclet::amr {
 
 /// Host ghost-projection overlay: one row per non-clean fluid leaf (== cut cell: some ±1 center
 /// sample solid). Face slot k = 2*axis + (0 = plus side, 1 = minus side); nbr stores the ±2
@@ -273,7 +274,7 @@ inline std::vector<char> findPocketCells(const BlockOctree<3, Bits>& t,
       ++nPocket;
     }
   std::fprintf(stderr,
-               "[peclet.core.amr] ghost projection: binary coupled-face graph fragments into %d "
+               "[peclet.amr] ghost projection: binary coupled-face graph fragments into %d "
                "components — decoupling %lld pocket cells outside the main component\n",
                nc, static_cast<long long>(nPocket));
   return pocket;
@@ -505,7 +506,6 @@ inline void ghostDivergDelta(const GhostOverlayDev& ov, View<const double> u0,
 
 #endif  // KOKKOS_INLINE_FUNCTION
 
-}  // namespace peclet::core::amr
+}  // namespace peclet::amr
 
-#endif  // PECLET_CORE_HAVE_MORTON
-#endif  // PECLET_CORE_AMR_GHOST_PROJECTION_HPP
+#endif  // PECLET_AMR_GHOST_PROJECTION_HPP
