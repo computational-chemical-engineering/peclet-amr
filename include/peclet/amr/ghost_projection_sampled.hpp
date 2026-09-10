@@ -316,7 +316,8 @@ inline GhostOverlaySampled buildGhostOverlaySampled(const BlockOctree<3, Bits>& 
                                                     Vec<3> origin = Vec<3>{},
                                                     const std::array<long, 3>* globalFine = nullptr,
                                                     std::array<long, 3> frameShift = {},
-                                                    bool discovery = false) {
+                                                    bool discovery = false, double rhoFactor = 2.2,
+                                                    long maxSamples = 0) {
   GhostOverlaySampled ov;
   const Index n = t.numLeaves();
   // Phase 3 (`docs/amr_anisotropic.md` §5): the ROOT spacing per axis. `pres.h0()` already is
@@ -439,26 +440,21 @@ inline GhostOverlaySampled buildGhostOverlaySampled(const BlockOctree<3, Bits>& 
     double d2;
   };
 
-  // ---- M2a cloud-economy knobs (STUDY ONLY; both default to today's behaviour exactly) --------
-  // A degree-2 least squares needs 12 points; the shipped radius gathers 95-162 (M1). These two
-  // env knobs let the cloud-economy study vary the sampling without touching production defaults:
-  //   PECLET_CORE_GPS_RHO   radius factor, default 2.2  (rho = factor * max(h, H))
-  //   PECLET_CORE_GPS_MAXN  keep only the N nearest candidates, default 0 = no cap
+  // ---- M2a cloud-economy knobs (both default to the shipped behaviour exactly) -----------------
+  // A degree-2 least squares needs 12 points; the shipped radius gathers 95-162 (M1). The two
+  // arguments let the cloud-economy study vary the sampling without touching production defaults:
+  //   rhoFactor   radius factor, default 2.2  (rho = factor * max(h, H))
+  //   maxSamples  keep only the N nearest candidates, default 0 = no cap
+  // (AmrFlow::setGhostSampled(on, rho, maxSamples) / Python set_ghost_sampled(on, rho=,
+  // max_samples=); until 2026-09-10 these were the PECLET_CORE_GPS_RHO / _MAXN environment
+  // variables — QUALITY_PLAN D3 makes every result-changing knob an explicit argument.)
   // The cap selects by (distance^2, then global Morton key) — a total order that is a pure
   // function of geometry, so the kept SET is decomposition-independent like everything else here;
   // the kept candidates are then emitted in the unchanged canonical (bin, Morton) order, so the
   // accumulation discipline is untouched. Capping changes the WEIGHTS, which is exactly what the
   // study measures — it is never on by default.
-  const double gpsRhoFactor = [] {
-    const char* e = std::getenv("PECLET_CORE_GPS_RHO");
-    const double v = e ? std::atof(e) : 0.0;
-    return v > 0.0 ? v : 2.2;
-  }();
-  const long gpsMaxN = [] {
-    const char* e = std::getenv("PECLET_CORE_GPS_MAXN");
-    const long v = e ? std::atol(e) : 0;
-    return v > 0 ? v : 0;
-  }();
+  const double gpsRhoFactor = rhoFactor > 0.0 ? rhoFactor : 2.2;
+  const long gpsMaxN = maxSamples > 0 ? maxSamples : 0;
 
   // LS functional at world position p, degree deg, radius rho, scale H: returns the (idx, w)
   // list. Weight vector w_j = mono(d_j) . M^{-1} e0 with M the normal matrix.

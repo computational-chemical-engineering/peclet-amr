@@ -14,7 +14,7 @@ the measured result table.**
 
 The scene layer took `AmrFlow::setSolid` from 127 → **13.1 µs/leaf** (depth-7 RCP bed, 1.79M
 leaves, RTX 5080, single-threaded; `.sdf-campaign-probes/time_setsolid.py`). The remaining cost
-is FIVE serial host builders (`PECLET_CORE_PROFILE_SETUP=1`, 2026-08-30):
+is FIVE serial host builders (`PECLET_AMR_PROFILE_SETUP=1`, 2026-08-30):
 
 | phase | µs/leaf | share | parallel structure (verified in source) |
 |---|---:|---:|---|

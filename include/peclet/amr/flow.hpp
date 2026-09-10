@@ -562,7 +562,16 @@ class AmrFlow {
   /// momentum ξ-row seam correction rides along). Implies the ghost projection (engages when the
   /// resolved scheme is ghost — the AUTO default or an explicit setGhostProjection(true)).
   /// Single-rank only (the distributed sample halo is a later rung). Call before setSolid.
-  void setGhostSampled(bool on) { ghostSampledReq_ = on ? 1 : 0; }
+  /// Mixed-level sampled cut band. `rho` is the least-squares cloud radius factor (rho = factor *
+  /// max(h, H); default 2.2 = the shipped behaviour) and `maxSamples` the nearest-N candidate cap
+  /// (0 = uncapped, the default) — the two cloud-economy knobs of the M2a study
+  /// (docs/archive/amr_march_perf_and_distributed_plan.md); until 2026-09-10 they were the
+  /// PECLET_CORE_GPS_RHO / _MAXN environment variables. Call before setSolid.
+  void setGhostSampled(bool on, double rho = 2.2, long maxSamples = 0) {
+    ghostSampledReq_ = on ? 1 : 0;
+    gpsRho_ = rho;
+    gpsMaxN_ = maxSamples;
+  }
   /// Coarse/fine (2:1) interface scheme (cf_scheme.hpp): 0 = standard two-point flux (default,
   /// 1st-order at level boundaries, bit-identical legacy path), 1 = Martin–Cartwright tangential
   /// quadratic (2nd-order — measured at C/F rows: divergence 1.95, cell gradient 1.95, momentum
@@ -651,11 +660,11 @@ class AmrFlow {
     if (dist_ && cfScheme_ != CfScheme::standard)
       throw std::runtime_error(
           "amr::AmrFlow: the C/F quadratic scheme is not distributed yet (rung-4 follow-up)");
-    // Phase profiler (PECLET_CORE_PROFILE_SETUP=1): setSolid is the whole setup cost at bed
+    // Phase profiler (PECLET_AMR_PROFILE_SETUP=1): setSolid is the whole setup cost at bed
     // scale (measured 127 us/leaf single-threaded, [[performance-sota-yardstick]]) — the
     // per-phase breakdown is what any optimization must start from.
     const bool prof_ = [] {
-      const char* e = std::getenv("PECLET_CORE_PROFILE_SETUP");
+      const char* e = std::getenv("PECLET_AMR_PROFILE_SETUP");
       return e && e[0] == '1';
     }();
     auto profT0_ = std::chrono::steady_clock::now();
@@ -708,7 +717,7 @@ class AmrFlow {
     if (ghostSampled_) {  // mixed-level cut band: sample-slot overlay, no band-margin probe
       const auto gfine = globalFineExtent();
       hovS = buildGhostOverlaySampled(*t_, pres_, sdfFn, gpMatrixOrder_, gpRhsOrder_, origin_,
-                                      &gfine, shiftD_);
+                                      &gfine, shiftD_, /*discovery=*/false, gpsRho_, gpsMaxN_);
       profPhase("buildGhostOverlaySampled");
     } else if (ghostProj_) {  // probe the band margin; explicit request throws on violation, AUTO falls
       bool viol = false;
@@ -1033,8 +1042,8 @@ class AmrFlow {
   /// BiCGStab iterations for each momentum component; `presIters` PCG iterations for the
   /// pressure solve.
   // ---- M0 (docs/amr_march_perf_and_distributed_plan.md): the per-phase STEP profiler -----------
-  // `PECLET_CORE_PROFILE_STEP=1` accumulates FENCED per-phase timings over a window of steps
-  // (`PECLET_CORE_PROFILE_STEP_WINDOW`, default 50) and prints ms/step and µs/leaf per phase next
+  // `PECLET_AMR_PROFILE_STEP=1` accumulates FENCED per-phase timings over a window of steps
+  // (`PECLET_AMR_PROFILE_STEP_WINDOW`, default 50) and prints ms/step and µs/leaf per phase next
   // to the iteration counters — the instrument Phase M's attribution matrix reads. The four
   // pressure-solve rows are NESTED inside `pressure solve` (the residual is Krylov vector work and
   // the reductions), so they are printed indented and must not be added to the total.
@@ -1710,7 +1719,7 @@ class AmrFlow {
     const Index n = t_->numLeaves();
     const Vec<3> beta = betaPerAxis();
     int rounds = 0;
-    const bool profSetup = amrEnvFlag("PECLET_CORE_PROFILE_SETUP");
+    const bool profSetup = amrEnvFlag("PECLET_AMR_PROFILE_SETUP");
     for (;;) {
       ++rounds;
       const auto rT0 = std::chrono::steady_clock::now();
@@ -1744,7 +1753,7 @@ class AmrFlow {
         // after this fixpoint) runs with every ghost resolved and never sets the flag.
         const auto gfine = globalFineExtent();
         (void)buildGhostOverlaySampled(*t_, pres_, sdfFn, gpMatrixOrder_, gpRhsOrder_, origin_,
-                                       &gfine, shiftD_, /*discovery=*/true);
+                                       &gfine, shiftD_, /*discovery=*/true, gpsRho_, gpsMaxN_);
         auto binFn = makeBinaryOpenFnMixed(
             *t_, pres_, [&sdfFn](const Vec<3>& p) { return sdfFn(p); }, h0_, origin_, shiftD_);
         pres_.buildOpenness(binFn);  // discovery only; setSolid rebuilds it after the fixpoint
@@ -2099,11 +2108,11 @@ class AmrFlow {
   Index n_ = 0;
   bool ready_ = false;  // an operator exists (setSolid ran; cleared by beginAdapt)
   int lastMomIters_ = 0, lastPresIters_ = 0, lastOuterIters_ = 1;
-  // M0 step profiler (PECLET_CORE_PROFILE_STEP): all inert unless stepProf_.
-  bool stepProf_ = amrEnvFlag("PECLET_CORE_PROFILE_STEP");
+  // M0 step profiler (PECLET_AMR_PROFILE_STEP): all inert unless stepProf_.
+  bool stepProf_ = amrEnvFlag("PECLET_AMR_PROFILE_STEP");
   bool spHeader_ = false;
   int spWindow_ = [] {
-    const char* e = std::getenv("PECLET_CORE_PROFILE_STEP_WINDOW");
+    const char* e = std::getenv("PECLET_AMR_PROFILE_STEP_WINDOW");
     const int v = e ? std::atoi(e) : 0;
     return v > 0 ? v : 50;
   }();
@@ -2126,6 +2135,8 @@ class AmrFlow {
   GhostOverlayDev gpOv_;  // closure overlay (empty unless setGhostProjection)
   bool ghostSampled_ = false;          // RESOLVED sampled mode (set by setSolid)
   int8_t ghostSampledReq_ = 0;         // setGhostSampled request (mixed-level cut band)
+  double gpsRho_ = 2.2;                // sampled band: LS cloud radius factor (setGhostSampled)
+  long gpsMaxN_ = 0;                   // sampled band: nearest-N candidate cap, 0 = uncapped
   GhostOverlaySampledDev gpOvS_;       // sample-slot overlay (empty unless sampled)
   GhostGradCsrDev gcS_;                // sampled CSR directional-gradient overlay
   CfCsrDev gpsMomDelta_;               // momentum ξ-row seam correction (rscale-folded)

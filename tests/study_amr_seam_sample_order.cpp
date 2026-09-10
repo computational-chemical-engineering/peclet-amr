@@ -187,20 +187,20 @@ struct LeafField {
   const std::vector<char>* fluid;
 };
 
-// M2a cloud-economy knobs, mirroring buildGhostOverlaySampled's (PECLET_CORE_GPS_RHO /
-// PECLET_CORE_GPS_MAXN) so this study can report the seam-reconstruction verdict PER VARIANT.
+// M2a cloud-economy knobs, mirroring buildGhostOverlaySampled's (rhoFactor / maxSamples) so this study can report the seam-reconstruction verdict PER VARIANT.
 // It is the instrument that established the degree-2 requirement in the first place, and it
 // costs ~2 s where the P2b march ladder costs hours.
-inline double gpsRhoFactor() {
-  const char* e = std::getenv("PECLET_CORE_GPS_RHO");
-  const double v = e ? std::atof(e) : 0.0;
-  return v > 0.0 ? v : 2.2;
+// Set once from argv in main() (`study_amr_seam_sample_order [rho] [maxN]`); defaults = shipped.
+inline double& gpsRhoStore() {
+  static double v = 2.2;
+  return v;
 }
-inline long gpsMaxN() {
-  const char* e = std::getenv("PECLET_CORE_GPS_MAXN");
-  const long v = e ? std::atol(e) : 0;
-  return v > 0 ? v : 0;
+inline long& gpsMaxNStore() {
+  static long v = 0;
+  return v;
 }
+inline double gpsRhoFactor() { return gpsRhoStore(); }
+inline long gpsMaxN() { return gpsMaxNStore(); }
 
 bool lsFit(const LeafField& lf, const std::vector<std::vector<Index>>& bins, long nb, double hb,
            const Vec<3>& p, double rho, double H, int deg, double& out) {
@@ -705,7 +705,11 @@ MomResult runMomDepth(unsigned depth) {
 
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
+  if (argc > 1)
+    gpsRhoStore() = std::atof(argv[1]) > 0.0 ? std::atof(argv[1]) : 2.2;
+  if (argc > 2)
+    gpsMaxNStore() = std::atol(argv[2]) > 0 ? std::atol(argv[2]) : 0;
   std::printf("M2 virtual-sample order study (plan docs/amr_mixed_level_cut_band_plan.md §8):\n");
   std::printf("latitude two-level sphere (jump oblique to the wall); (2,2) closure deltas with\n");
   std::printf("exact vs LS1 vs LS2\n");

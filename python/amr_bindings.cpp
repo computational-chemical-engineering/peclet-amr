@@ -482,7 +482,9 @@ class Flow : public Releasable {
   void set_ghost_projection(bool on, int matrix_order, int rhs_order) {
     flow_.setGhostProjection(on, matrix_order, rhs_order);
   }
-  void set_ghost_sampled(bool on) { flow_.setGhostSampled(on); }
+  void set_ghost_sampled(bool on, double rho, long max_samples) {
+    flow_.setGhostSampled(on, rho, max_samples);
+  }
   void set_cf_scheme(int scheme) { flow_.setCfScheme(scheme); }
 
   // Adaptivity during a run: snapshot -> (externally mutate the Octree: adapt / refine_to_* /
@@ -802,9 +804,9 @@ NB_MODULE(_amr, m) {
   // arrays are host-vector-backed (no Views).
   peclet::core::python::install(m);
   m.attr("__doc__") =
-      "core adaptive-mesh-refinement: per-block BlockOctree (serial) and DistributedOctree "
-      "(MPI ORB) for the mesh, plus the device (Kokkos) AmrFlow cut-cell Stokes/Navier-Stokes "
-      "solver. "
+      "peclet.amr — adaptive mesh refinement: per-block Octree (serial) and DistributedOctree "
+      "(MPI ORB) for the mesh, the geometric-multigrid Poisson solver, and the device (Kokkos) "
+      "Flow cut-cell Stokes/Navier-Stokes solver. "
       "Build a graded octree, refine to an SDF surface, read leaf geometry + per-leaf fields as "
       "numpy, "
       "load-rebalance, gather face neighbours, export VTU, and run the flow step on device.";
@@ -1015,7 +1017,8 @@ NB_MODULE(_amr, m) {
            "march-UNSTABLE above ~2000 spheres (flow hardening Phase A), kept callable for "
            "parity records only. Raises if the finest band is too thin (a closure would cross "
            "a 2:1 boundary). Call before set_solid.")
-      .def("set_ghost_sampled", &Flow::set_ghost_sampled, nb::arg("on"),
+      .def("set_ghost_sampled", &Flow::set_ghost_sampled, nb::arg("on"), nb::arg("rho") = 2.2,
+           nb::arg("max_samples") = 0L,
            "MIXED-LEVEL CUT BAND (docs/amr_mixed_level_cut_band_plan.md): allow cut cells at "
            "MULTIPLE octree levels — the finest-band contract is dropped. Chain entries that "
            "cross a 2:1 boundary become degree-2 LS virtual samples at the uniform closure "
@@ -1023,8 +1026,12 @@ NB_MODULE(_amr, m) {
            "to set_ghost_sampled(False)); face classification uses the level-aware canonical "
            "openness; the momentum xi-row seam correction and the wall-aware C/F tangential "
            "fallback ride along. Implies the ghost projection (engages when the resolved scheme "
-           "is ghost — the AUTO default or an explicit set_ghost_projection(True)). Single-rank "
-           "only (the distributed sample halo is a later rung). Call before set_solid.")
+           "is ghost — the AUTO default or an explicit set_ghost_projection(True)). Distributed since "
+           "2026-08-30 (the clouds are a deterministic probe set through the leaf halo). `rho` is "
+           "the least-squares cloud radius factor (rho = factor * max(h, H); 2.2 = the shipped "
+           "behaviour) and `max_samples` the nearest-N candidate cap (0 = uncapped) — the M2a "
+           "cloud-economy knobs, inert at their defaults; do not change them in production "
+           "without the M2a table. Call before set_solid.")
       .def("set_pressure", &Flow::set_pressure, nb::arg("values"),
            "Write the accumulated rotational pressure from a (num_leaves,) array — restart, or "
            "re-accumulation policies after finish_adapt (at steady-state dt the transferred p is "

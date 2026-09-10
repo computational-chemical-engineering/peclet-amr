@@ -18,7 +18,7 @@ per-step ITERATION counts. None of it is a wall-clock claim, so it is valid on a
 which matters, because these boxes are shared and a neighbouring job moved a fixed workload's
 step time by 3x while its iteration counts stayed put.
 
-`--time` drives the M0 step profiler (`PECLET_CORE_PROFILE_STEP`) for the per-phase breakdown.
+`--time` drives the M0 step profiler (`PECLET_AMR_PROFILE_STEP`) for the per-phase breakdown.
 It INTERLEAVES the arms window by window (both Flows resident at once) so that whatever else is
 on the GPU hits both arms equally: the arm RATIO stays meaningful even when the absolute numbers
 do not. Every window's wall ms/step is printed so the spread is visible; treat a set of windows
@@ -121,8 +121,8 @@ def main():
     # The profiler flag is read when a Flow is CONSTRUCTED. Structure mode turns it on too, with a
     # window wider than the probe, so it prints its MG-hierarchy header (a static shape, valid on a
     # busy box) and never reaches a timing table.
-    os.environ["PECLET_CORE_PROFILE_STEP"] = "1"
-    os.environ["PECLET_CORE_PROFILE_STEP_WINDOW"] = str(steps if timed else probe + 1)
+    os.environ["PECLET_AMR_PROFILE_STEP"] = "1"
+    os.environ["PECLET_AMR_PROFILE_STEP_WINDOW"] = str(steps if timed else probe + 1)
 
     plan = parse_arms(arms, depth)
     if geom == "bed":

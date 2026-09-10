@@ -6,9 +6,10 @@ fewer cells. The clouds are also ~10x oversampled — a degree-2 LS needs 12 poi
 radius gathers 95-162 — so the obvious lever is to sample less. That changes the WEIGHTS, i.e.
 march numerics, so it goes through a pre-registered a-priori ladder rather than a tuning loop.
 
-Two knobs, read by `buildGhostOverlaySampled`, both inert at their defaults:
-  PECLET_CORE_GPS_RHO   radius factor (default 2.2; rho = factor * max(h, H))
-  PECLET_CORE_GPS_MAXN  keep the N nearest candidates (default 0 = no cap)
+Two knobs of `buildGhostOverlaySampled`, both inert at their defaults:
+  rho          radius factor (default 2.2; rho = factor * max(h, H))
+  max_samples  keep the N nearest candidates (default 0 = no cap)
+(the `set_ghost_sampled(True, rho=, max_samples=)` arguments; environment variables until 2026-09-10)
 
 This script sweeps them on the RCP bed and reports, per variant: the overlay census (CSR size and
 the LS2/LS1/degraded cascade — LS1 > 0 is the flag that matters, since M2 established degree-2 is
@@ -43,13 +44,13 @@ def opt(args, nm, d):
     return args[args.index(nm) + 1] if nm in args else d
 
 
-def march(bed, tree, C, R, N, tol, max_steps, np_):
+def march(bed, tree, C, R, N, tol, max_steps, np_, rho=2.2, max_samples=0):
     """Darcy k on an already-built mesh, marched to stationarity (the study's own criterion)."""
     amr = bed.amr
     fl = amr.Flow(tree, 1.0, bed.MU, 60.0)
     fl.set_body_force(bed.FX, 0.0, 0.0)
     fl.set_advection(False)
-    fl.set_ghost_sampled(True)
+    fl.set_ghost_sampled(True, rho=rho, max_samples=max_samples)
     fl.set_cf_scheme(1)
     t0 = time.time()
     fl.set_solid_spheres(C, np_.array([R]), True)
@@ -89,8 +90,6 @@ def main():
     print(f"# M2a cloud economy: RCP bed depth {depth} (N={N}), tol {tol:g}", flush=True)
 
     # The uniform-finest-band control: no sample slots at all, so it is variant-independent.
-    os.environ.pop("PECLET_CORE_GPS_RHO", None)
-    os.environ.pop("PECLET_CORE_GPS_MAXN", None)
     tu = bed.build("u", N, gapfn)
     ru = march(bed, tu, C, R, N, tol, max_steps, np)
     print(f"# uniform control: k = {ru['k']:.6e}  ({tu.num_leaves} leaves, {ru['steps']} steps)",
@@ -103,9 +102,7 @@ def main():
           flush=True)
     for v in variants:
         rho, mx = v.split(":")
-        os.environ["PECLET_CORE_GPS_RHO"] = rho
-        os.environ["PECLET_CORE_GPS_MAXN"] = mx
-        r = march(bed, tg, C, R, N, tol, max_steps, np)
+        r = march(bed, tg, C, R, N, tol, max_steps, np, rho=float(rho), max_samples=int(mx))
         off = (r["k"] - ru["k"]) / ru["k"] * 100.0
         tag = "DIVERGED" if r["diverged"] else f"{off:+.3f}%"
         print(f"{rho:>5} {mx:>4} {r['k']:>14.6e} {tag:>12} {r['steps']:>6} {r['secs']:>7.0f}",

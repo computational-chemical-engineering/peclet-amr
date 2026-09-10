@@ -159,7 +159,7 @@ traversal in `(bx, by, bz)` then Morton); the monomials are built on `d_a = del_
 **affine-invariant**: the degree-2 space is closed under per-axis scaling, so the LS weights are the
 same functional as today up to round-off, and with `H_a == H` on every axis they are bitwise
 (`del/H` on each axis is today's operation). The fallback cascade LS2 → LS1 → covering identity,
-the `PECLET_CORE_GPS_RHO`/`_MAXN` study knobs (they scale `rho_a` and cap the candidate count),
+the `rho`/`max_samples` study knobs of `set_ghost_sampled` (they scale `rho_a` and cap the candidate count),
 the deterministic probe set (`forEachCoveringSlot` over the per-axis box) and the accumulation
 order are unchanged in structure.
 
