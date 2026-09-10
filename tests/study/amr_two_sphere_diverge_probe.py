@@ -33,7 +33,7 @@ def probe(N, g, n, cf, dt, mom_mg, steps):
     fl.set_ghost_sampled(True)
     if cf:
         fl.set_cf_scheme(cf)
-    fl.set_momentum_mg(mom_mg)
+    fl.diagnostics.set_momentum_mg(mom_mg)
     fl.set_solid(make_sdf(N, g))
     w = np.asarray(t.sizes()) ** 3
     done, kmax = 0, 0.0

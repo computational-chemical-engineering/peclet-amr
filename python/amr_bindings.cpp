@@ -477,8 +477,6 @@ class Flow : public Releasable {
   Index num_leaves() const { return n_; }
   void set_body_force(double fx, double fy, double fz) { flow_.setBodyForce(fx, fy, fz); }
   void set_advection(bool on) { flow_.setAdvection(on); }
-  void set_ghost_gradient(bool on) { flow_.setGhostGradient(on); }
-  void set_aperture_order(int order) { flow_.setApertureOrder(order); }
   void set_ghost_projection(bool on, int matrix_order, int rhs_order) {
     flow_.setGhostProjection(on, matrix_order, rhs_order);
   }
@@ -551,11 +549,6 @@ class Flow : public Releasable {
     flow_.setSolid(q);
   }
 
-  // Momentum solver controls (device path): velocity multigrid + smoother selection.
-  void set_momentum_mg(bool on) { flow_.setMomentumMG(on); }
-  void set_momentum_gs(bool on) { flow_.setMomentumGS(on); }
-  void set_velocity_mg_staircase(bool on) { flow_.setVelocityMGStaircase(on); }
-  void set_momentum_mg_solver(bool on) { flow_.setMomentumMGSolver(on); }
   void set_outer_iterations(int n, double tol) { flow_.setOuterIterations(n, tol); }
 
   // Advance one collocated projection step (Stokes, or NS if advection is on).
@@ -586,9 +579,6 @@ class Flow : public Releasable {
 
   // Volume-weighted L2 norm of the residual cell divergence (a projection-quality diagnostic).
   double divergence_norm() { return flow_.divNormL2(); }
-  // L2 norm of the divergence of the ABC divergence-free FACE field (≈ the pressure-solve residual,
-  // far below divergence_norm — including across 2:1 interfaces).
-  double divergence_norm_face() { return flow_.divNormFace(); }
 
   // Per-leaf pressure (incremental-rotational p) -> (num_leaves,) float64.
   nb::ndarray<nb::numpy, double> pressure() const { return vec1<double>(flow_.pressure()); }
@@ -601,10 +591,8 @@ class Flow : public Releasable {
   }
   // Pressure projection only (no momentum) — project an externally-set velocity to divergence-free.
   void project(int pres_iters) { flow_.project(pres_iters); }
-  // Solver iteration counts from the last step (convergence / perf diagnostics).
-  int last_mom_iters() const { return flow_.lastMomIters(); }
-  int last_pres_iters() const { return flow_.lastPresIters(); }
-  int last_outer_iters() const { return flow_.lastOuterIters(); }
+  /// The developer tier (QUALITY_PLAN D2): FlowDiagnostics reaches the solver through this.
+  amr::AmrFlow<>& engine() { return flow_; }
 
  private:
   amr::AmrFlow<> flow_;  // the canonical device (Kokkos) AMR flow
@@ -793,6 +781,33 @@ inline Flow::Flow(DistributedOctree& d, double rho, double mu, double dt)
   flow_.setViscosity(mu);
   flow_.setDt(dt);
 }
+
+// ---- the diagnostics tier of Flow ------------------------------------------------------------
+// suite/docs/QUALITY_PLAN.md D2: the PUBLIC surface of Flow is what a user needs to set up, run and
+// read out a simulation; everything a developer uses to inspect, ablate or profile lives here, as
+// `flow.diagnostics.<name>` — a view holding a reference to the Flow (no copies of state; the
+// binding pins the Flow for the view's lifetime).
+class FlowDiagnostics {
+ public:
+  explicit FlowDiagnostics(Flow& f) : f_(f) {}
+  // Solver iteration counts from the last step (convergence / perf instruments).
+  int last_mom_iters() const { return f_.engine().lastMomIters(); }
+  int last_pres_iters() const { return f_.engine().lastPresIters(); }
+  int last_outer_iters() const { return f_.engine().lastOuterIters(); }
+  // L2 norm of the divergence of the ABC divergence-free FACE field (≈ the pressure-solve residual,
+  // far below divergence_norm — including across 2:1 interfaces).
+  double divergence_norm_face() { return f_.engine().divNormFace(); }
+  // Solver-internals and ablation switches (the production path needs none of them).
+  void set_momentum_mg(bool on) { f_.engine().setMomentumMG(on); }
+  void set_momentum_gs(bool on) { f_.engine().setMomentumGS(on); }
+  void set_velocity_mg_staircase(bool on) { f_.engine().setVelocityMGStaircase(on); }
+  void set_momentum_mg_solver(bool on) { f_.engine().setMomentumMGSolver(on); }
+  void set_ghost_gradient(bool on) { f_.engine().setGhostGradient(on); }
+  void set_aperture_order(int order) { f_.engine().setApertureOrder(order); }
+
+ private:
+  Flow& f_;
+};
 
 }  // namespace peclet::amr::pybind
 
@@ -994,15 +1009,6 @@ NB_MODULE(_amr, m) {
            "Set the per-volume body force (e.g. a pressure gradient) driving the flow.")
       .def("set_advection", &Flow::set_advection, nb::arg("on"),
            "Enable explicit momentum advection (Navier-Stokes); off = Stokes.")
-      .def("set_ghost_gradient", &Flow::set_ghost_gradient, nb::arg("on"),
-           "Directional ghost cell-gradient on cut cells for the pressure predictor and the "
-           "projection's cell correction (2nd-order one-sided, never reads decoupled solid "
-           "pressure — removes the gauge-dependent O(1/h) cut-cell gradient error of the plain "
-           "ABC gradient). The aperture projection itself is unchanged. Call before set_solid.")
-      .def("set_aperture_order", &Flow::set_aperture_order, nb::arg("order"),
-           "Aperture estimator for the (fallback) aperture projection: 2 = analytic "
-           "marching-squares (DEFAULT since 2026-08-26), 1 = legacy one-sample model. "
-           "Call before set_solid.")
       .def("set_ghost_projection", &Flow::set_ghost_projection, nb::arg("on"),
            nb::arg("matrix_order") = 2, nb::arg("rhs_order") = 2,
            "DEFAULT since 2026-08-25 (AUTO: ghost, with an aperture fallback + stderr notice when "
@@ -1066,17 +1072,6 @@ NB_MODULE(_amr, m) {
           "set_implicit_advection", &Flow::set_implicit_advection, nb::arg("on"),
           "Implicit first-order-upwind deferred-correction advection (default on): unconditionally "
           "stable. Off = fully explicit high-order advection.")
-      .def("set_momentum_mg", &Flow::set_momentum_mg, nb::arg("on"),
-           "Use the Galerkin velocity multigrid as the momentum solve preconditioner (default on; "
-           "makes the momentum solve scale with resolution). Call before set_solid.")
-      .def("set_momentum_gs", &Flow::set_momentum_gs, nb::arg("on"),
-           "Use the symmetric multicolour Gauss-Seidel smoother in the momentum multigrid (default "
-           "off = weighted Jacobi). Call before set_solid.")
-      .def("set_velocity_mg_staircase", &Flow::set_velocity_mg_staircase, nb::arg("on"),
-           "Use the rediscretised staircase velocity-MG instead of Galerkin (default off).")
-      .def("set_momentum_mg_solver", &Flow::set_momentum_mg_solver, nb::arg("on"),
-           "Solve the momentum predictor with the velocity-MG as the solver (no Krylov), mirroring "
-           "flow's velocity solve (default off = BiCgStab with the MG as preconditioner).")
       .def("set_outer_iterations", &Flow::set_outer_iterations, nb::arg("n"), nb::arg("tol") = 1e-6,
            "Picard outer iterations over the lagged advection per step (default 1).")
       .def("step", &Flow::step, nb::arg("mom_iters") = 100, nb::arg("pres_iters") = 60,
@@ -1092,9 +1087,6 @@ NB_MODULE(_amr, m) {
       .def("divergence_norm", &Flow::divergence_norm,
            "Volume-weighted L2 norm of the residual cell divergence (projection-quality "
            "diagnostic).")
-      .def("divergence_norm_face", &Flow::divergence_norm_face,
-           "L2 norm of the divergence of the ABC divergence-free FACE field (≈ pressure-solve "
-           "residual, far below divergence_norm — including across 2:1 interfaces).")
       .def("pressure", &Flow::pressure,
            "Per-leaf pressure (incremental-rotational p), (num_leaves,) float64.")
       .def("face_field", &Flow::face_field,
@@ -1108,12 +1100,47 @@ NB_MODULE(_amr, m) {
            "Pressure projection only (no momentum solve) — project an externally-set velocity "
            "field to "
            "divergence-free. Returns nothing; read the result via velocity()/velocities().")
-      .def("last_mom_iters", &Flow::last_mom_iters,
+      .def_prop_ro(
+          "diagnostics", [](Flow& f) { return FlowDiagnostics(f); }, nb::keep_alive<0, 1>(),
+          "The developer tier: iteration counts of the last step, the face-field divergence, and "
+          "the solver-internals / ablation switches (FlowDiagnostics). A view onto this Flow.");
+
+  nb::class_<FlowDiagnostics>(
+      m, "FlowDiagnostics",
+      "Developer instruments and ablation switches of a Flow, reached as `flow.diagnostics` "
+      "(suite/docs/QUALITY_PLAN.md D2: the public Flow surface is what a user needs to set up, "
+      "run and read out a simulation; this is what a developer uses to inspect or ablate it).")
+      .def("last_mom_iters", &FlowDiagnostics::last_mom_iters,
            "Total momentum BiCGStab iterations (summed over the 3 components) of the last step.")
-      .def("last_pres_iters", &Flow::last_pres_iters, "Pressure PCG iterations of the last step.")
-      .def("last_outer_iters", &Flow::last_outer_iters,
+      .def("last_pres_iters", &FlowDiagnostics::last_pres_iters,
+           "Pressure PCG iterations of the last step.")
+      .def("last_outer_iters", &FlowDiagnostics::last_outer_iters,
            "Picard outer iterations actually run in the last step (1 unless "
-           "set_outer_iterations(>1)).");
+           "set_outer_iterations(>1)).")
+      .def("divergence_norm_face", &FlowDiagnostics::divergence_norm_face,
+           "L2 norm of the divergence of the ABC divergence-free FACE field (≈ pressure-solve "
+           "residual, far below divergence_norm — including across 2:1 interfaces).")
+      .def("set_momentum_mg", &FlowDiagnostics::set_momentum_mg, nb::arg("on"),
+           "Use the Galerkin velocity multigrid as the momentum solve preconditioner (default on; "
+           "makes the momentum solve scale with resolution). Call before set_solid.")
+      .def("set_momentum_gs", &FlowDiagnostics::set_momentum_gs, nb::arg("on"),
+           "Use the symmetric multicolour Gauss-Seidel smoother in the momentum multigrid (default "
+           "off = weighted Jacobi). Call before set_solid.")
+      .def("set_velocity_mg_staircase", &FlowDiagnostics::set_velocity_mg_staircase, nb::arg("on"),
+           "Use the rediscretised staircase velocity-MG instead of Galerkin (default off).")
+      .def("set_momentum_mg_solver", &FlowDiagnostics::set_momentum_mg_solver, nb::arg("on"),
+           "Solve the momentum predictor with the velocity-MG as the solver (no Krylov), mirroring "
+           "flow's velocity solve (default off = BiCgStab with the MG as preconditioner).")
+      .def("set_ghost_gradient", &FlowDiagnostics::set_ghost_gradient, nb::arg("on"),
+           "Directional ghost cell-gradient on cut cells for the pressure predictor and the "
+           "projection's cell correction (2nd-order one-sided, never reads decoupled solid "
+           "pressure — removes the gauge-dependent O(1/h) cut-cell gradient error of the plain "
+           "ABC gradient). The ghost projection (the default) implies it; this switch matters for "
+           "the aperture fallback only. Call before set_solid.")
+      .def("set_aperture_order", &FlowDiagnostics::set_aperture_order, nb::arg("order"),
+           "Aperture estimator for the (fallback) aperture projection: 2 = analytic "
+           "marching-squares (DEFAULT since 2026-08-26), 1 = legacy one-sample model. "
+           "Call before set_solid.");
 
   nb::class_<DistributedOctree>(
       m, "DistributedOctree",

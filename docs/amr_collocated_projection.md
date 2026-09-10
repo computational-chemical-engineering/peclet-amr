@@ -131,9 +131,10 @@ cmake --build build_cuda --target amr_bindings -j
 - AMR N=128 staircase is genuinely slow (hundreds of seconds); use Galerkin for the converged k (same
   answer) and a short run only to confirm staircase stability.
 
-Driver knobs (Python `peclet.amr.Flow`): `set_momentum_mg(True)`, `set_velocity_mg_staircase(True/False)`,
-`set_momentum_gs(True)`, `set_momentum_mg_solver`, `set_outer_iterations`. Diagnostics:
-`divergence_norm()` (cell), `divergence_norm_face()` (uf), `faceField()`.
+Driver knobs (Python `peclet.amr.Flow.diagnostics`, the developer tier): `set_momentum_mg(True)`,
+`set_velocity_mg_staircase(True/False)`, `set_momentum_gs(True)`, `set_momentum_mg_solver`; public:
+`set_outer_iterations`. Diagnostics: `divergence_norm()` (cell, public), `diagnostics.divergence_norm_face()`
+(uf), `face_field()`.
 
 flow collocated reference run lived at `/tmp/sdflow_coloc_gpu.py` (single SC sphere, tol 1e-6,
 `SolverColocated`, `set_pressure_pcg(True,200,1e-8)`); the field-localisation harness is

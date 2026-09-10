@@ -73,7 +73,7 @@ def run_case(name, N, R, band, uniform_ref, ref_label, cycles=10, stride=100, to
             fl.step(100, 60)
         k = kval()
         print(f"  cycle {cyc:2d}: K={k:.4f}  leaves={t.num_leaves:>8} "
-              f"({100*t.num_leaves/N**3:5.1f}%)  pres={fl.last_pres_iters()}", flush=True)
+              f"({100*t.num_leaves/N**3:5.1f}%)  pres={fl.diagnostics.last_pres_iters()}", flush=True)
         adapt_cycle(t, fl, sdf, band, reset_p=reset_p)
     # mesh frozen: converge to steadiness
     kprev, k, steps, confirm = None, None, 0, False

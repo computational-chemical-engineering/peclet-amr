@@ -60,7 +60,7 @@ def drag_graded(N, band, ghostproj, cf=0, tol=1e-7, max_steps=6000):
         else:
             confirm = False
         kprev = k
-    return k, frac, t.num_leaves, steps, fl.last_pres_iters()
+    return k, frac, t.num_leaves, steps, fl.diagnostics.last_pres_iters()
 
 
 if __name__ == "__main__":

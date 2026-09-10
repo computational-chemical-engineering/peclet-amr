@@ -140,7 +140,7 @@ def permeability(arm, N, gapfn, cf=1, tol=1e-7, max_steps=6000, dt=60.0):
             break
         if steps % 500 == 0:
             print(f"    [{arm} N={N}] step {steps} k={k:.6e} "
-                  f"dk={abs(k - kprev) / abs(k):.2e} pres={fl.last_pres_iters()} "
+                  f"dk={abs(k - kprev) / abs(k):.2e} pres={fl.diagnostics.last_pres_iters()} "
                   f"({(time.time() - t0) / steps * 1e3:.0f} ms/step)", flush=True)
         if kprev is not None and abs(k - kprev) < tol * abs(k):
             if confirm:

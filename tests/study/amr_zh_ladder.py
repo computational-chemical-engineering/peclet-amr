@@ -145,7 +145,7 @@ def drag(arm, N, cf, sampled=True, tol=1e-8, max_steps=40000, dt=60.0, quiet=Fal
         else:
             confirm = False
         kprev = k
-    return dict(K=k, leaves=t.num_leaves, steps=steps, pres=fl.last_pres_iters(),
+    return dict(K=k, leaves=t.num_leaves, steps=steps, pres=fl.diagnostics.last_pres_iters(),
                 secs=time.time() - t0, lev=np.bincount(lev, minlength=LFAR + 1).tolist())
 
 

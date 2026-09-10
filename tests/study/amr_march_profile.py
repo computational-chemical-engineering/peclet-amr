@@ -146,8 +146,8 @@ def main():
             mom, pres = [], []
             for _ in range(probe):
                 a["fl"].step(100, 60)
-                pres.append(a["fl"].last_pres_iters())
-                mom.append(a["fl"].last_mom_iters())
+                pres.append(a["fl"].diagnostics.last_pres_iters())
+                mom.append(a["fl"].diagnostics.last_mom_iters())
             print(f"   [{arm}] {probe} steps: pressure iters "
                   f"min/mean/max {min(pres)}/{sum(pres) / len(pres):.1f}/{max(pres)}"
                   f" | momentum iters mean {sum(mom) / len(mom):.1f}", flush=True)
@@ -170,7 +170,7 @@ def main():
             tag = "warm-up" if w == 0 else f"window {w}/{repeats}"
             print(f"   [{a['arm']}] {tag}: {steps} steps in {dt:.1f}s "
                   f"({dt / steps * 1e3:.1f} ms/step wall), pres_iters(last)="
-                  f"{a['fl'].last_pres_iters()}", flush=True)
+                  f"{a['fl'].diagnostics.last_pres_iters()}", flush=True)
 
 
 if __name__ == "__main__":

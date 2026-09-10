@@ -121,7 +121,7 @@ def permeability(N, g, n, cf, tol=1e-7, max_steps=20000, dt=60.0):
         for _ in range(10):
             fl.step(100, 60)
         steps += 10
-        presMax = max(presMax, fl.last_pres_iters())
+        presMax = max(presMax, fl.diagnostics.last_pres_iters())
         u = np.asarray(fl.velocity(0))
         umean = float((u * w).sum()) / N ** 3
         k = MU * umean / FX
@@ -133,7 +133,7 @@ def permeability(N, g, n, cf, tol=1e-7, max_steps=20000, dt=60.0):
             break
         if steps % 1000 == 0:
             print(f"      [g={g} n={n}] step {steps} k={k:.6e} "
-                  f"dk={abs(k - kprev) / abs(k):.2e} pres={fl.last_pres_iters()} "
+                  f"dk={abs(k - kprev) / abs(k):.2e} pres={fl.diagnostics.last_pres_iters()} "
                   f"({(time.time() - t0) / steps * 1e3:.1f} ms/step)", flush=True)
         if kprev is not None and abs(k - kprev) < tol * abs(k):
             if confirm:
@@ -145,7 +145,7 @@ def permeability(N, g, n, cf, tol=1e-7, max_steps=20000, dt=60.0):
     L = throat_level(t, N)
     return dict(k=k, leaves=t.num_leaves, steps=steps, secs=time.time() - t0,
                 throatLevel=L, gapCells=(g / (1 << L) if L >= 0 else float("nan")),
-                pres=fl.last_pres_iters(), presMax=presMax, capped=(steps >= max_steps),
+                pres=fl.diagnostics.last_pres_iters(), presMax=presMax, capped=(steps >= max_steps),
                 diverged=diverged,
                 lev=np.bincount(lev, minlength=LFAR + 1).tolist())
 

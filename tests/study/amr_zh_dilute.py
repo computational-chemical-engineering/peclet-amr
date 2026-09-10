@@ -59,7 +59,7 @@ def drag_dilute(N, band, ghostproj=True, cf=0, tol=1e-7, max_steps=8000):
         else:
             confirm = False
         kprev = k
-    return k, frac, t.num_leaves, steps, fl.last_pres_iters()
+    return k, frac, t.num_leaves, steps, fl.diagnostics.last_pres_iters()
 
 
 if __name__ == "__main__":

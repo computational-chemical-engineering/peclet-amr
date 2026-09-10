@@ -37,7 +37,7 @@ def drag_k(N, ghost, ghostproj=False, tol=1e-7, max_steps=6000, mom_iters=100, p
     if ghostproj:
         fl.set_ghost_projection(True, 2, 2)
     elif ghost:
-        fl.set_ghost_gradient(True)
+        fl.diagnostics.set_ghost_gradient(True)
     fl.set_solid(lambda x, y, z:
                  math.sqrt((x - c) ** 2 + (y - c) ** 2 + (z - c) ** 2) - R)
     print(f"  [N={N}] setup {time.time() - t0:.1f}s", flush=True)
@@ -63,7 +63,7 @@ def drag_k(N, ghost, ghostproj=False, tol=1e-7, max_steps=6000, mom_iters=100, p
         else:
             confirm = False
         kprev = k
-    return k, steps, fl.last_mom_iters(), fl.last_pres_iters()
+    return k, steps, fl.diagnostics.last_mom_iters(), fl.diagnostics.last_pres_iters()
 
 
 if __name__ == "__main__":

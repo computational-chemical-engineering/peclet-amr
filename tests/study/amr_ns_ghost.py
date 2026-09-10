@@ -77,7 +77,7 @@ def run_steady(N, ghost, tol=1e-7, max_steps=8000):
             confirm = False
         kprev = k
     re = umean(fl, w, N) * 2.0 * R / MU
-    return k, re, steps, fl.last_pres_iters(), fl.divergence_norm(), time.time() - t0
+    return k, re, steps, fl.diagnostics.last_pres_iters(), fl.divergence_norm(), time.time() - t0
 
 
 def steady():
@@ -135,7 +135,7 @@ def graded(N=64, band=5.0, tol=1e-7, max_steps=8000):
                 confirm = False
             kprev = k
         print(f"  {label}: K_app={k:.4f} leaves={t.num_leaves} steps={steps} "
-              f"pres={fl.last_pres_iters()} div={fl.divergence_norm():.2e}", flush=True)
+              f"pres={fl.diagnostics.last_pres_iters()} div={fl.divergence_norm():.2e}", flush=True)
 
 
 if __name__ == "__main__":
