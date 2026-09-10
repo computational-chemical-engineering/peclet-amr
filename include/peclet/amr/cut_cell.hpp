@@ -29,44 +29,47 @@
 #include "peclet/amr/poisson.hpp"
 #include "peclet/core/common/host_parallel.hpp"
 #include "peclet/core/common/types.hpp"
+#include "peclet/core/scheme/cut_cell_closure.hpp"  // the shared poly_* (QUALITY_PLAN G.2 lift)
 
 namespace peclet::amr {
 
-// ---- boundary-distance polynomials (port of flow cut_cell_ibm.hpp, SCHEME 0,
-//      double precision) ----
+// ---- boundary-distance polynomials (QUALITY_PLAN G.2: the templated copy shared with flow now
+//      lives in core/include/peclet/core/scheme/cut_cell_closure.hpp; these are double-precision
+//      forwards so every `cc::poly_*` call site below is unchanged) ----
 namespace cc {
 // MORTON_HD (from face_csr.hpp): KOKKOS_FUNCTION on a Kokkos build, empty otherwise — so
 // buildCutStencil and these polynomials are device-callable under the AMR device assembler
 // (assembly.hpp) yet compile unchanged in the pure-C++ host oracle build. poly_abs replaces
 // std::fabs (host-only under a CUDA device pass); it is bit-identical to std::fabs for every value
 // buildCutStencil feeds it (the only difference, fabs(-0.0)=+0.0 vs −0.0, never occurs and would
-// not change the |·|< comparisons).
+// not change the |·|< comparisons). NOT part of the closure family (core keeps no fabs
+// substitute), so it stays local.
 MORTON_HD inline double poly_abs(double x) {
   return x < 0.0 ? -x : x;
 }
 MORTON_HD inline double poly_D(double xi) {
-  return xi * (1.0 + xi);
+  return peclet::core::scheme::poly_D<double>(xi);
 }
 MORTON_HD inline double poly_N_nb(double xi) {
-  return xi * (1.0 - xi);
+  return peclet::core::scheme::poly_N_nb<double>(xi);
 }
 MORTON_HD inline double poly_Nc(double xi) {
-  return 2.0 * (xi * xi - 1.0);
+  return peclet::core::scheme::poly_Nc<double>(xi);
 }
-MORTON_HD inline double poly_Nbc(double) {
-  return 2.0;
+MORTON_HD inline double poly_Nbc(double xi) {
+  return peclet::core::scheme::poly_Nbc<double>(xi);
 }
 MORTON_HD inline double poly_D_sandwich(double xm, double xp) {
-  return xm * xp;
+  return peclet::core::scheme::poly_D_sandwich<double>(xm, xp);
 }
 MORTON_HD inline double poly_N_c_sandwich(double xm, double xp) {
-  return (xm + 1.0) * (xp - 1.0);
+  return peclet::core::scheme::poly_N_c_sandwich<double>(xm, xp);
 }
 MORTON_HD inline double poly_Nbc_pp_sw(double xm, double xp) {
-  return (xm / (xm + xp)) * (1.0 + xm);
+  return peclet::core::scheme::poly_Nbc_pp_sw<double>(xm, xp);
 }
 MORTON_HD inline double poly_Nbc_mp_sw(double xm, double xp) {
-  return (xp / (xm + xp)) * (1.0 - xp);
+  return peclet::core::scheme::poly_Nbc_mp_sw<double>(xm, xp);
 }
 }  // namespace cc
 
