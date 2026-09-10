@@ -47,14 +47,11 @@
 #ifndef PECLET_AMR_GHOST_PROJECTION_SAMPLED_HPP
 #define PECLET_AMR_GHOST_PROJECTION_SAMPLED_HPP
 
-#include "peclet/amr/common.hpp"
-
-
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <cstdio>
 #include <cstdint>
+#include <cstdio>
 #include <memory>
 #include <stdexcept>
 #include <utility>
@@ -62,6 +59,7 @@
 
 #include "peclet/amr/block_octree.hpp"
 #include "peclet/amr/cf_scheme.hpp"  // CfCsr + detail::{ScalarEnt, compactCsr} (mom seam delta)
+#include "peclet/amr/common.hpp"
 #include "peclet/amr/ghost_projection.hpp"
 #include "peclet/amr/poisson.hpp"
 #include "peclet/core/common/host_parallel.hpp"
@@ -148,8 +146,7 @@ inline bool gpsSolveDense(int n, double* A, double* b) {
 /// set is unchanged.
 template <unsigned Bits, class WrapFn, class EmitFn>
 inline void forEachCoveringSlot(const AmrPoisson<3, Bits>& pres, const long lo[3], const long hi[3],
-                                WrapFn&& wrapLocal, EmitFn&& emit,
-                                bool descendPending = false) {
+                                WrapFn&& wrapLocal, EmitFn&& emit, bool descendPending = false) {
   struct Box {
     long lo[3], hi[3];
   };
@@ -279,8 +276,7 @@ inline auto makeBinaryOpenFnMixed(const BlockOctree<3, Bits>& t, const AmrPoisso
       const double s = static_cast<double>(Index(1) << pres.levelOf(j));
       Vec<3> c{};
       for (int d = 0; d < 3; ++d)
-        c[d] = origin[d] +
-               (static_cast<double>(lo[d] + frameShift[d]) + 0.5 * s) * h0[d];
+        c[d] = origin[d] + (static_cast<double>(lo[d] + frameShift[d]) + 0.5 * s) * h0[d];
       const double sd = sdfFn(c);
       return {sd > 0.0, static_cast<float>(sd)};
     };
@@ -310,14 +306,11 @@ inline auto makeBinaryOpenFnMixed(const BlockOctree<3, Bits>& t, const AmrPoisso
 /// no pass 2, no census print. If discovery ever under-probed, the real build would hit
 /// `LeafHalo::resolve: unknown coord after finalize()` — a throw, never silent corruption.
 template <unsigned Bits, class SdfFn>
-inline GhostOverlaySampled buildGhostOverlaySampled(const BlockOctree<3, Bits>& t,
-                                                    const AmrPoisson<3, Bits>& pres, SdfFn&& sdf,
-                                                    int matrixOrder, int rhsOrder,
-                                                    Vec<3> origin = Vec<3>{},
-                                                    const std::array<long, 3>* globalFine = nullptr,
-                                                    std::array<long, 3> frameShift = {},
-                                                    bool discovery = false, double rhoFactor = 2.2,
-                                                    long maxSamples = 0) {
+inline GhostOverlaySampled buildGhostOverlaySampled(
+    const BlockOctree<3, Bits>& t, const AmrPoisson<3, Bits>& pres, SdfFn&& sdf, int matrixOrder,
+    int rhsOrder, Vec<3> origin = Vec<3>{}, const std::array<long, 3>* globalFine = nullptr,
+    std::array<long, 3> frameShift = {}, bool discovery = false, double rhoFactor = 2.2,
+    long maxSamples = 0) {
   GhostOverlaySampled ov;
   const Index n = t.numLeaves();
   // Phase 3 (`docs/amr_anisotropic.md` §5): the ROOT spacing per axis. `pres.h0()` already is
@@ -476,7 +469,11 @@ inline GhostOverlaySampled buildGhostOverlaySampled(const BlockOctree<3, Bits>& 
     }
     std::vector<Index> slots;
     detail::forEachCoveringSlot(
-        pres, qlo, qhi, wrapLocal, [&](Index s) { if (!discovery) slots.push_back(s); },
+        pres, qlo, qhi, wrapLocal,
+        [&](Index s) {
+          if (!discovery)
+            slots.push_back(s);
+        },
         /*descendPending=*/discovery);
     if (discovery)
       return false;  // probe-only: the misses are registered, the weights are never consumed
@@ -497,9 +494,9 @@ inline GhostOverlaySampled buildGhostOverlaySampled(const BlockOctree<3, Bits>& 
           del -= domain[d];
         if (del < -0.5 * domain[d])
           del += domain[d];
-        r2 += del * del;              // the (distance^2) tie-break key of the nearest-N cap
+        r2 += del * del;  // the (distance^2) tie-break key of the nearest-N cap
         const double u = del / rho[d];
-        q2 += u * u;                  // the axis-scaled ball predicate
+        q2 += u * u;  // the axis-scaled ball predicate
       }
       if (q2 > 1.0)
         continue;
@@ -511,10 +508,9 @@ inline GhostOverlaySampled buildGhostOverlaySampled(const BlockOctree<3, Bits>& 
     }
     if (gpsMaxN > 0 && static_cast<long>(cand.size()) > gpsMaxN) {
       // nearest-N by (distance^2, global Morton key): a strict, geometry-only total order.
-      std::nth_element(cand.begin(), cand.begin() + gpsMaxN, cand.end(),
-                       [](const Cand& a, const Cand& b) {
-                         return a.d2 != b.d2 ? a.d2 < b.d2 : a.key < b.key;
-                       });
+      std::nth_element(
+          cand.begin(), cand.begin() + gpsMaxN, cand.end(),
+          [](const Cand& a, const Cand& b) { return a.d2 != b.d2 ? a.d2 < b.d2 : a.key < b.key; });
       cand.resize(static_cast<std::size_t>(gpsMaxN));
     }
     std::sort(cand.begin(), cand.end(), [](const Cand& a, const Cand& b) {
@@ -660,8 +656,7 @@ inline GhostOverlaySampled buildGhostOverlaySampled(const BlockOctree<3, Bits>& 
     for (int k = 0; k < 6; ++k) {
       const int a = k / 2;
       const int m = (k & 1) ? 1 : 2;  // minus own face = F[a][1], plus own face = F[a][2]
-      const bool virtOpen =
-          F[a][m] >= 0.0f && Cq[a][(k & 1) ? 1 : 3] > 0.0f && Cq[a][2] > 0.0f;
+      const bool virtOpen = F[a][m] >= 0.0f && Cq[a][(k & 1) ? 1 : 3] > 0.0f && Cq[a][2] > 0.0f;
       if (virtOpen != anyOpen[k]) {
         // Marginal face where the virtual and canonical classifications disagree: force the
         // canonical sign (overlay-closed <=> binary-closed), keep the (small) magnitude.
@@ -933,8 +928,7 @@ inline void ghostDivergDeltaSampledHost(const GhostOverlaySampled& ov,
         val += g.w_n2[rr * 6 + static_cast<std::size_t>(k)] * U(a, mf);
       dd += r1[a] * (sgn * val);
     }
-    d[static_cast<std::size_t>(c)] =
-        g.rescale[rr] * (d[static_cast<std::size_t>(c)] + ihd * dd);
+    d[static_cast<std::size_t>(c)] = g.rescale[rr] * (d[static_cast<std::size_t>(c)] + ihd * dd);
   }
 }
 
@@ -1288,8 +1282,7 @@ inline void ghostApplyDeltaSampled(const GhostOverlaySampledDev& ov, View<const 
 
 /// Device divergence overlay (== ghostDivergDeltaSampledHost).
 inline void ghostDivergDeltaSampled(const GhostOverlaySampledDev& ov, View<const double> u0,
-                                    View<const double> u1, View<const double> u2,
-                                    View<double> d) {
+                                    View<const double> u1, View<const double> u2, View<double> d) {
   if (ov.n == 0)
     return;
   auto cell = ov.cell;

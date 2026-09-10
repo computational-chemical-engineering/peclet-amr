@@ -11,9 +11,9 @@
 #ifndef PECLET_AMR_ADVECT_RECON_HPP
 #define PECLET_AMR_ADVECT_RECON_HPP
 
-#include "peclet/amr/common.hpp"
-
 #include <morton/morton.hpp>
+
+#include "peclet/amr/common.hpp"
 #ifndef MORTON_HD
 #define MORTON_HD
 #endif

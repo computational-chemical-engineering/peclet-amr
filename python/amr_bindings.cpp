@@ -19,7 +19,8 @@
 // the host (import mpi4py.MPI first); the distributed class uses MPI_COMM_WORLD and never calls
 // Init/Finalize.
 //
-// Build: see CMakeLists.txt (the `amr` target -> peclet.amr._amr, re-exported by packaging/amr_init.py).
+// Build: see CMakeLists.txt (the `amr` target -> peclet.amr._amr, re-exported by
+// packaging/amr_init.py).
 #include <mpi.h>
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
@@ -839,19 +840,21 @@ void bindOctreeCommon(nb::class_<T>& c) {
            "Refine leaves the sphere surface passes through (plus `band` cells) down to "
            "target_level; optionally restore 2:1 balance (cross-block, collective, on a "
            "DistributedOctree). Returns the (local) number of refinements performed.")
-      .def("refine_to_sdf", &T::refine_to_sdf, nb::arg("sdf"), nb::arg("target_level") = 0u,
-           nb::arg("band") = 1.0, nb::arg("balance") = true,
-           "Refine toward an arbitrary signed-distance field given as a callable f(x,y,z)->distance "
-           "(suite sign: <0 inside solid), down to target_level — rings / packed beds / any "
-           "non-sphere geometry. Collective when balance=True on a DistributedOctree. Returns "
-           "refinements performed.")
+      .def(
+          "refine_to_sdf", &T::refine_to_sdf, nb::arg("sdf"), nb::arg("target_level") = 0u,
+          nb::arg("band") = 1.0, nb::arg("balance") = true,
+          "Refine toward an arbitrary signed-distance field given as a callable f(x,y,z)->distance "
+          "(suite sign: <0 inside solid), down to target_level — rings / packed beds / any "
+          "non-sphere geometry. Collective when balance=True on a DistributedOctree. Returns "
+          "refinements performed.")
       .def("balance", &T::balance,
            "Enforce 2:1 graded balance to a fixpoint (cross-block and collective on a "
            "DistributedOctree); returns (this rank's) refinements performed.")
-      .def("lohner_indicator", &T::lohner_indicator, nb::arg("field"), nb::arg("eps") = 0.01,
-           "Löhner normalized-second-difference feature indicator E in [0,1] per leaf from a scalar "
-           "field (num_leaves,); large E = steep feature (refine), small = smooth (coarsen). On a "
-           "DistributedOctree it is evaluated across the owner-based halo (collective).")
+      .def(
+          "lohner_indicator", &T::lohner_indicator, nb::arg("field"), nb::arg("eps") = 0.01,
+          "Löhner normalized-second-difference feature indicator E in [0,1] per leaf from a scalar "
+          "field (num_leaves,); large E = steep feature (refine), small = smooth (coarsen). On a "
+          "DistributedOctree it is evaluated across the owner-based halo (collective).")
       .def("adapt", &T::adapt, nb::arg("field"), nb::arg("refine_thresh"),
            nb::arg("coarsen_thresh"), nb::arg("finest_level") = 0u, nb::arg("eps") = 0.01,
            nb::arg("linear") = true,
@@ -1052,7 +1055,8 @@ NB_MODULE(_amr, m) {
            "to set_ghost_sampled(False)); face classification uses the level-aware canonical "
            "openness; the momentum xi-row seam correction and the wall-aware C/F tangential "
            "fallback ride along. Implies the ghost projection (engages when the resolved scheme "
-           "is ghost — the AUTO default or an explicit set_ghost_projection(True)). Distributed since "
+           "is ghost — the AUTO default or an explicit set_ghost_projection(True)). Distributed "
+           "since "
            "2026-08-30 (the clouds are a deterministic probe set through the leaf halo). `rho` is "
            "the least-squares cloud radius factor (rho = factor * max(h, H); 2.2 = the shipped "
            "behaviour) and `max_samples` the nearest-N candidate cap (0 = uncapped) — the M2a "

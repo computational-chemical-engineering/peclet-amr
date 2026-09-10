@@ -12,8 +12,6 @@
 //       path never touches a ghost slot).
 // np = 1,2,4,8.
 //
-#include "test_util.hpp"
-
 #include <array>
 #include <cmath>
 #include <vector>
@@ -21,6 +19,7 @@
 #include "peclet/amr/distributed_octree.hpp"
 #include "peclet/amr/leaf_halo.hpp"
 #include "peclet/core/common/mpi.hpp"
+#include "test_util.hpp"
 
 using namespace peclet::core;
 using namespace peclet::amr;
@@ -122,8 +121,8 @@ void run() {
       PECLET_AMR_CHECK_EQ(lv[static_cast<std::size_t>(g)], halo.level(halo.numLocal() + g));
       for (int a = 0; a < 3; ++a)  // anchor is the covering leaf's lo: aligned to its level
         PECLET_AMR_CHECK_EQ((long)(halo.ghostCoord(g)[a] >> lv[static_cast<std::size_t>(g)])
-                                 << lv[static_cast<std::size_t>(g)],
-                             (long)halo.ghostCoord(g)[a]);
+                                << lv[static_cast<std::size_t>(g)],
+                            (long)halo.ghostCoord(g)[a]);
     }
   }
 

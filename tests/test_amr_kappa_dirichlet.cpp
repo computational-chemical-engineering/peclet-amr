@@ -9,14 +9,13 @@
 // should now converge to round-off (no floor), confirming κ-restrict is safe when the
 // operator is non-singular.
 //
-#include "test_util.hpp"
-
 #include <cmath>
 #include <Kokkos_Core.hpp>
 #include <vector>
 
 #include "peclet/amr/block_octree.hpp"
 #include "peclet/amr/multigrid.hpp"
+#include "test_util.hpp"
 
 using namespace peclet::core;
 using namespace peclet::amr;

@@ -7,8 +7,6 @@
 //   (2) the quadratic operator is still conservative (sum_i V_i (L_quad u)_i ~ 0),
 //       i.e. the coarse face flux equals the summed fine sub-face fluxes (reflux).
 //
-#include "test_util.hpp"
-
 #include <cmath>
 #include <cstdint>
 #include <vector>
@@ -16,6 +14,7 @@
 #include "peclet/amr/block_octree.hpp"
 #include "peclet/amr/poisson.hpp"
 #include "peclet/core/common/types.hpp"
+#include "test_util.hpp"
 
 using namespace peclet::core;
 using namespace peclet::amr;

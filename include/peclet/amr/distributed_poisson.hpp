@@ -20,15 +20,13 @@
 #ifndef PECLET_AMR_DISTRIBUTED_POISSON_HPP
 #define PECLET_AMR_DISTRIBUTED_POISSON_HPP
 
-#include "peclet/amr/common.hpp"
-
-
 #include <array>
 #include <cassert>
 #include <cmath>
 #include <memory>
 #include <vector>
 
+#include "peclet/amr/common.hpp"
 #include "peclet/amr/distributed_octree.hpp"
 #include "peclet/amr/leaf_field.hpp"
 #include "peclet/core/common/mpi.hpp"
@@ -39,9 +37,7 @@ namespace peclet::amr {
 template <int Dim, unsigned Bits = (Dim == 2 ? 32u : (Dim == 3 ? 21u : 16u))>
 class DistributedPoisson {
  public:
-  void init(DistributedOctree<Dim, Bits>& d, double h0) {
-    init(d, detail::filledVec<Dim>(h0));
-  }
+  void init(DistributedOctree<Dim, Bits>& d, double h0) { init(d, detail::filledVec<Dim>(h0)); }
   void init(DistributedOctree<Dim, Bits>& d, const Vec<Dim>& h0) {
     d_ = &d;
     h0_ = h0;

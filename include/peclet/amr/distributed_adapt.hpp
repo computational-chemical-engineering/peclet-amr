@@ -20,13 +20,11 @@
 #ifndef PECLET_AMR_DISTRIBUTED_ADAPT_HPP
 #define PECLET_AMR_DISTRIBUTED_ADAPT_HPP
 
-#include "peclet/amr/common.hpp"
-
-
 #include <cmath>
 #include <vector>
 
 #include "peclet/amr/adapt.hpp"
+#include "peclet/amr/common.hpp"
 #include "peclet/amr/distributed_octree.hpp"
 #include "peclet/core/common/types.hpp"
 
@@ -95,8 +93,8 @@ std::vector<std::array<double, Dim>> transferGradients(const DistributedOctree<D
     for (int axis = 0; axis < Dim; ++axis)
       for (int dd = 0; dd < 2; ++dd) {  // dd 0 = +1 side, 1 = −1 side
         const std::size_t slot = static_cast<std::size_t>(i) * S + axis * 2 + dd;
-        const long pc = (dd == 0) ? static_cast<long>(lo[axis]) + si
-                                  : static_cast<long>(lo[axis]) - 1;
+        const long pc =
+            (dd == 0) ? static_cast<long>(lo[axis]) + si : static_cast<long>(lo[axis]) - 1;
         if (pc >= 0 &&
             pc < static_cast<long>(d.blockBrick()[axis]) * static_cast<long>(d.rootSpan())) {
           std::array<Coord, Dim> p = lo;
@@ -140,8 +138,7 @@ std::vector<std::array<double, Dim>> transferGradients(const DistributedOctree<D
       sides[rslot[k]].ok = true;
     }
 
-  std::vector<std::array<double, Dim>> grad(static_cast<std::size_t>(n),
-                                            std::array<double, Dim>{});
+  std::vector<std::array<double, Dim>> grad(static_cast<std::size_t>(n), std::array<double, Dim>{});
   for (Index i = 0; i < n; ++i) {
     const double si = static_cast<double>(1L << t.level(i));
     const double ui = f[static_cast<std::size_t>(i)];

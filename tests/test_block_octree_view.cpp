@@ -3,8 +3,6 @@
 // BlockOctree bit-for-bit, on whatever backend Kokkos was built for (CUDA / HIP /
 // OpenMP). Compiled as CXX — Kokkos routes it to the device compiler.
 //
-#include "test_util.hpp"
-
 #include <array>
 #include <cstdint>
 #include <Kokkos_Core.hpp>
@@ -12,6 +10,7 @@
 
 #include "peclet/amr/block_octree.hpp"
 #include "peclet/amr/block_octree_view.hpp"
+#include "test_util.hpp"
 
 using namespace peclet::core;
 using peclet::amr::BlockOctree;

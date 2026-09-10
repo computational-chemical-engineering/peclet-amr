@@ -26,12 +26,10 @@
 #ifndef PECLET_AMR_PCG_HPP
 #define PECLET_AMR_PCG_HPP
 
-#include "peclet/amr/common.hpp"
-
-
 #include <cmath>
 #include <functional>
 
+#include "peclet/amr/common.hpp"
 #include "peclet/amr/fv_op.hpp"
 #include "peclet/amr/multigrid.hpp"
 #include "peclet/core/common/view.hpp"
@@ -79,9 +77,8 @@ inline void maskSolid(View<double> u, View<const double> mask, Index n) {
 /// exclude the pinned solid cells — including them dilutes it and lets the solid drift.
 /// `reduce` folds each local mean sum into the global one (identity single-rank; an
 /// MPI_Allreduce lambda distributed — the mean is over the GLOBAL fluid region).
-inline void removeMeanVolReduced(View<double> u, View<const double> invVol,
-                                 View<const double> mask, Index n,
-                                 const std::function<double(double)>& reduce) {
+inline void removeMeanVolReduced(View<double> u, View<const double> invVol, View<const double> mask,
+                                 Index n, const std::function<double(double)>& reduce) {
   Kokkos::parallel_for("amr::pcg_masksolid", n, KOKKOS_LAMBDA(const Index i) { u(i) *= mask(i); });
   double su = 0.0, sv = 0.0;
   Kokkos::parallel_reduce(
@@ -189,8 +186,7 @@ class PCG {
     Kokkos::deep_copy(x, 0.0);
     {
       auto r = r_;
-      Kokkos::parallel_for(
-          "amr::pcg_r0", n, KOKKOS_LAMBDA(const Index i) { r(i) = -rhs(i); });
+      Kokkos::parallel_for("amr::pcg_r0", n, KOKKOS_LAMBDA(const Index i) { r(i) = -rhs(i); });
     }
     project(r_);
     R.res0 = std::sqrt(vdot(View<const double>(r_), View<const double>(r_)));

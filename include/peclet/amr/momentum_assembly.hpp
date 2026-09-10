@@ -25,11 +25,9 @@
 #ifndef PECLET_AMR_MOMENTUM_ASSEMBLY_HPP
 #define PECLET_AMR_MOMENTUM_ASSEMBLY_HPP
 
-#include "peclet/amr/common.hpp"
-
-
 #include "peclet/amr/assembly.hpp"  // FvFaceEmit (the α=1 ∇² geometry traversal)
 #include "peclet/amr/block_octree_view.hpp"
+#include "peclet/amr/common.hpp"
 #include "peclet/amr/csr.hpp"
 #include "peclet/amr/cut_cell.hpp"
 #include "peclet/amr/momentum.hpp"

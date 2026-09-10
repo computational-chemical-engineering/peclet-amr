@@ -18,12 +18,10 @@
 #ifndef PECLET_AMR_ASSEMBLY_HPP
 #define PECLET_AMR_ASSEMBLY_HPP
 
-#include "peclet/amr/common.hpp"
-
-
 #include <array>
 
 #include "peclet/amr/block_octree_view.hpp"
+#include "peclet/amr/common.hpp"
 #include "peclet/amr/csr.hpp"
 #include "peclet/amr/fv_op.hpp"
 #include "peclet/amr/poisson.hpp"

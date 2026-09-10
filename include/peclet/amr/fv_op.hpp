@@ -14,10 +14,8 @@
 #ifndef PECLET_AMR_FV_OP_HPP
 #define PECLET_AMR_FV_OP_HPP
 
-#include "peclet/amr/common.hpp"
-
-
 #include "peclet/amr/block_octree_view.hpp"
+#include "peclet/amr/common.hpp"
 #include "peclet/amr/face_csr.hpp"  // shared host+device FV (weight-CSR) row kernels
 #include "peclet/core/common/view.hpp"
 

@@ -12,8 +12,6 @@
 //   np>1: Krylov tolerance — which also proves the rebalance migrated the state exactly
 //   (any migration error would break the continued trajectory).
 //
-#include "test_util.hpp"
-
 #include <array>
 #include <cmath>
 #include <Kokkos_Core.hpp>
@@ -24,6 +22,7 @@
 #include "peclet/amr/flow.hpp"
 #include "peclet/core/common/mpi.hpp"
 #include "peclet/core/common/view.hpp"
+#include "test_util.hpp"
 
 using namespace peclet::core;
 using namespace peclet::amr;

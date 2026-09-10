@@ -3,9 +3,6 @@
 // — one cell per leaf, 2^Dim points per cell, and a per-leaf CellData scalar that
 // reads back exactly.
 //
-#include "peclet/core/common/types.hpp"
-#include "test_util.hpp"
-
 #include <cstdio>
 #include <fstream>
 #include <sstream>
@@ -15,6 +12,8 @@
 #include "peclet/amr/block_octree.hpp"
 #include "peclet/amr/leaf_field.hpp"
 #include "peclet/amr/vtu_io.hpp"
+#include "peclet/core/common/types.hpp"
+#include "test_util.hpp"
 
 using namespace peclet::core;
 using namespace peclet::amr;

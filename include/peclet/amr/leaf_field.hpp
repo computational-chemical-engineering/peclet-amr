@@ -10,14 +10,12 @@
 #ifndef PECLET_AMR_LEAF_FIELD_HPP
 #define PECLET_AMR_LEAF_FIELD_HPP
 
-#include "peclet/amr/common.hpp"
-
-
 #include <array>
 #include <cstddef>
 #include <vector>
 
 #include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/common.hpp"
 #include "peclet/core/common/types.hpp"
 
 namespace peclet::amr {
@@ -113,9 +111,9 @@ struct AmrGeometry {
   Vec<Dim> center(const std::array<std::array<Coord, Dim>, 2>& b) const {
     Vec<Dim> p{};
     for (int d = 0; d < Dim; ++d)
-      p[d] = origin[d] + (static_cast<Real>(b[0][d]) +
-                          0.5 * (static_cast<Real>(b[1][d] - b[0][d]) + 1.0)) *
-                             h0[d];
+      p[d] =
+          origin[d] +
+          (static_cast<Real>(b[0][d]) + 0.5 * (static_cast<Real>(b[1][d] - b[0][d]) + 1.0)) * h0[d];
     return p;
   }
 };

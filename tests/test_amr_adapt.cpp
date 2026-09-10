@@ -7,8 +7,6 @@
 //   (3) iterating adapt drives the finest cells to the front only (an order of
 //       magnitude fewer leaves than a uniform-fine grid) and keeps the far field coarse.
 //
-#include "test_util.hpp"
-
 #include <array>
 #include <cmath>
 #include <vector>
@@ -17,6 +15,7 @@
 #include "peclet/amr/block_octree.hpp"
 #include "peclet/amr/indicators.hpp"
 #include "peclet/core/common/types.hpp"
+#include "test_util.hpp"
 
 using namespace peclet::core;
 using namespace peclet::amr;

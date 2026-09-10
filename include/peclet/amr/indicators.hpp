@@ -18,13 +18,11 @@
 #ifndef PECLET_AMR_INDICATORS_HPP
 #define PECLET_AMR_INDICATORS_HPP
 
-#include "peclet/amr/common.hpp"
-
-
 #include <cmath>
 #include <vector>
 
 #include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/common.hpp"
 #include "peclet/core/common/types.hpp"
 
 namespace peclet::amr {

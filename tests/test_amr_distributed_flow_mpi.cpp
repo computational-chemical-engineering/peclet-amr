@@ -11,8 +11,6 @@
 //       run keeps the ghost-closed divergence at the single-rank scale.
 // np = 1,2,4,8.
 //
-#include "test_util.hpp"
-
 #include <array>
 #include <cmath>
 #include <Kokkos_Core.hpp>
@@ -22,6 +20,7 @@
 #include "peclet/amr/flow.hpp"
 #include "peclet/core/common/mpi.hpp"
 #include "peclet/core/common/view.hpp"
+#include "test_util.hpp"
 
 using namespace peclet::core;
 using namespace peclet::amr;

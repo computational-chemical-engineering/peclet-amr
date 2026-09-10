@@ -2,14 +2,13 @@
 // only makes the *cell* field approximately divergence-free (O(h²)); the face field uf_f =
 // ½(u_i+u_j) − (φ₊−φ₋)/d is divergence-free to the pressure-solve residual, because L = D·G_face on
 // the same (sub)faces ⇒ D(uf) = D u* − Lφ. This must hold across 2:1 interfaces too (the coarse
-#include "test_util.hpp"
-
 #include <cmath>
 
 #include "peclet/amr/block_octree.hpp"
 #include "peclet/amr/flow_oracle.hpp"
 #include "peclet/amr/refine.hpp"
 #include "peclet/core/common/types.hpp"
+#include "test_util.hpp"
 
 using namespace peclet::core;
 using namespace peclet::amr;
@@ -56,7 +55,7 @@ void run_test() {
     t30.refineIf([](Code, unsigned) { return true; });
   auto [dCell30, dFace30] = run(t30, R, Vec<3>{cc, cc, cc}, 30);
   PECLET_AMR_CHECK(dFace6 <
-                    0.05 * dCell6);  // face field ≥20× more divergence-free than the cell field
+                   0.05 * dCell6);  // face field ≥20× more divergence-free than the cell field
   PECLET_AMR_CHECK(dFace30 < 0.05 * dCell30);  // ditto at the tighter solve
   // The face divergence used to TRACK the pressure-solve residual, so tightening the solve shrank
   // it. Since the gauge-exact cell gradient became the default (2026-08-18) it is ~85x smaller and
@@ -87,7 +86,7 @@ void run_test() {
   PECLET_AMR_CHECK(tg.isBalanced());
   auto [dCellG, dFaceG] = run(tg, Rg, Vec<3>{cg, cg, cg}, 30);
   PECLET_AMR_CHECK(dFaceG <
-                    0.01 * dCellG);  // across 2:1: face field ≥100× cleaner than the cell field
+                   0.01 * dCellG);  // across 2:1: face field ≥100× cleaner than the cell field
 }
 
 }  // namespace

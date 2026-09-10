@@ -11,8 +11,6 @@
 //  (4) momentum ∇² (the velocity operator): the tangential-only flux correction restores
 //      ~2nd order at C/F rows (the P5b result, now on the velocity path).
 //
-#include "test_util.hpp"
-
 #include <array>
 #include <cmath>
 #include <cstdio>
@@ -22,6 +20,7 @@
 #include "peclet/amr/cf_scheme.hpp"
 #include "peclet/amr/poisson.hpp"
 #include "peclet/core/common/types.hpp"
+#include "test_util.hpp"
 
 using namespace peclet::core;
 using namespace peclet::amr;

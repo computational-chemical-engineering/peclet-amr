@@ -8,8 +8,6 @@
 //   (3) graded solvability — Gauss-Seidel reduces the residual on an adaptive mesh
 //       (the graded operator is a consistent, solvable system).
 //
-#include "test_util.hpp"
-
 #include <cmath>
 #include <cstdint>
 #include <vector>
@@ -20,6 +18,7 @@
 #include "peclet/amr/refine.hpp"
 #include "peclet/core/common/types.hpp"
 #include "peclet/core/geom/sdf.hpp"
+#include "test_util.hpp"
 
 using namespace peclet::core;
 using namespace peclet::amr;

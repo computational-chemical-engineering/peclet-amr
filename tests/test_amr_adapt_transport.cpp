@@ -7,8 +7,6 @@
 //   (2) the mesh tracks the moving blob (the finest cells stay near its centre);
 //   (3) the adaptive mesh stays far smaller than a uniform-fine grid.
 //
-#include "test_util.hpp"
-
 #include <array>
 #include <cmath>
 #include <vector>
@@ -18,6 +16,7 @@
 #include "peclet/amr/leaf_field.hpp"
 #include "peclet/amr/scalar_transport.hpp"
 #include "peclet/core/common/types.hpp"
+#include "test_util.hpp"
 
 using namespace peclet::core;
 using namespace peclet::amr;
@@ -129,8 +128,8 @@ void run() {
       fineCx += x;
     }
   }
-  const double xc = sx / sw;                        // scalar mass-weighted x-centroid
-  const double fc = fineCx / fineW;                 // mean x of the finest cells
+  const double xc = sx / sw;                       // scalar mass-weighted x-centroid
+  const double fc = fineCx / fineW;                // mean x of the finest cells
   PECLET_AMR_CHECK(std::fabs(xc - cxEnd) < 0.05);  // advection moved the blob correctly
   PECLET_AMR_CHECK(nFinest > 0);
   PECLET_AMR_CHECK(std::fabs(fc - cxEnd) < 0.1);  // finest cells follow the blob

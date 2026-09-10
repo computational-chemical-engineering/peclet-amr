@@ -48,15 +48,13 @@
 #ifndef PECLET_AMR_GHOST_PROJECTION_HPP
 #define PECLET_AMR_GHOST_PROJECTION_HPP
 
-#include "peclet/amr/common.hpp"
-
-
 #include <array>
 #include <cstdint>
 #include <stdexcept>
 #include <vector>
 
 #include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/common.hpp"
 #include "peclet/amr/poisson.hpp"
 #include "peclet/core/common/types.hpp"
 #include "peclet/core/scheme/ghost_closure.hpp"
@@ -68,11 +66,11 @@ namespace peclet::amr {
 /// same-level chain per axis (slot r*15 + a*5 + (q+2), q = -2..2, q=0 the row's own leaf).
 struct GhostOverlay {
   Index n = 0;
-  std::vector<Index> cell;      ///< [n] leaf index
-  std::vector<float> rescale;   ///< [n] rho = min(1, min_f D_f) of the MATRIX weights
-  std::vector<int8_t> coupled;  ///< [n] 1 if the row has any phi coupling at all
-  std::vector<int8_t> state;    ///< [n*6]
-  std::vector<float> th;        ///< [n*6] (diagnostics)
+  std::vector<Index> cell;              ///< [n] leaf index
+  std::vector<float> rescale;           ///< [n] rho = min(1, min_f D_f) of the MATRIX weights
+  std::vector<int8_t> coupled;          ///< [n] 1 if the row has any phi coupling at all
+  std::vector<int8_t> state;            ///< [n*6]
+  std::vector<float> th;                ///< [n*6] (diagnostics)
   std::vector<float> w_bc, w_n1, w_n2;  ///< [n*6] RHS/diagnostic closure weights (rhsOrder)
   std::vector<float> wm_n1, wm_n2;      ///< [n*6] matrix (implicit phi) weights (matrixOrder)
   std::vector<Index> nbr;               ///< [n*15] ±2 neighbour chain per axis
@@ -128,8 +126,8 @@ inline GhostOverlay buildGhostOverlay(const BlockOctree<3, Bits>& t,
       chain[a][3] = pres.periodicNeighbor(i, a, +1);
       chain[a][1] = pres.periodicNeighbor(i, a, -1);
       const float c1 = sf(chain[a][1]), c3 = sf(chain[a][3]), c2 = sf(i);
-      clean = clean && c1 >= 0.0f && c3 >= 0.0f && 0.5f * (c1 + c2) >= 0.0f &&
-              0.5f * (c2 + c3) >= 0.0f;
+      clean =
+          clean && c1 >= 0.0f && c3 >= 0.0f && 0.5f * (c1 + c2) >= 0.0f && 0.5f * (c2 + c3) >= 0.0f;
     }
     if (clean)
       continue;
@@ -137,10 +135,8 @@ inline GhostOverlay buildGhostOverlay(const BlockOctree<3, Bits>& t,
     const unsigned Li = t.level(i);
     bool bad = false;
     for (int a = 0; a < 3; ++a) {
-      chain[a][4] =
-          chain[a][3] >= 0 ? pres.periodicNeighbor(chain[a][3], a, +1) : chain[a][3];
-      chain[a][0] =
-          chain[a][1] >= 0 ? pres.periodicNeighbor(chain[a][1], a, -1) : chain[a][1];
+      chain[a][4] = chain[a][3] >= 0 ? pres.periodicNeighbor(chain[a][3], a, +1) : chain[a][3];
+      chain[a][0] = chain[a][1] >= 0 ? pres.periodicNeighbor(chain[a][1], a, -1) : chain[a][1];
       for (int q = 0; q < 5; ++q)
         if (chain[a][q] < 0 || pres.levelOf(chain[a][q]) != Li)
           bad = true;
@@ -294,15 +290,15 @@ inline void ghostApplyDeltaHost(const GhostOverlay& ov, const std::vector<double
       continue;
     }
     auto X = [&](int a, int q) {
-      return x[static_cast<std::size_t>(ov.nbr[rr * 15 + static_cast<std::size_t>(a) * 5 +
-                                               static_cast<std::size_t>(q + 2)])];
+      return x[static_cast<std::size_t>(
+          ov.nbr[rr * 15 + static_cast<std::size_t>(a) * 5 + static_cast<std::size_t>(q + 2)])];
     };
-  // Phase 3 (`docs/amr_anisotropic.md` §5, work order A1): the row carries `1/cellWidth` PER
-  // AXIS. The delta is a sum over the six FACES, each belonging to axis `k/2`, so the axis weight
-  // multiplies each face's term. It is spelled as `ih^2 * sum_k (term_k * r_a^2)` with
-  // `ih = invh[3r]` and `r_a = invh[3r+a]/ih` — every `r_a` is a double divided by itself on a
-  // cubic octree, hence EXACTLY 1.0, `term*1.0 == term`, and the whole expression collapses to
-  // the pre-Phase-3 `ih*ih*delta` bit for bit (Rule B).
+    // Phase 3 (`docs/amr_anisotropic.md` §5, work order A1): the row carries `1/cellWidth` PER
+    // AXIS. The delta is a sum over the six FACES, each belonging to axis `k/2`, so the axis weight
+    // multiplies each face's term. It is spelled as `ih^2 * sum_k (term_k * r_a^2)` with
+    // `ih = invh[3r]` and `r_a = invh[3r+a]/ih` — every `r_a` is a double divided by itself on a
+    // cubic octree, hence EXACTLY 1.0, `term*1.0 == term`, and the whole expression collapses to
+    // the pre-Phase-3 `ih*ih*delta` bit for bit (Rule B).
     const double ih = ov.invh[rr * 3];
     const double r2[3] = {1.0, (ov.invh[rr * 3 + 1] / ih) * (ov.invh[rr * 3 + 1] / ih),
                           (ov.invh[rr * 3 + 2] / ih) * (ov.invh[rr * 3 + 2] / ih)};
@@ -370,8 +366,7 @@ inline void ghostDivergDeltaHost(const GhostOverlay& ov,
         val += ov.w_n2[rr * 6 + static_cast<std::size_t>(k)] * U(a, mf);
       dd += r1[a] * (sgn * val);
     }
-    d[static_cast<std::size_t>(c)] =
-        ov.rescale[rr] * (d[static_cast<std::size_t>(c)] + ihd * dd);
+    d[static_cast<std::size_t>(c)] = ov.rescale[rr] * (d[static_cast<std::size_t>(c)] + ihd * dd);
   }
 }
 
@@ -439,8 +434,8 @@ inline void ghostApplyDelta(const GhostOverlayDev& ov, View<const double> x, Vie
           const int mn = (k & 1) ? 1 : 0;
           const int mf = (k & 1) ? 2 : -1;
           const double w1 = wm1(r * 6 + k), w2 = wm2(r * 6 + k);
-          delta += r2[a] * (sgn * w1 *
-                            (x(nbr(r * 15 + a * 5 + mn + 2)) - x(nbr(r * 15 + a * 5 + mn + 1))));
+          delta += r2[a] *
+                   (sgn * w1 * (x(nbr(r * 15 + a * 5 + mn + 2)) - x(nbr(r * 15 + a * 5 + mn + 1))));
           if (s == scheme::GP_QUAD && w2 != 0.0)
             delta += r2[a] * (sgn * w2 *
                               (x(nbr(r * 15 + a * 5 + mf + 2)) - x(nbr(r * 15 + a * 5 + mf + 1))));

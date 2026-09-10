@@ -9,14 +9,13 @@
 //       area-averaged (coarsened) openness on every multigrid level, i.e. the
 //       rediscretized coarse operators are consistent with the fine one.
 //
-#include "test_util.hpp"
-
 #include <cmath>
 #include <vector>
 
 #include "peclet/amr/block_octree.hpp"
 #include "peclet/amr/poisson.hpp"
 #include "peclet/core/common/types.hpp"
+#include "test_util.hpp"
 
 using namespace peclet::core;
 using namespace peclet::amr;

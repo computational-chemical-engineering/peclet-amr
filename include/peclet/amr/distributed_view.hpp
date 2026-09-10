@@ -24,15 +24,13 @@
 #ifndef PECLET_AMR_DISTRIBUTED_VIEW_HPP
 #define PECLET_AMR_DISTRIBUTED_VIEW_HPP
 
-#include "peclet/amr/common.hpp"
-
-
 #include <cmath>
 #include <memory>
 #include <vector>
 
+#include "peclet/amr/common.hpp"
 #include "peclet/amr/distributed_poisson.hpp"  // DistributedOctree, AmrGeometry, DistributedMultigrid (ref)
-#include "peclet/amr/multigrid.hpp"  // restrictField / prolongAdd (bit-exact, reused)
+#include "peclet/amr/multigrid.hpp"            // restrictField / prolongAdd (bit-exact, reused)
 #include "peclet/core/common/mpi.hpp"
 #include "peclet/core/common/view.hpp"
 #include "peclet/core/halo/grid_halo.hpp"  // detail::gpuAwareMpi() (PECLET_CORE_GPU_AWARE_MPI opt-in, H1)
@@ -149,9 +147,7 @@ class DistributedGatherHalo {
 template <int Dim, unsigned Bits = (Dim == 2 ? 32u : (Dim == 3 ? 21u : 16u))>
 class DistributedPoissonView {
  public:
-  void init(DistributedOctree<Dim, Bits>& d, double h0) {
-    init(d, detail::filledVec<Dim>(h0));
-  }
+  void init(DistributedOctree<Dim, Bits>& d, double h0) { init(d, detail::filledVec<Dim>(h0)); }
   void init(DistributedOctree<Dim, Bits>& d, const Vec<Dim>& h0) {
     d_ = &d;
     h0_ = h0;

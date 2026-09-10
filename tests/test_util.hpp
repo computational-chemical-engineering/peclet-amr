@@ -14,33 +14,33 @@ inline int g_failures = 0;
 inline constexpr int kSkipExitCode = 77;
 }  // namespace peclet::amr::test
 
-#define PECLET_AMR_CHECK(cond)                                                          \
+#define PECLET_AMR_CHECK(cond)                                                           \
   do {                                                                                   \
     if (!(cond)) {                                                                       \
       std::fprintf(stderr, "CHECK failed: %s\n  at %s:%d\n", #cond, __FILE__, __LINE__); \
-      ++::peclet::amr::test::g_failures;                                                \
+      ++::peclet::amr::test::g_failures;                                                 \
     }                                                                                    \
   } while (0)
 
-#define PECLET_AMR_CHECK_EQ(a, b)                                                            \
+#define PECLET_AMR_CHECK_EQ(a, b)                                                             \
   do {                                                                                        \
     auto _a = (a);                                                                            \
     auto _b = (b);                                                                            \
     if (!(_a == _b)) {                                                                        \
       std::fprintf(stderr, "CHECK_EQ failed: %s == %s  (%lld vs %lld)\n  at %s:%d\n", #a, #b, \
                    (long long)_a, (long long)_b, __FILE__, __LINE__);                         \
-      ++::peclet::amr::test::g_failures;                                                     \
+      ++::peclet::amr::test::g_failures;                                                      \
     }                                                                                         \
   } while (0)
 
 #define PECLET_AMR_RETURN_TEST_RESULT()                                       \
-  do {                                                                         \
+  do {                                                                        \
     if (::peclet::amr::test::g_failures == 0) {                               \
-      std::printf("OK\n");                                                     \
-      return 0;                                                                \
-    }                                                                          \
+      std::printf("OK\n");                                                    \
+      return 0;                                                               \
+    }                                                                         \
     std::fprintf(stderr, "%d failure(s)\n", ::peclet::amr::test::g_failures); \
-    return 1;                                                                  \
+    return 1;                                                                 \
   } while (0)
 
 #endif  // PECLET_AMR_TEST_UTIL_HPP

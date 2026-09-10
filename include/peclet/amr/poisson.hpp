@@ -24,15 +24,13 @@
 #ifndef PECLET_AMR_POISSON_HPP
 #define PECLET_AMR_POISSON_HPP
 
-#include "peclet/amr/common.hpp"
-
-
 #include <array>
 #include <cmath>
 #include <functional>
 #include <vector>
 
 #include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/common.hpp"
 #include "peclet/amr/face_csr.hpp"  // shared host+device FV (weight-CSR) row kernels
 #include "peclet/amr/leaf_field.hpp"
 #include "peclet/core/common/host_parallel.hpp"
@@ -98,9 +96,8 @@ class AmrPoisson {
   void setFrameShift(const std::array<long, Dim>& s) { frameShift_ = s; }
   /// Octree level of an extended slot (local leaf or declared ghost).
   unsigned levelOf(Index slot) const {
-    return slot < numLeaves()
-               ? t_->level(slot)
-               : ghostLv_[static_cast<std::size_t>(slot - numLeaves())];
+    return slot < numLeaves() ? t_->level(slot)
+                              : ghostLv_[static_cast<std::size_t>(slot - numLeaves())];
   }
   /// Block-local lo corner of an extended slot as longs (ghosts may lie outside the block).
   std::array<long, Dim> loOf(Index slot) const {
@@ -178,14 +175,14 @@ class AmrPoisson {
     auto fillRow = [&](Index row, const std::array<long, Dim>& lo, long s) {
       for (int axis = 0; axis < Dim; ++axis)
         for (int dir = -1; dir <= 1; dir += 2) {
-          const long plane = (dir > 0) ? lo[axis] + frameShift_[axis] + s : lo[axis] + frameShift_[axis];
+          const long plane =
+              (dir > 0) ? lo[axis] + frameShift_[axis] + s : lo[axis] + frameShift_[axis];
           Vec<Dim> fc{};
           for (int d = 0; d < Dim; ++d)
-            fc[d] = (d == axis)
-                        ? origin_[d] + static_cast<Real>(plane) * h0_[d]
-                        : origin_[d] + (static_cast<Real>(lo[d] + frameShift_[d]) +
-                                        0.5 * static_cast<Real>(s)) *
-                                           h0_[d];
+            fc[d] = (d == axis) ? origin_[d] + static_cast<Real>(plane) * h0_[d]
+                                : origin_[d] + (static_cast<Real>(lo[d] + frameShift_[d]) +
+                                                0.5 * static_cast<Real>(s)) *
+                                                   h0_[d];
           double a = static_cast<double>(openFn(fc, axis));
           a = a < 0.0 ? 0.0 : (a > 1.0 ? 1.0 : a);
           alpha_[static_cast<std::size_t>(row) * kFaces + faceIndex(axis, dir)] = a;
@@ -402,9 +399,9 @@ class AmrPoisson {
       // Phase 3: the tangential offset AND the differencing width are the spacings of the
       // TANGENTIAL axis `t` (they were one `H` when the cells were cubes).
       const double H = cellWidth(coarse, t);
-      const double dt = ((static_cast<double>(bf[t]) + 0.5 * sf) -
-                         (static_cast<double>(bc[t]) + 0.5 * sc)) *
-                        h0_[t];
+      const double dt =
+          ((static_cast<double>(bf[t]) + 0.5 * sf) - (static_cast<double>(bc[t]) + 0.5 * sc)) *
+          h0_[t];
       Index cp = periodicNeighbor(coarse, t, +1);
       Index cm = periodicNeighbor(coarse, t, -1);
       if (cp < 0 || cm < 0)
@@ -622,7 +619,7 @@ class AmrPoisson {
   Vec<Dim> h0_ = detail::filledVec<Dim>(1.0);
   std::array<Coord, Dim> fineExt_{};
   Vec<Dim> origin_{};
-  ExtResolver extResolve_;                    // distributed seam: out-of-block probe resolver
+  ExtResolver extResolve_;                      // distributed seam: out-of-block probe resolver
   std::vector<std::array<long, Dim>> ghostLo_;  // ghost slot → block-local lo (longs)
   std::vector<unsigned> ghostLv_;               // ghost slot → covering-leaf level
   std::array<long, Dim> frameShift_{};          // block global fine origin (0 single-rank)

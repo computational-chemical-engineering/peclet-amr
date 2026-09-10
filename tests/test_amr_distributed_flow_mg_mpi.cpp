@@ -12,8 +12,6 @@
 //       the singular periodic openness Poisson and matches the single-rank PCG solution:
 //       np=1 bit-exact, np>1 to Krylov tolerance (dot reduction order).
 //
-#include "test_util.hpp"
-
 #include <array>
 #include <cmath>
 #include <Kokkos_Core.hpp>
@@ -25,6 +23,7 @@
 #include "peclet/amr/pcg.hpp"
 #include "peclet/core/common/mpi.hpp"
 #include "peclet/core/common/view.hpp"
+#include "test_util.hpp"
 
 using namespace peclet::core;
 using namespace peclet::amr;

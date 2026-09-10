@@ -10,15 +10,13 @@
 #ifndef PECLET_AMR_REFINE_HPP
 #define PECLET_AMR_REFINE_HPP
 
-#include "peclet/amr/common.hpp"
-
-
 #include <algorithm>
 #include <cmath>
 #include <utility>
 #include <vector>
 
 #include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/common.hpp"
 #include "peclet/amr/leaf_field.hpp"
 #include "peclet/core/common/types.hpp"
 

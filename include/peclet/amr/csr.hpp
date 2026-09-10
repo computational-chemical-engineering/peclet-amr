@@ -22,7 +22,6 @@
 #define PECLET_AMR_CSR_HPP
 
 #include "peclet/amr/common.hpp"
-
 #include "peclet/core/common/types.hpp"
 #include "peclet/core/common/view.hpp"
 
@@ -106,12 +105,10 @@ Csr buildFaceCsr(Index n, const Emit& emit) {
       });
   Kokkos::deep_copy(csr.nFaces, Kokkos::subview(start, n));
   csr.start = start;
-  csr.nbr =
-      View<Index>(Kokkos::view_alloc("peclet::amr::csr_nbr", Kokkos::WithoutInitializing),
-                  static_cast<std::size_t>(csr.nFaces));
-  csr.coef =
-      View<double>(Kokkos::view_alloc("peclet::amr::csr_coef", Kokkos::WithoutInitializing),
-                   static_cast<std::size_t>(csr.nFaces));
+  csr.nbr = View<Index>(Kokkos::view_alloc("peclet::amr::csr_nbr", Kokkos::WithoutInitializing),
+                        static_cast<std::size_t>(csr.nFaces));
+  csr.coef = View<double>(Kokkos::view_alloc("peclet::amr::csr_coef", Kokkos::WithoutInitializing),
+                          static_cast<std::size_t>(csr.nFaces));
   View<Index> nbr = csr.nbr;
   View<double> coef = csr.coef;
   Kokkos::parallel_for(

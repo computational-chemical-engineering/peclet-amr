@@ -8,8 +8,6 @@
 //   (2) projection — on a periodic all-fluid box a pure-gradient (fully divergent)
 //       velocity is reduced by the projection (divergence and |u| drop sharply).
 //
-#include "test_util.hpp"
-
 #include <cmath>
 #include <limits>
 #include <vector>
@@ -20,6 +18,7 @@
 #include "peclet/amr/refine.hpp"
 #include "peclet/core/common/types.hpp"
 #include "peclet/core/geom/sdf.hpp"
+#include "test_util.hpp"
 
 using namespace peclet::core;
 using namespace peclet::amr;
@@ -159,7 +158,7 @@ void test_advection() {
   double c5 = 0, c6 = 0;
   double e5 = advectErr(5, c5, /*SOU*/ 0);
   double e6 = advectErr(6, c6, /*SOU*/ 0);
-  PECLET_AMR_CHECK(e5 / e6 > 3.3);  // ~2nd order (vs TVD ~2.8 — limiter clips extrema)
+  PECLET_AMR_CHECK(e5 / e6 > 3.3);             // ~2nd order (vs TVD ~2.8 — limiter clips extrema)
   PECLET_AMR_CHECK(c5 < 1e-12 && c6 < 1e-12);  // Galilean: constant advects to 0
   // TVD (option): also converges, above 1st order (limiter -> ~1.5 order at extrema).
   double t5 = 0, t6 = 0;

@@ -10,8 +10,6 @@
 //   (3) the distributed Jacobi smoother reduces the residual.
 // np = 1,2,4,8.
 //
-#include "test_util.hpp"
-
 #include <cmath>
 #include <vector>
 
@@ -20,6 +18,7 @@
 #include "peclet/amr/leaf_field.hpp"
 #include "peclet/amr/poisson.hpp"
 #include "peclet/core/common/mpi.hpp"
+#include "test_util.hpp"
 
 using namespace peclet::core;
 using namespace peclet::amr;

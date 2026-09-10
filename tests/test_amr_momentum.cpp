@@ -11,8 +11,6 @@
 //       plain Jacobi stalls — the reason a Krylov accelerator is needed for momentum.
 // Runs on whatever backend Kokkos targets (CUDA / HIP / OpenMP).
 //
-#include "test_util.hpp"
-
 #include <cmath>
 #include <Kokkos_Core.hpp>
 #include <vector>
@@ -21,6 +19,7 @@
 #include "peclet/amr/cut_cell.hpp"
 #include "peclet/amr/momentum.hpp"
 #include "peclet/core/common/types.hpp"
+#include "test_util.hpp"
 
 using namespace peclet::core;
 using namespace peclet::amr;

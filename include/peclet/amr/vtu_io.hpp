@@ -9,9 +9,6 @@
 #ifndef PECLET_AMR_VTU_IO_HPP
 #define PECLET_AMR_VTU_IO_HPP
 
-#include "peclet/amr/common.hpp"
-
-
 #include <array>
 #include <fstream>
 #include <ios>
@@ -20,6 +17,7 @@
 #include <vector>
 
 #include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/common.hpp"
 #include "peclet/amr/leaf_field.hpp"
 #include "peclet/core/common/types.hpp"
 

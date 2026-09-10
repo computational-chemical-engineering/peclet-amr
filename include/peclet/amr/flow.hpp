@@ -19,28 +19,29 @@
 #ifndef PECLET_AMR_FLOW_HPP
 #define PECLET_AMR_FLOW_HPP
 
-#include "peclet/amr/common.hpp"
-
-
 #include <array>
-#include <cmath>
 #include <chrono>
-#include <stdexcept>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
+#include <stdexcept>
 #include <vector>
 
-#include "peclet/amr/adapt.hpp"  // transferField (conservative remap for finishAdapt)
-
+#include "peclet/amr/adapt.hpp"         // transferField (conservative remap for finishAdapt)
 #include "peclet/amr/advect_recon.hpp"  // shared high-order face reconstruction (host+device)
 #include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/cf_scheme.hpp"  // pluggable 2:1 C/F schemes (setCfScheme)
+#include "peclet/amr/common.hpp"
 #include "peclet/amr/cut_cell.hpp"
+#include "peclet/amr/distributed_adapt.hpp"    // transferGradients (distributed finishAdapt)
+#include "peclet/amr/distributed_flow_mg.hpp"  // distributed pressure MG (initMpi mode)
+#include "peclet/amr/distributed_octree.hpp"
 #include "peclet/amr/face_geom.hpp"          // FaceGeom (shared with the device assembler)
-#include "peclet/amr/cf_scheme.hpp"          // pluggable 2:1 C/F schemes (setCfScheme)
 #include "peclet/amr/facegeom_assembly.hpp"  // assembleFaceGeom (D4/D6)
 #include "peclet/amr/ghost_projection.hpp"   // directional ghost overlay (setGhostProjection)
 #include "peclet/amr/ghost_projection_sampled.hpp"  // mixed-level sampled overlay (setGhostSampled)
+#include "peclet/amr/leaf_halo.hpp"
 #include "peclet/amr/momentum.hpp"
 #include "peclet/amr/momentum_assembly.hpp"  // assembleMomentum (D3/D6)
 #include "peclet/amr/multigrid.hpp"
@@ -50,11 +51,6 @@
 #include "peclet/core/common/host_parallel.hpp"
 #include "peclet/core/common/types.hpp"
 #include "peclet/core/common/view.hpp"
-
-#include "peclet/amr/distributed_adapt.hpp"    // transferGradients (distributed finishAdapt)
-#include "peclet/amr/distributed_flow_mg.hpp"  // distributed pressure MG (initMpi mode)
-#include "peclet/amr/distributed_octree.hpp"
-#include "peclet/amr/leaf_halo.hpp"
 
 namespace peclet::amr {
 
@@ -255,10 +251,10 @@ inline void grad3(const FaceGeom& g, View<const double> f, View<double> gx, View
 /// O(1/h) error at cut cells — measured in tests/study_amr_ghost_apriori.cpp). Weights include
 /// the 1/h factors; unused entries carry w=0.
 struct GhostGradOverlay {
-  Index n = 0;                 ///< number of overlay (cut) cells
-  View<Index> cell;            ///< [n] leaf index
-  View<Index> idx;             ///< [n*9] stencil cell, slot s*9 + axis*3 + k
-  View<double> w;              ///< [n*9] stencil weight (0 = unused)
+  Index n = 0;       ///< number of overlay (cut) cells
+  View<Index> cell;  ///< [n] leaf index
+  View<Index> idx;   ///< [n*9] stencil cell, slot s*9 + axis*3 + k
+  View<double> w;    ///< [n*9] stencil weight (0 = unused)
 };
 
 /// Overwrite gx/gy/gz on the overlay cells with the directional stencil applied to `f`.
@@ -518,8 +514,8 @@ class AmrFlow {
   /// `set_collocated_scheme("gauge-exact")`. Measured there on two periodic sphere beds
   /// (peclet-examples benchmarks/porous-scaling): second order at phi=0.50 AND at a contact-tight
   /// phi=0.60, against first order for the plain gradient — which additionally failed to reach
-  /// steady state within 800 steps on three of five rungs of the dense bed. `setGhostGradient(false)`
-  /// restores the legacy path. Call before setSolid.
+  /// steady state within 800 steps on three of five rungs of the dense bed.
+  /// `setGhostGradient(false)` restores the legacy path. Call before setSolid.
   void setGhostGradient(bool on) { ghostGrad_ = on; }
   /// FULL directional ghost-cell projection (the AMR port of flow's collocated
   /// set_ghost_projection): the pressure system becomes rho·(L_bin + Delta) phi = rho·D_g(u*) —
@@ -719,7 +715,8 @@ class AmrFlow {
       hovS = buildGhostOverlaySampled(*t_, pres_, sdfFn, gpMatrixOrder_, gpRhsOrder_, origin_,
                                       &gfine, shiftD_, /*discovery=*/false, gpsRho_, gpsMaxN_);
       profPhase("buildGhostOverlaySampled");
-    } else if (ghostProj_) {  // probe the band margin; explicit request throws on violation, AUTO falls
+    } else if (ghostProj_) {  // probe the band margin; explicit request throws on violation, AUTO
+                              // falls
       bool viol = false;
       hov = buildGhostOverlay(*t_, pres_, mom_.sdfCRaw(), gpMatrixOrder_, gpRhsOrder_, &viol);
       if (dist_) {
@@ -907,8 +904,8 @@ class AmrFlow {
       // step ~100; the cfDiv delta alone carries it (momentum/gradient/uf deltas exonerated by
       // bisection), and this row gate alone restores stability. On finest-band meshes cut rows
       // have no C/F faces, so the gate is inert there — bit-identity by geometry.
-      cfDiv_ = uploadCfCompCsr(buildCfDivDelta(pres_, *t_, rowRegular, fluidOk, cfScheme_),
-                               "cf_div");
+      cfDiv_ =
+          uploadCfCompCsr(buildCfDivDelta(pres_, *t_, rowRegular, fluidOk, cfScheme_), "cf_div");
       auto gd = buildCfGradDelta(pres_, *t_, rowRegular, fluidOk, cfScheme_);
       for (int a = 0; a < 3; ++a)
         cfGrad_[static_cast<std::size_t>(a)] =
@@ -1101,10 +1098,9 @@ class AmrFlow {
     if (spSteps_ < spWindow_)
       return;
     static const char* kName[SP_N] = {
-        "glue (copies + syncs)", "grad3 (binary)",     "cf delta kernels",
-        "overlay delta kernels", "advection build",    "momentum rhs",
-        "momentum solve",        "divergence",         "pressure solve",
-        "  . binary matvec",     "  . overlay matvec", "  . projection",
+        "glue (copies + syncs)", "grad3 (binary)",    "cf delta kernels",   "overlay delta kernels",
+        "advection build",       "momentum rhs",      "momentum solve",     "divergence",
+        "pressure solve",        "  . binary matvec", "  . overlay matvec", "  . projection",
         "  . MG preconditioner", "finish projection"};
     const double w = static_cast<double>(spSteps_);
     const double leaves = static_cast<double>(n_);
@@ -1112,8 +1108,9 @@ class AmrFlow {
     for (int k = 0; k < SP_N; ++k)
       if (k < SP_PRES_MV || k > SP_PRES_PC)
         tot += spAcc_[k];
-    std::fprintf(stderr, "[step-prof] %d steps | %.3f ms/step (%.3f us/leaf) | mom %.1f it, "
-                         "pres %.1f it, outer %.2f\n",
+    std::fprintf(stderr,
+                 "[step-prof] %d steps | %.3f ms/step (%.3f us/leaf) | mom %.1f it, "
+                 "pres %.1f it, outer %.2f\n",
                  spSteps_, tot / w, 1e3 * tot / w / leaves, spMom_ / w, spPres_ / w, spOuter_ / w);
     for (int k = 0; k < SP_N; ++k) {
       const bool nested = (k >= SP_PRES_MV && k <= SP_PRES_PC);
@@ -1327,8 +1324,8 @@ class AmrFlow {
             c += m * dv(i) * dv(i) / iv(i);
           },
           su, sv, sn);
-      std::fprintf(stderr, "[amr pres] rhs fluid-mean=%.3e |rhs|_D=%.3e (rel mean %.3e)\n",
-                   su / sv, std::sqrt(sn), (su / sv) / (std::sqrt(sn) + 1e-300));
+      std::fprintf(stderr, "[amr pres] rhs fluid-mean=%.3e |rhs|_D=%.3e (rel mean %.3e)\n", su / sv,
+                   std::sqrt(sn), (su / sv) / (std::sqrt(sn) + 1e-300));
       if (!presDbgSpdDone_) {
         // One-shot direct SPD probe of the assembled pressure operator (advection cannot enter
         // the assembly — this measures it): symmetry <y,Lx>_D vs <x,Ly>_D on deterministic
@@ -1363,9 +1360,8 @@ class AmrFlow {
     }
     spT = spMark();
     if (presPCG_) {
-      const auto R =
-          dist_ ? pcg_.solve(presMGD_, phi_, View<const double>(div_), presIters, 1e-10)
-                : pcg_.solve(presMG_, phi_, View<const double>(div_), presIters, 1e-10);
+      const auto R = dist_ ? pcg_.solve(presMGD_, phi_, View<const double>(div_), presIters, 1e-10)
+                           : pcg_.solve(presMG_, phi_, View<const double>(div_), presIters, 1e-10);
       lastPresIters_ = R.iters;
       if (dbg)
         std::fprintf(stderr, "[amr pres] pcg iters=%d res0=%.3e res=%.3e rel=%.3e\n", R.iters,
@@ -1470,8 +1466,8 @@ class AmrFlow {
       nu[static_cast<std::size_t>(c)] =
           transferField(*adaptOldT_, adaptU_[static_cast<std::size_t>(c)], *t_, /*linear=*/true,
                         dist_ ? &adaptGradU_[static_cast<std::size_t>(c)] : nullptr);
-    std::vector<double> np = transferField(*adaptOldT_, adaptP_, *t_, /*linear=*/true,
-                                           dist_ ? &adaptGradP_ : nullptr);
+    std::vector<double> np =
+        transferField(*adaptOldT_, adaptP_, *t_, /*linear=*/true, dist_ ? &adaptGradP_ : nullptr);
     setSolid(sdfFn);  // full operator/overlay rebuild on the new topology (zeroes the fields)
     for (int c = 0; c < 3; ++c) {
       setVelocity(c, nu[static_cast<std::size_t>(c)]);
@@ -1553,15 +1549,13 @@ class AmrFlow {
     const Index nl = mg.numLeaves(0);
     {
       auto b0 = mg.b(0);
-      Kokkos::parallel_for(
-          "amr::mgv_b", nl, KOKKOS_LAMBDA(const Index i) { b0(i) = r(i); });
+      Kokkos::parallel_for("amr::mgv_b", nl, KOKKOS_LAMBDA(const Index i) { b0(i) = r(i); });
     }
     Kokkos::deep_copy(mg.x(0), 0.0);
     mg.vcycle(mgVcPre_, mgVcPre_, mgVcBottom_, 0.7);
     {
       auto x0 = mg.x(0);
-      Kokkos::parallel_for(
-          "amr::mgv_z", nl, KOKKOS_LAMBDA(const Index i) { z(i) = x0(i); });
+      Kokkos::parallel_for("amr::mgv_z", nl, KOKKOS_LAMBDA(const Index i) { z(i) = x0(i); });
     }
   }
   /// Max |a − b| over all cells (the Picard outer-loop convergence measure).
@@ -1606,8 +1600,7 @@ class AmrFlow {
       return peclet::core::toVector(v);
     View<double> packed(Kokkos::view_alloc("amr::local_packed", Kokkos::WithoutInitializing),
                         static_cast<std::size_t>(n_));
-    Kokkos::parallel_for(
-        "amr::pack_local", n_, KOKKOS_LAMBDA(const Index i) { packed(i) = v(i); });
+    Kokkos::parallel_for("amr::pack_local", n_, KOKKOS_LAMBDA(const Index i) { packed(i) = v(i); });
     return peclet::core::toVector(packed);
   }
 
@@ -1761,9 +1754,8 @@ class AmrFlow {
         bool viol = false;
         (void)buildGhostOverlay(*t_, pres_, mom_.sdfCRaw(), gpMatrixOrder_, gpRhsOrder_, &viol);
       }
-      const double rBuildMs = std::chrono::duration<double, std::milli>(
-                                  std::chrono::steady_clock::now() - rT0)
-                                  .count();
+      const double rBuildMs =
+          std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - rT0).count();
       const long pend = dhalo_.resolveMisses();
       if (profSetup)
         std::fprintf(stderr, "[setSolid]   round %d: build %.1f ms, %lld ghosts, %ld pending\n",
@@ -1797,8 +1789,7 @@ class AmrFlow {
       for (int a = 0; a < 3; ++a)
         glo[static_cast<std::size_t>(g)][a] =
             static_cast<long>(dhalo_.ghostCoord(g)[a]) - shiftD_[a];
-      glv[static_cast<std::size_t>(g)] =
-          static_cast<unsigned>(dhalo_.level(dhalo_.numLocal() + g));
+      glv[static_cast<std::size_t>(g)] = static_cast<unsigned>(dhalo_.level(dhalo_.numLocal() + g));
     }
     mom_.setGhosts(glo, glv);  // copies — pres_ takes the originals
     pres_.setGhosts(std::move(glo), std::move(glv));
@@ -1809,9 +1800,7 @@ class AmrFlow {
   // overlay rows) to 0 and remove the volume-weighted mean over the coupled cells (the constant
   // null mode of the connected fluid region) — removeMeanVol with the coupled mask (the mean
   // reduced globally in distributed mode; allred_ is empty single-rank ⇒ bit-identical).
-  void gpProject(View<double> v) {
-    removeMeanVolReduced(v, gpOp0().invVol, maskC_, n_, allred_);
-  }
+  void gpProject(View<double> v) { removeMeanVolReduced(v, gpOp0().invVol, maskC_, n_, allred_); }
 
   // Nonsymmetric ghost pressure matvec: y = P[rho·(L_bin x + Delta x)]. The caller keeps x's
   // ghost tail current (syncScalar before every call in distributed mode).
@@ -1861,8 +1850,7 @@ class AmrFlow {
     {
       auto r = gpr_;
       auto bb = b;
-      Kokkos::parallel_for(
-          "amr::gp_r0", n, KOKKOS_LAMBDA(const Index i) { r(i) = bb(i) - r(i); });
+      Kokkos::parallel_for("amr::gp_r0", n, KOKKOS_LAMBDA(const Index i) { r(i) = bb(i) - r(i); });
     }
     gpProject(gpr_);
     Kokkos::deep_copy(gprh_, gpr_);
@@ -1885,8 +1873,7 @@ class AmrFlow {
       ghostPrec(View<const double>(gpp_), gpph_);
       syncScalar(gpph_);
       ghostMatvec(View<const double>(gpph_), gpv_);
-      const double rhatV =
-          allSum(dotPlain(View<const double>(gprh_), View<const double>(gpv_), n));
+      const double rhatV = allSum(dotPlain(View<const double>(gprh_), View<const double>(gpv_), n));
       if (rhatV == 0.0)
         break;
       alpha = rhoNew / rhatV;
@@ -2025,11 +2012,35 @@ class AmrFlow {
       return 0.0;
     double x, y, z;
     if (np == 1) {
-      if (pa) { x = a; y = b; z = c; } else if (pb) { x = b; y = c; z = a; } else { x = c; y = a; z = b; }
+      if (pa) {
+        x = a;
+        y = b;
+        z = c;
+      } else if (pb) {
+        x = b;
+        y = c;
+        z = a;
+      } else {
+        x = c;
+        y = a;
+        z = b;
+      }
       const double den = (x - y) * (x - z);
       return den > 1e-300 ? (x * x) / den : 1.0;
     }
-    if (!pa) { x = a; y = b; z = c; } else if (!pb) { x = b; y = c; z = a; } else { x = c; y = a; z = b; }
+    if (!pa) {
+      x = a;
+      y = b;
+      z = c;
+    } else if (!pb) {
+      x = b;
+      y = c;
+      z = a;
+    } else {
+      x = c;
+      y = a;
+      z = b;
+    }
     const double den = (x - y) * (x - z);
     return 1.0 - (den > 1e-300 ? (x * x) / den : 1.0);
   }
@@ -2088,18 +2099,18 @@ class AmrFlow {
   Index mgMinCoarse_ = 256;            // staircase velocity-MG pore-scale cap (coarsest cell count)
   bool momGS_ = false;  // opt-in: multicolour Gauss–Seidel smoother in the momentum MG
   bool momMGSolver_ =
-      false;            // opt-in (P4): velocity-MG as the solver (defect correction), not BiCGStab
-  bool ghostGrad_ = true;   // gauge-exact directional cell gradient (setGhostGradient) — the
-                            // DEFAULT since 2026-08-18, mirroring flow's collocated
-                            // set_collocated_scheme("gauge-exact")
+      false;  // opt-in (P4): velocity-MG as the solver (defect correction), not BiCGStab
+  bool ghostGrad_ = true;     // gauge-exact directional cell gradient (setGhostGradient) — the
+                              // DEFAULT since 2026-08-18, mirroring flow's collocated
+                              // set_collocated_scheme("gauge-exact")
   bool ghostProj_ = false;    // RESOLVED projection mode (set by setSolid from the request)
   int8_t ghostProjReq_ = -1;  // -1 = AUTO (DEFAULT since 2026-08-25: ghost, aperture fallback
                               // on thin band), 0 = explicit aperture, 1 = explicit ghost
-  int apertureOrder_ = 2;  // aperture estimator order (setApertureOrder; default 2)
+  int apertureOrder_ = 2;     // aperture estimator order (setApertureOrder; default 2)
   int gpMatrixOrder_ = 2, gpRhsOrder_ = 2;  // closure orders (2,2 = the production pair; the
                                             // (1,2) mixed form is march-unstable at scale)
   CfScheme cfScheme_ = CfScheme::standard;  // 2:1 C/F interface scheme (setCfScheme)
-  int outerIters_ = 1;  // Picard outer iterations over the lagged advection (default 1)
+  int outerIters_ = 1;       // Picard outer iterations over the lagged advection (default 1)
   double outerTol_ = 1e-6;   // outer-loop early-stop tolerance on max|Δu|
   double momTol_ = 1e-8;     // per-step momentum BiCGStab relative tolerance (Phase-0 knob)
   bool advect_ = false;      // momentum advection ∇·(u u) (off ⇒ Stokes)
@@ -2131,22 +2142,22 @@ class AmrFlow {
   std::array<View<double>, 3> defc_;  // explicit ρ(SOU−FOU) deferred correction per component
   View<double> advDiag_, advCoef_;    // device-resident implicit-FOU operator (rebuilt each step)
   FaceGeom geom_;
-  GhostGradOverlay gc_;  // directional ghost-gradient overlay (empty unless setGhostGradient)
-  GhostOverlayDev gpOv_;  // closure overlay (empty unless setGhostProjection)
-  bool ghostSampled_ = false;          // RESOLVED sampled mode (set by setSolid)
-  int8_t ghostSampledReq_ = 0;         // setGhostSampled request (mixed-level cut band)
-  double gpsRho_ = 2.2;                // sampled band: LS cloud radius factor (setGhostSampled)
-  long gpsMaxN_ = 0;                   // sampled band: nearest-N candidate cap, 0 = uncapped
-  GhostOverlaySampledDev gpOvS_;       // sample-slot overlay (empty unless sampled)
-  GhostGradCsrDev gcS_;                // sampled CSR directional-gradient overlay
-  CfCsrDev gpsMomDelta_;               // momentum ξ-row seam correction (rscale-folded)
-  std::vector<char> gpPocket_;  // fragmentation guard: 1 = decoupled pocket cell (ghost mode)
+  GhostGradOverlay gc_;        // directional ghost-gradient overlay (empty unless setGhostGradient)
+  GhostOverlayDev gpOv_;       // closure overlay (empty unless setGhostProjection)
+  bool ghostSampled_ = false;  // RESOLVED sampled mode (set by setSolid)
+  int8_t ghostSampledReq_ = 0;      // setGhostSampled request (mixed-level cut band)
+  double gpsRho_ = 2.2;             // sampled band: LS cloud radius factor (setGhostSampled)
+  long gpsMaxN_ = 0;                // sampled band: nearest-N candidate cap, 0 = uncapped
+  GhostOverlaySampledDev gpOvS_;    // sample-slot overlay (empty unless sampled)
+  GhostGradCsrDev gcS_;             // sampled CSR directional-gradient overlay
+  CfCsrDev gpsMomDelta_;            // momentum ξ-row seam correction (rscale-folded)
+  std::vector<char> gpPocket_;      // fragmentation guard: 1 = decoupled pocket cell (ghost mode)
   CfCsrDev cfMom_;                  // +μ(∇²_scheme − ∇²_std) momentum RHS overlay
   CfCompCsrDev cfDiv_;              // (D_scheme − D_std) divergence overlay
   std::array<CfCsrDev, 3> cfGrad_;  // (G_scheme − G_std) per gradient axis
   CfCompCsrDev cfUfVel_;            // (uf_scheme − uf_std) face-field overlay: velocity part
   CfCsrDev cfUfPhi_;                //                                          φ part
-  View<double> maskC_;    // 1 = coupled row (Krylov subspace), 0 = pinned
+  View<double> maskC_;              // 1 = coupled row (Krylov subspace), 0 = pinned
   View<double> gpr_, gprh_, gpp_, gpph_, gpv_, gps_, gpsh_, gpt_;  // ghost BiCGStab scratch
   View<double> rscale_;
   View<char> fluid_;
@@ -2157,7 +2168,7 @@ class AmrFlow {
   View<double> uf_;  // ABC/Basilisk divergence-free face field (one per CSR (sub)face)
   bool faceFieldBuilt_ =
       false;  // uf_ populated by a projection (else advection falls back to ½(u_i+u_j))
-  std::unique_ptr<Octree> adaptOldT_;      // beginAdapt topology snapshot
+  std::unique_ptr<Octree> adaptOldT_;          // beginAdapt topology snapshot
   std::array<std::vector<double>, 3> adaptU_;  // beginAdapt field snapshots
   std::vector<double> adaptP_;
   std::array<std::vector<std::array<double, 3>>, 3> adaptGradU_;  // distributed transfer grads
@@ -2165,12 +2176,12 @@ class AmrFlow {
 
   // ---- distributed context (initMpi; all null/empty single-rank) -----------------------------
   DistributedOctree<3, Bits>* dist_ = nullptr;  // the ORB block + communicator
-  LeafHalo<3, Bits> dhalo_;                     // the flow's ±2 ghost registry (frozen in setSolid)
-  LeafHaloExchange dhex_;                       // device value refresh over dhalo_
-  DistributedFlowMultigrid<3, Bits> presMGD_;   // distributed pressure MG (level 0 on dhalo_)
-  std::array<long, 3> shiftD_{};                // block global fine origin
-  Index nExt_ = 0;                              // n_ + ghosts (== n_ single-rank)
-  std::function<double(double)> allred_;        // Allreduce hook (empty single-rank)
+  LeafHalo<3, Bits> dhalo_;                    // the flow's ±2 ghost registry (frozen in setSolid)
+  LeafHaloExchange dhex_;                      // device value refresh over dhalo_
+  DistributedFlowMultigrid<3, Bits> presMGD_;  // distributed pressure MG (level 0 on dhalo_)
+  std::array<long, 3> shiftD_{};               // block global fine origin
+  Index nExt_ = 0;                             // n_ + ghosts (== n_ single-rank)
+  std::function<double(double)> allred_;       // Allreduce hook (empty single-rank)
 };
 
 }  // namespace peclet::amr

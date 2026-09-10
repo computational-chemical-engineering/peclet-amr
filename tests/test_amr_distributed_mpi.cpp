@@ -7,8 +7,6 @@
 //       a serial faceNeighbor lookup would — i.e. the owner-based ghost exchange
 //       is correct (local + cross-rank).
 //
-#include "test_util.hpp"
-
 #include <algorithm>
 #include <cmath>
 #include <vector>
@@ -19,6 +17,7 @@
 #include "peclet/amr/refine.hpp"
 #include "peclet/core/common/mpi.hpp"
 #include "peclet/core/geom/sdf.hpp"
+#include "test_util.hpp"
 
 using namespace peclet::core;
 using namespace peclet::amr;

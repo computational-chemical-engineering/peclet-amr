@@ -10,8 +10,6 @@
 // Runs on whatever backend Kokkos targets (CUDA / HIP / OpenMP). Validation is host-vs-
 // device agreement + the analytic solution (the GPU differs from host only in FP last bits).
 //
-#include "test_util.hpp"
-
 #include <algorithm>
 #include <cmath>
 #include <Kokkos_Core.hpp>
@@ -23,6 +21,7 @@
 #include "peclet/amr/flow_oracle.hpp"
 #include "peclet/amr/refine.hpp"
 #include "peclet/core/common/types.hpp"
+#include "test_util.hpp"
 
 using namespace peclet::core;
 using namespace peclet::amr;
@@ -1036,7 +1035,7 @@ void test_staircase_mg() {
   std::printf("[flow] staircase-vs-Galerkin MG: max|stair-galerkin| = %.3e (mag %.3e)\n", dmax,
               mag);
   PECLET_AMR_CHECK(dmax <
-                    1e-4 * mag);  // same converged step regardless of coarse-operator strategy
+                   1e-4 * mag);  // same converged step regardless of coarse-operator strategy
 }
 
 // Multicolour Gauss–Seidel smoother (P5): for both coarse-operator strategies, the GS-smoothed MG
@@ -1209,7 +1208,7 @@ void test_picard_outer() {
     }
     std::printf("[flow] picard outer NS (n=4): max|picard-single| = %.3e (mag %.3e)\n", dmax, mag);
     PECLET_AMR_CHECK(dmax <
-                      1e-2 * mag);  // same NS steady field (transient-level gap, sibling's bar)
+                     1e-2 * mag);  // same NS steady field (transient-level gap, sibling's bar)
   }
 }
 

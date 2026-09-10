@@ -187,10 +187,11 @@ struct LeafField {
   const std::vector<char>* fluid;
 };
 
-// M2a cloud-economy knobs, mirroring buildGhostOverlaySampled's (rhoFactor / maxSamples) so this study can report the seam-reconstruction verdict PER VARIANT.
-// It is the instrument that established the degree-2 requirement in the first place, and it
-// costs ~2 s where the P2b march ladder costs hours.
-// Set once from argv in main() (`study_amr_seam_sample_order [rho] [maxN]`); defaults = shipped.
+// M2a cloud-economy knobs, mirroring buildGhostOverlaySampled's (rhoFactor / maxSamples) so this
+// study can report the seam-reconstruction verdict PER VARIANT. It is the instrument that
+// established the degree-2 requirement in the first place, and it costs ~2 s where the P2b march
+// ladder costs hours. Set once from argv in main() (`study_amr_seam_sample_order [rho] [maxN]`);
+// defaults = shipped.
 inline double& gpsRhoStore() {
   static double v = 2.2;
   return v;
@@ -199,8 +200,12 @@ inline long& gpsMaxNStore() {
   static long v = 0;
   return v;
 }
-inline double gpsRhoFactor() { return gpsRhoStore(); }
-inline long gpsMaxN() { return gpsMaxNStore(); }
+inline double gpsRhoFactor() {
+  return gpsRhoStore();
+}
+inline long gpsMaxN() {
+  return gpsMaxNStore();
+}
 
 bool lsFit(const LeafField& lf, const std::vector<std::vector<Index>>& bins, long nb, double hb,
            const Vec<3>& p, double rho, double H, int deg, double& out) {

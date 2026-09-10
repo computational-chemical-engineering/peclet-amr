@@ -11,8 +11,6 @@
 // convergence + tolerance (not host bit-exactness): the GPU matvec differs from the host
 // in the last bit due to FMA contraction, but the iteration is mathematically identical.
 //
-#include "test_util.hpp"
-
 #include <cmath>
 #include <Kokkos_Core.hpp>
 #include <vector>
@@ -21,6 +19,7 @@
 #include "peclet/amr/multigrid.hpp"
 #include "peclet/amr/pcg.hpp"
 #include "peclet/amr/poisson.hpp"
+#include "test_util.hpp"
 
 using namespace peclet::core;
 using namespace peclet::amr;

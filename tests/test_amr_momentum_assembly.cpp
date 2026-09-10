@@ -4,8 +4,6 @@
 // merged diag + face-CSR over the three per-cell branches (solid identity / ξ-overlay / regular
 // ∇²·μ). This is the D3 anti-drift lock.
 //
-#include "test_util.hpp"
-
 #include <cmath>
 #include <cstdint>
 #include <Kokkos_Core.hpp>
@@ -16,6 +14,7 @@
 #include "peclet/amr/cut_cell.hpp"
 #include "peclet/amr/momentum.hpp"
 #include "peclet/amr/momentum_assembly.hpp"
+#include "test_util.hpp"
 
 using namespace peclet::core;
 using namespace peclet::amr;

@@ -6,14 +6,13 @@
 //   (2) the cell volume fraction κ integrates to the sphere volume (4/3 π R^3);
 //   (3) solid cells are held at the wall value u_bc.
 //
-#include "test_util.hpp"
-
 #include <cmath>
 #include <vector>
 
 #include "peclet/amr/block_octree.hpp"
 #include "peclet/amr/cut_cell.hpp"
 #include "peclet/core/common/types.hpp"
+#include "test_util.hpp"
 
 using namespace peclet::core;
 using namespace peclet::amr;

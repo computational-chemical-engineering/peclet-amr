@@ -4,8 +4,6 @@
 // openness·A_f/d_f weights, same invVol/bcDiag. This is the D1+D2 anti-drift lock — the device
 // assembler replaces the host walk + upload in the dynamic-geometry path.
 //
-#include "test_util.hpp"
-
 #include <cmath>
 #include <cstdint>
 #include <Kokkos_Core.hpp>
@@ -16,6 +14,7 @@
 #include "peclet/amr/block_octree_view.hpp"
 #include "peclet/amr/fv_op.hpp"
 #include "peclet/amr/poisson.hpp"
+#include "test_util.hpp"
 
 using namespace peclet::core;
 using namespace peclet::amr;

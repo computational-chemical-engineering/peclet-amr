@@ -8,9 +8,8 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
-#include <vector>
-
 #include <Kokkos_Core.hpp>
+#include <vector>
 
 #include "peclet/amr/block_octree.hpp"
 #include "peclet/amr/flow.hpp"

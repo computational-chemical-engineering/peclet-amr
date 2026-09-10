@@ -12,14 +12,12 @@
 #ifndef PECLET_AMR_MOMENTUM_HPP
 #define PECLET_AMR_MOMENTUM_HPP
 
-#include "peclet/amr/common.hpp"
-
-
 #include <cstddef>
 #include <map>
 #include <vector>
 
 #include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/common.hpp"
 #include "peclet/amr/face_csr.hpp"   // shared host+device assembled-operator row kernels
 #include "peclet/amr/multigrid.hpp"  // restrictField / prolongAdd transfer kernels
 #include "peclet/core/common/view.hpp"

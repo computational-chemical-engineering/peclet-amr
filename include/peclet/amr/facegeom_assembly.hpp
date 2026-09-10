@@ -16,13 +16,11 @@
 #ifndef PECLET_AMR_FACEGEOM_ASSEMBLY_HPP
 #define PECLET_AMR_FACEGEOM_ASSEMBLY_HPP
 
-#include "peclet/amr/common.hpp"
-
-
 #include <array>
 
 #include "peclet/amr/assembly.hpp"  // FvFaceEmit (shared geometry traversal helpers)
 #include "peclet/amr/block_octree_view.hpp"
+#include "peclet/amr/common.hpp"
 #include "peclet/amr/csr.hpp"        // scanOffsets
 #include "peclet/amr/face_geom.hpp"  // FaceGeom (the produced type)
 #include "peclet/amr/poisson.hpp"

@@ -14,12 +14,10 @@
 #ifndef PECLET_AMR_BLOCK_OCTREE_VIEW_HPP
 #define PECLET_AMR_BLOCK_OCTREE_VIEW_HPP
 
-#include "peclet/amr/common.hpp"
-
-
 #include <cstdint>
 
 #include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/common.hpp"
 #include "peclet/core/common/view.hpp"
 
 namespace peclet::amr {

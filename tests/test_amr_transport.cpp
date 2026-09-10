@@ -4,8 +4,6 @@
 //   (2) diffusion — a sine mode decays at the analytic rate exp(-D k^2 t);
 //   (3) advection — upwind is monotone (no new extrema) and preserves a constant.
 //
-#include "test_util.hpp"
-
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -17,6 +15,7 @@
 #include "peclet/amr/scalar_transport.hpp"
 #include "peclet/core/common/types.hpp"
 #include "peclet/core/geom/sdf.hpp"
+#include "test_util.hpp"
 
 using namespace peclet::core;
 using namespace peclet::amr;

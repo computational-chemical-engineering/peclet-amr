@@ -17,15 +17,13 @@
 #ifndef PECLET_AMR_CUT_CELL_HPP
 #define PECLET_AMR_CUT_CELL_HPP
 
-#include "peclet/amr/common.hpp"
-
-
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <vector>
 
 #include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/common.hpp"
 #include "peclet/amr/face_csr.hpp"  // shared host+device assembled-operator row kernels
 #include "peclet/amr/leaf_field.hpp"
 #include "peclet/amr/poisson.hpp"
@@ -704,8 +702,7 @@ class AmrCutCell {
     Vec<3> c{};
     for (int d = 0; d < 3; ++d)
       c[d] = origin_[d] +
-             (static_cast<double>(static_cast<long>(b[0][d]) + frameShift_[d]) + 0.5 * s) *
-                 h0_[d];
+             (static_cast<double>(static_cast<long>(b[0][d]) + frameShift_[d]) + 0.5 * s) * h0_[d];
     return c;
   }
 
@@ -744,10 +741,10 @@ class AmrCutCell {
   Vec<3> h0_ = detail::filledVec<3>(1.0);
   Vec<3> origin_{};
   std::array<Coord, 3> fineExt_{};
-  ExtResolver extResolve_;                     // distributed seam (forwarded into lap_ by build)
-  std::vector<std::array<long, 3>> ghostLo_;   // ghost slot → block-local lo (longs)
-  std::vector<unsigned> ghostLv_;              // ghost slot → covering-leaf level
-  std::array<long, 3> frameShift_{};           // block global fine origin (0 single-rank)
+  ExtResolver extResolve_;                    // distributed seam (forwarded into lap_ by build)
+  std::vector<std::array<long, 3>> ghostLo_;  // ghost slot → block-local lo (longs)
+  std::vector<unsigned> ghostLv_;             // ghost slot → covering-leaf level
+  std::array<long, 3> frameShift_{};          // block global fine origin (0 single-rank)
   std::vector<double> sdfC_, kappa_, AC_, rscale_, inhom_, off_;
   std::vector<Index> nb_;
   std::vector<char> fluid_, cut_;

@@ -12,21 +12,19 @@
 //            order-canonical by construction (candidates are sorted by bin then by the GLOBAL
 //            Morton code of the leaf's lo corner, so a cloud accumulates in the same order on
 //            every rank that can see it); what remains is the solvers' own global reductions.
+#include <mpi.h>
+
 #include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <vector>
-
-#include "test_util.hpp"
-
-#include <mpi.h>
-
 #include <Kokkos_Core.hpp>
+#include <vector>
 
 #include "peclet/amr/distributed_octree.hpp"
 #include "peclet/amr/flow.hpp"
 #include "peclet/core/common/types.hpp"
+#include "test_util.hpp"
 
 using namespace peclet::core;
 using namespace peclet::amr;

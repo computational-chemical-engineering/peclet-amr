@@ -21,9 +21,6 @@
 #ifndef PECLET_AMR_ADAPT_HPP
 #define PECLET_AMR_ADAPT_HPP
 
-#include "peclet/amr/common.hpp"
-
-
 #include <array>
 #include <cmath>
 #include <type_traits>
@@ -31,6 +28,7 @@
 #include <vector>
 
 #include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/common.hpp"
 #include "peclet/amr/indicators.hpp"
 #include "peclet/core/common/types.hpp"
 

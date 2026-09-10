@@ -10,8 +10,6 @@
 //       correction) drives the 2nd-order graded residual down.
 // Runs on whatever backend Kokkos was built for (CUDA / HIP / OpenMP).
 //
-#include "test_util.hpp"
-
 #include <algorithm>
 #include <cmath>
 #include <Kokkos_Core.hpp>
@@ -20,6 +18,7 @@
 #include "peclet/amr/block_octree.hpp"
 #include "peclet/amr/multigrid.hpp"
 #include "peclet/amr/poisson.hpp"
+#include "test_util.hpp"
 
 using namespace peclet::core;
 using namespace peclet::amr;

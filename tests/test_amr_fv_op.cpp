@@ -3,8 +3,6 @@
 // whatever backend Kokkos was built for (CUDA / HIP / OpenMP). Same face-neighbour
 // walk + arithmetic, just run as parallel_for over the leaf Views.
 //
-#include "test_util.hpp"
-
 #include <cmath>
 #include <cstdint>
 #include <Kokkos_Core.hpp>
@@ -13,6 +11,7 @@
 #include "peclet/amr/block_octree.hpp"
 #include "peclet/amr/block_octree_view.hpp"
 #include "peclet/amr/fv_op.hpp"
+#include "test_util.hpp"
 
 using namespace peclet::core;
 using namespace peclet::amr;

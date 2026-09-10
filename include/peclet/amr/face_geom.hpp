@@ -13,7 +13,6 @@
 #define PECLET_AMR_FACE_GEOM_HPP
 
 #include "peclet/amr/common.hpp"
-
 #include "peclet/core/common/types.hpp"
 #include "peclet/core/common/view.hpp"
 

@@ -9,8 +9,6 @@
 // no stall), and it prints the per-cycle convergence factors so the trade-off is visible
 // before κ-weighting is considered as a default.
 //
-#include "test_util.hpp"
-
 #include <cmath>
 #include <Kokkos_Core.hpp>
 #include <vector>
@@ -18,6 +16,7 @@
 #include "peclet/amr/block_octree.hpp"
 #include "peclet/amr/multigrid.hpp"
 #include "peclet/amr/poisson.hpp"
+#include "test_util.hpp"
 
 using namespace peclet::core;
 using namespace peclet::amr;

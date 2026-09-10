@@ -3,8 +3,6 @@
 // (nbr/axis/dir/α·area/raw area/dist/α/upstream probes) + per-cell invVol/fluid. The D4 anti-drift
 // lock.
 //
-#include "test_util.hpp"
-
 #include <cmath>
 #include <Kokkos_Core.hpp>
 #include <vector>
@@ -14,6 +12,7 @@
 #include "peclet/amr/facegeom_assembly.hpp"
 #include "peclet/amr/flow.hpp"
 #include "peclet/amr/poisson.hpp"
+#include "test_util.hpp"
 
 using namespace peclet::core;
 using namespace peclet::amr;

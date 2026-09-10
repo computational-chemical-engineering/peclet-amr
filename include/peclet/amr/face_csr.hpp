@@ -5,7 +5,6 @@
 #define PECLET_AMR_FACE_CSR_HPP
 
 #include "peclet/amr/common.hpp"
-
 #include "peclet/core/solver/face_csr.hpp"
 
 namespace peclet::amr {

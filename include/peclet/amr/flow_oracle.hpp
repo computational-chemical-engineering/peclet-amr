@@ -31,9 +31,6 @@
 #ifndef PECLET_AMR_FLOW_ORACLE_HPP
 #define PECLET_AMR_FLOW_ORACLE_HPP
 
-#include "peclet/amr/common.hpp"
-
-
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -45,6 +42,7 @@
 #include "peclet/amr/advect_recon.hpp"  // shared high-order face reconstruction (host+device)
 #include "peclet/amr/block_octree.hpp"
 #include "peclet/amr/cf_scheme.hpp"  // pluggable 2:1 C/F interface schemes (setCfScheme)
+#include "peclet/amr/common.hpp"
 #include "peclet/amr/cut_cell.hpp"
 #include "peclet/amr/ghost_projection.hpp"  // directional ghost overlay (setGhostProjection)
 #include "peclet/amr/ghost_projection_sampled.hpp"  // mixed-level sampled overlay (setGhostSampled)
@@ -167,8 +165,8 @@ class AmrFlow {
       // Momentum ξ-row seam correction (plan §6.2): lagged deferred-correction CSR replacing
       // the position-inconsistent (and wrong-β) raw ξ rows by the row-local virtual stencil.
       long momSkipped = 0;
-      gpsMomDelta_ = buildMomSeamDelta(gpOvS_, *t_, pres_, mom_, sdfFn, origin_, rho_ / dt_, mu_,
-                                       &momSkipped);
+      gpsMomDelta_ =
+          buildMomSeamDelta(gpOvS_, *t_, pres_, mom_, sdfFn, origin_, rho_ / dt_, mu_, &momSkipped);
       if (momSkipped)
         std::fprintf(stderr,
                      "[peclet.amr] mom seam delta: %ld raw-regular/virtually-ghost rows "
@@ -725,11 +723,35 @@ class AmrFlow {
       return 0.0;
     double x, y, z;
     if (np == 1) {
-      if (pa) { x = a; y = b; z = c; } else if (pb) { x = b; y = c; z = a; } else { x = c; y = a; z = b; }
+      if (pa) {
+        x = a;
+        y = b;
+        z = c;
+      } else if (pb) {
+        x = b;
+        y = c;
+        z = a;
+      } else {
+        x = c;
+        y = a;
+        z = b;
+      }
       const double den = (x - y) * (x - z);
       return den > 1e-300 ? (x * x) / den : 1.0;
     }
-    if (!pa) { x = a; y = b; z = c; } else if (!pb) { x = b; y = c; z = a; } else { x = c; y = a; z = b; }
+    if (!pa) {
+      x = a;
+      y = b;
+      z = c;
+    } else if (!pb) {
+      x = b;
+      y = c;
+      z = a;
+    } else {
+      x = c;
+      y = a;
+      z = b;
+    }
     const double den = (x - y) * (x - z);
     return 1.0 - (den > 1e-300 ? (x * x) / den : 1.0);
   }
@@ -778,11 +800,11 @@ class AmrFlow {
   Vec<3> origin_{};
   double rho_ = 1.0, mu_ = 1.0, dt_ = 1e6;
   bool advect_ = false;
-  bool ghostGrad_ = true;   // directional ghost gradient on cut cells (setGhostGradient)
+  bool ghostGrad_ = true;     // directional ghost gradient on cut cells (setGhostGradient)
   bool ghostProj_ = false;    // RESOLVED projection mode (set by setSolid from the request)
   int8_t ghostProjReq_ = -1;  // -1 = AUTO (DEFAULT: ghost, aperture fallback on thin band),
                               // 0 = explicit aperture, 1 = explicit ghost
-  int apertureOrder_ = 2;  // aperture estimator order (setApertureOrder; default 2)
+  int apertureOrder_ = 2;     // aperture estimator order (setApertureOrder; default 2)
   int gpMatrixOrder_ = 2, gpRhsOrder_ = 2;  // closure orders (2,2 = the production pair; the
                                             // (1,2) mixed form is march-unstable at scale)
   GhostOverlay gpOv_;                       // closure overlay (finest-band rows)
@@ -797,8 +819,8 @@ class AmrFlow {
   CfCompCsr cfDiv_;                         // (D_scheme − D_std) divergence overlay
   std::array<CfCsr, 3> cfGrad_;             // (G_scheme − G_std) per gradient axis
   CfUfDelta cfUf_;                          // (uf_scheme − uf_std) face-field overlay (slots)
-  bool implicitFou_ = true;  // implicit-FOU deferred-correction advection (stable)
-  int advScheme_ = 0;        // 0 = SOU (default), 1 = Koren TVD
+  bool implicitFou_ = true;                 // implicit-FOU deferred-correction advection (stable)
+  int advScheme_ = 0;                       // 0 = SOU (default), 1 = Koren TVD
   Vec<3> f_{};
   AmrCutCell<Bits> mom_;
   AmrPoisson<3, Bits> pres_;      // openness + divergence/gradient access
@@ -812,8 +834,8 @@ class AmrFlow {
   // a coarse cell owns 2^(Dim-1) fine sub-faces and the fine cell owns its single face — so the
   // face field is at the finest resolution touching each face and the coarse-cell divergence sums
   // its sub-faces.
-  std::vector<Index> faceStart_;  // CSR offsets into uf_, size n+1
-  std::vector<double> uf_;        // +axis face velocity per (cell,face) slot
+  std::vector<Index> faceStart_;               // CSR offsets into uf_, size n+1
+  std::vector<double> uf_;                     // +axis face velocity per (cell,face) slot
   std::unique_ptr<Octree> adaptOldT_;          // beginAdapt topology snapshot
   std::array<std::vector<double>, 3> adaptU_;  // beginAdapt field snapshots
   std::vector<double> adaptP_;

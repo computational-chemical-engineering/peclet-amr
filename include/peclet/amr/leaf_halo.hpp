@@ -37,9 +37,6 @@
 #ifndef PECLET_AMR_LEAF_HALO_HPP
 #define PECLET_AMR_LEAF_HALO_HPP
 
-#include "peclet/amr/common.hpp"
-
-
 #include <array>
 #include <map>
 #include <memory>
@@ -47,6 +44,7 @@
 #include <stdexcept>
 #include <vector>
 
+#include "peclet/amr/common.hpp"
 #include "peclet/amr/distributed_octree.hpp"
 #include "peclet/core/common/mpi.hpp"
 #include "peclet/core/common/types.hpp"
@@ -238,9 +236,7 @@ class LeafHalo {
   }
   /// Global fine anchor (lo corner) of ghost `g` in [0, nGhosts) — for SDF sampling / multi-hop
   /// probe construction by the builders.
-  const CoordArr& ghostCoord(Index g) const {
-    return ghostCoords_[static_cast<std::size_t>(g)];
-  }
+  const CoordArr& ghostCoord(Index g) const { return ghostCoords_[static_cast<std::size_t>(g)]; }
 
   /// Freeze the ghost set and establish the owner↔ghost value topology (one NBX round; the
   /// owner-side locateGlobal happens here, once — never per exchange).
@@ -277,17 +273,15 @@ class LeafHalo {
     std::size_t off = 0;
     for (std::size_t k = 0; k < t.recvRanks.size(); ++k) {
       reqs.emplace_back();
-      MPI_Irecv(recvBuf.data() + off,
-                t.recvCounts[k] * static_cast<int>(sizeof(double)), MPI_BYTE, t.recvRanks[k], tag,
-                d_->comm(), &reqs.back());
+      MPI_Irecv(recvBuf.data() + off, t.recvCounts[k] * static_cast<int>(sizeof(double)), MPI_BYTE,
+                t.recvRanks[k], tag, d_->comm(), &reqs.back());
       off += static_cast<std::size_t>(t.recvCounts[k]);
     }
     off = 0;
     for (std::size_t k = 0; k < t.sendRanks.size(); ++k) {
       reqs.emplace_back();
-      MPI_Isend(sendBuf.data() + off,
-                t.sendCounts[k] * static_cast<int>(sizeof(double)), MPI_BYTE, t.sendRanks[k], tag,
-                d_->comm(), &reqs.back());
+      MPI_Isend(sendBuf.data() + off, t.sendCounts[k] * static_cast<int>(sizeof(double)), MPI_BYTE,
+                t.sendRanks[k], tag, d_->comm(), &reqs.back());
       off += static_cast<std::size_t>(t.sendCounts[k]);
     }
     if (!reqs.empty())
@@ -307,8 +301,8 @@ class LeafHalo {
   // Miss-registration lock (see resolve()); unique_ptr keeps LeafHalo movable (AmrFlow's
   // release() move-assigns the owner). Cold: taken only on a MISS, pre-freeze.
   std::unique_ptr<std::mutex> missMx_ = std::make_unique<std::mutex>();
-  std::vector<CoordArr> ghostCoords_;     // ghost id → anchor (global fine lo corner)
-  std::vector<int> ghostLevels_;          // ghost id → covering-leaf level
+  std::vector<CoordArr> ghostCoords_;  // ghost id → anchor (global fine lo corner)
+  std::vector<int> ghostLevels_;       // ghost id → covering-leaf level
   typename DO::GatherHaloTopology topo_;
   bool frozen_ = false;
 };

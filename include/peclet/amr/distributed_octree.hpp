@@ -27,9 +27,6 @@
 #ifndef PECLET_AMR_DISTRIBUTED_OCTREE_HPP
 #define PECLET_AMR_DISTRIBUTED_OCTREE_HPP
 
-#include "peclet/amr/common.hpp"
-
-
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -40,6 +37,7 @@
 
 #include "morton/morton.hpp"
 #include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/common.hpp"
 #include "peclet/amr/leaf_field.hpp"
 #include "peclet/core/common/mpi.hpp"
 #include "peclet/core/common/types.hpp"
@@ -131,8 +129,8 @@ class DistributedOctree {
   AmrGeometry<Dim> localGeometry() const {
     AmrGeometry<Dim> g = globalGeo_;
     for (int d = 0; d < Dim; ++d)
-      g.origin[d] = globalGeo_.origin[d] +
-                    static_cast<Real>(blockFineOrigin_[d]) * globalGeo_.h0[d];
+      g.origin[d] =
+          globalGeo_.origin[d] + static_cast<Real>(blockFineOrigin_[d]) * globalGeo_.h0[d];
     return g;
   }
 

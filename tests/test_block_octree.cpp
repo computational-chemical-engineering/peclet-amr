@@ -8,15 +8,14 @@
 //  - faceNeighbor agrees with point-location across faces.
 //
 // pass (the octree header defines nothing).
-#include "peclet/core/common/types.hpp"
-#include "test_util.hpp"
-
 #include <array>
 #include <cstdint>
 
 #include "morton/morton.hpp"
 #include "oracle/morton_octree.hpp"
 #include "peclet/amr/block_octree.hpp"
+#include "peclet/core/common/types.hpp"
+#include "test_util.hpp"
 
 using namespace peclet::core;
 using peclet::amr::BlockOctree;
@@ -152,8 +151,8 @@ void test_balance() {
   // Create a genuine 2-level jump: refine the corner root cell [0,4)^3 to level 1
   // (size-2 children), then refine the child on its +x face down to level 0. A
   // size-1 cell at x=3 then sits next to the unrefined size-4 neighbour at x=4.
-  refineLeafAt(t, {0, 0, 0});          // level 2 -> 1
-  refineLeafAt(t, {3, 0, 0});          // level 1 -> 0
+  refineLeafAt(t, {0, 0, 0});         // level 2 -> 1
+  refineLeafAt(t, {3, 0, 0});         // level 1 -> 0
   PECLET_AMR_CHECK(!t.isBalanced());  // unbalanced before (level 0 adjacent to level 2)
 
   const long volBefore = fineVolume(t);

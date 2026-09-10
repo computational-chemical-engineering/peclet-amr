@@ -21,15 +21,13 @@
 #ifndef PECLET_AMR_VELOCITY_MG_HPP
 #define PECLET_AMR_VELOCITY_MG_HPP
 
-#include "peclet/amr/common.hpp"
-
-
 #include <algorithm>
 #include <cmath>
 #include <memory>
 #include <utility>
 #include <vector>
 
+#include "peclet/amr/common.hpp"
 #include "peclet/amr/momentum.hpp"
 #include "peclet/amr/multigrid.hpp"
 #include "peclet/amr/poisson.hpp"
@@ -63,8 +61,7 @@ class VelocityMG {
   /// Phase 3: the finest spacing per axis; every coarse level inherits the aspect ratio (AM1).
   void build(const Octree& finest, const Vec<3>& h0, double idiag, double mu,
              const MomentumOp& fineOp, const std::vector<double>& kappa,
-             const std::vector<char>& fluid, const std::vector<char>& cut,
-             Index minCoarse = 256) {
+             const std::vector<char>& fluid, const std::vector<char>& cut, Index minCoarse = 256) {
     hmg_ = std::make_unique<AmrMultigrid<3, Bits>>();
     hmg_->build(finest, h0);  // octree hierarchy + per-level AmrPoisson (periodicNeighbor etc.)
     std::size_t nl = hmg_->numLevels();
@@ -205,8 +202,7 @@ class VelocityMG {
     // operator).
     // Phase 3: a NON-SINGULARITY FLOOR on the coarse reaction, not a discretisation — it keeps
     // the axis-0 form it has always had (`docs/amr_anisotropic.md` §3, recorded in §10).
-    const double Ldom =
-        ap.h0()[0] * static_cast<double>(oct.brick()[0] * (Index(1) << oct.lmax()));
+    const double Ldom = ap.h0()[0] * static_cast<double>(oct.brick()[0] * (Index(1) << oct.lmax()));
     const double id = std::max(idiag, mu / (Ldom * Ldom));
     std::vector<double> diag(static_cast<std::size_t>(n), 1.0);
     std::vector<char> solid(static_cast<std::size_t>(n), 1);

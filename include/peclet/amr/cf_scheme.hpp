@@ -10,7 +10,8 @@
 //
 //   D  — the ½/½ face-average divergence constraint      (buildCfDivDelta,  vector → scalar)
 //   G  — the ABC cell gradient (−∇pⁿ predictor + cell correction)  (buildCfGradDelta, scalar → 3)
-//   ∇² — the momentum (velocity) diffusion at regular fluid rows    (buildCfLapDelta,  scalar → scalar)
+//   ∇² — the momentum (velocity) diffusion at regular fluid rows    (buildCfLapDelta,  scalar →
+//   scalar)
 //
 // Everything is the LINEAR substitution "coarse-side value → coarse*", where coarse* is the
 // scheme's interpolation of the coarse cell at the fine cell's tangential position. So each
@@ -38,15 +39,13 @@
 #ifndef PECLET_AMR_CF_SCHEME_HPP
 #define PECLET_AMR_CF_SCHEME_HPP
 
-#include "peclet/amr/common.hpp"
-
-
 #include <array>
 #include <cstdint>
 #include <utility>
 #include <vector>
 
 #include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/common.hpp"
 #include "peclet/amr/poisson.hpp"
 #include "peclet/core/common/host_parallel.hpp"
 #include "peclet/core/common/types.hpp"
@@ -83,9 +82,8 @@ namespace detail {
 /// AmrPoisson::coarseStar / Multigrid::addCoarseStarStencil, plus the fluid gate.
 template <unsigned Bits, class Ent, class FluidFn>
 inline void cfAppendStencil(const AmrPoisson<3, Bits>& ap, const BlockOctree<3, Bits>& t,
-                            std::vector<Ent>& out, Index coarse, Index fine, int axis,
-                            double scale, FluidFn&& fluidOk, CfScheme scheme,
-                            const Ent& proto = Ent{}) {
+                            std::vector<Ent>& out, Index coarse, Index fine, int axis, double scale,
+                            FluidFn&& fluidOk, CfScheme scheme, const Ent& proto = Ent{}) {
   if (scheme != CfScheme::quadratic)
     return;
   auto bc = t.bounds(coarse);
@@ -139,14 +137,15 @@ inline void cfAppendStencil(const AmrPoisson<3, Bits>& ap, const BlockOctree<3, 
         return sm;  // coarser neighbour: keep the fallback
       // Finer neighbour: enumerate the 2^Dim children covering the coarse-size region.
       auto bc2 = t.bounds(coarse);
-      const auto sc2 = typename BlockOctree<3, Bits>::Coord(
-          typename BlockOctree<3, Bits>::Coord(1) << t.level(coarse));
+      const auto sc2 = typename BlockOctree<3, Bits>::Coord(typename BlockOctree<3, Bits>::Coord(1)
+                                                            << t.level(coarse));
       const auto sh = typename BlockOctree<3, Bits>::Coord(sc2 >> 1);
       long ext[3];
       for (int d = 0; d < 3; ++d)
         ext[d] = static_cast<long>(t.brick()[d]) * (1L << t.lmax());
       std::array<typename BlockOctree<3, Bits>::Coord, 3> lo = bc2[0];
-      const long shifted = static_cast<long>(lo[tt]) + (dir > 0 ? static_cast<long>(sc2) : -static_cast<long>(sc2));
+      const long shifted =
+          static_cast<long>(lo[tt]) + (dir > 0 ? static_cast<long>(sc2) : -static_cast<long>(sc2));
       lo[tt] = static_cast<typename BlockOctree<3, Bits>::Coord>(((shifted % ext[tt]) + ext[tt]) %
                                                                  ext[tt]);
       for (int oct2 = 0; oct2 < (1 << 3); ++oct2) {
@@ -302,8 +301,7 @@ inline CfCompCsr buildCfDivDelta(const AmrPoisson<3, Bits>& ap, const BlockOctre
         eC.w = scale * (wC - 0.5);
         row.push_back(eF);
         row.push_back(eC);
-        detail::cfAppendStencil(ap, t, row, coarse, fine, axis, scale * wC, fluidOk, scheme,
-                                proto);
+        detail::cfAppendStencil(ap, t, row, coarse, fine, axis, scale * wC, fluidOk, scheme, proto);
       });
     });
   }
@@ -512,9 +510,10 @@ inline void cfApplyHost(const CfCsr& c, const std::vector<double>& f, std::vecto
   const Index n = static_cast<Index>(c.start.size()) - 1;
   for (Index i = 0; i < n; ++i) {
     double acc = 0.0;
-    for (Index k = c.start[static_cast<std::size_t>(i)]; k < c.start[static_cast<std::size_t>(i) + 1];
-         ++k)
-      acc += c.coef[static_cast<std::size_t>(k)] * f[static_cast<std::size_t>(c.slot[static_cast<std::size_t>(k)])];
+    for (Index k = c.start[static_cast<std::size_t>(i)];
+         k < c.start[static_cast<std::size_t>(i) + 1]; ++k)
+      acc += c.coef[static_cast<std::size_t>(k)] *
+             f[static_cast<std::size_t>(c.slot[static_cast<std::size_t>(k)])];
     out[static_cast<std::size_t>(i)] += acc;
   }
 }
@@ -525,8 +524,8 @@ inline void cfApplyCompHost(const CfCompCsr& c, const std::array<std::vector<dou
   const Index n = static_cast<Index>(c.start.size()) - 1;
   for (Index i = 0; i < n; ++i) {
     double acc = 0.0;
-    for (Index k = c.start[static_cast<std::size_t>(i)]; k < c.start[static_cast<std::size_t>(i) + 1];
-         ++k)
+    for (Index k = c.start[static_cast<std::size_t>(i)];
+         k < c.start[static_cast<std::size_t>(i) + 1]; ++k)
       acc += c.coef[static_cast<std::size_t>(k)] *
              u[static_cast<std::size_t>(c.comp[static_cast<std::size_t>(k)])]
               [static_cast<std::size_t>(c.slot[static_cast<std::size_t>(k)])];

@@ -4,8 +4,6 @@
 // (MPI_COMM_SELF) bit-for-bit — Jacobi reads only the previous iterate, so the
 // halo supplies exactly the cells a single-block solve would. np = 1,2,4.
 //
-#include "test_util.hpp"
-
 #include <cmath>
 #include <vector>
 
@@ -13,6 +11,7 @@
 #include "peclet/amr/distributed_poisson.hpp"
 #include "peclet/amr/leaf_field.hpp"
 #include "peclet/core/common/mpi.hpp"
+#include "test_util.hpp"
 
 using namespace peclet::core;
 using namespace peclet::amr;

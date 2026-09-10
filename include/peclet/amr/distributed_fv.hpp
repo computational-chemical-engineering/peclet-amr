@@ -25,15 +25,13 @@
 #ifndef PECLET_AMR_DISTRIBUTED_FV_HPP
 #define PECLET_AMR_DISTRIBUTED_FV_HPP
 
-#include "peclet/amr/common.hpp"
-
-
 #include <array>
 #include <cmath>
 #include <map>
 #include <memory>
 #include <vector>
 
+#include "peclet/amr/common.hpp"
 #include "peclet/amr/distributed_octree.hpp"
 #include "peclet/amr/distributed_poisson.hpp"
 #include "peclet/core/common/mpi.hpp"
@@ -80,8 +78,7 @@ class DistributedFvOperator {
         fc[d2] =
             (d2 == axis)
                 ? org[d2] + static_cast<double>(plane) * h0_[d2]
-                : org[d2] +
-                      (static_cast<double>(flo[d2]) + 0.5 * static_cast<double>(s)) * h0_[d2];
+                : org[d2] + (static_cast<double>(flo[d2]) + 0.5 * static_cast<double>(s)) * h0_[d2];
       double a = openFn(fc, axis);
       return a < 0.0 ? 0.0 : (a > 1.0 ? 1.0 : a);
     };

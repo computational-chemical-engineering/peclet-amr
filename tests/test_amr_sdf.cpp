@@ -3,9 +3,6 @@
 // (b) leave interior/far-field leaves coarse (genuine adaptivity, far fewer cells
 // than a uniform fine grid), and (c) stay 2:1 balanced.
 //
-#include "peclet/core/common/types.hpp"
-#include "test_util.hpp"
-
 #include <algorithm>
 #include <cmath>
 #include <utility>
@@ -13,7 +10,9 @@
 #include "peclet/amr/block_octree.hpp"
 #include "peclet/amr/leaf_field.hpp"
 #include "peclet/amr/refine.hpp"
+#include "peclet/core/common/types.hpp"
 #include "peclet/core/geom/sdf.hpp"
+#include "test_util.hpp"
 
 using namespace peclet::core;
 using namespace peclet::amr;

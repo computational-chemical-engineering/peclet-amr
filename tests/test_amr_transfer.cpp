@@ -9,8 +9,6 @@
 //   (4) linear > PC accuracy — minmod-limited linear prolongation beats PC injection
 //       on a smooth (quadratic) field, and is itself conservative.
 //
-#include "test_util.hpp"
-
 #include <array>
 #include <cmath>
 #include <vector>
@@ -18,6 +16,7 @@
 #include "peclet/amr/adapt.hpp"
 #include "peclet/amr/block_octree.hpp"
 #include "peclet/core/common/types.hpp"
+#include "test_util.hpp"
 
 using namespace peclet::core;
 using namespace peclet::amr;
@@ -149,7 +148,7 @@ void run() {
     }
     PECLET_AMR_CHECK(eLIN < ePC);  // more accurate
     PECLET_AMR_CHECK(std::fabs(relIntegral(fine, flin) - I0) <
-                      1e-9 * std::fabs(I0));  // still conservative
+                     1e-9 * std::fabs(I0));  // still conservative
   }
 }
 

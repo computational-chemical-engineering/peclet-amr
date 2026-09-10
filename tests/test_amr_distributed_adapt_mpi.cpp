@@ -8,8 +8,6 @@
 //   (2) the global scalar Σ V·f is conserved through the adapt.
 // np = 1,2,4,8.
 //
-#include "test_util.hpp"
-
 #include <cmath>
 #include <vector>
 
@@ -17,6 +15,7 @@
 #include "peclet/amr/distributed_octree.hpp"
 #include "peclet/amr/leaf_field.hpp"
 #include "peclet/core/common/mpi.hpp"
+#include "test_util.hpp"
 
 using namespace peclet::core;
 using namespace peclet::amr;

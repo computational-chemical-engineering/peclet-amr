@@ -13,9 +13,6 @@
 #ifndef PECLET_AMR_BARNES_HUT_HPP
 #define PECLET_AMR_BARNES_HUT_HPP
 
-#include "peclet/amr/common.hpp"
-
-
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -23,6 +20,7 @@
 #include <vector>
 
 #include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/common.hpp"
 #include "peclet/amr/leaf_field.hpp"
 #include "peclet/core/common/types.hpp"
 

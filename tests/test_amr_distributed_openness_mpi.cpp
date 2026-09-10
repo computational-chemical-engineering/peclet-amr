@@ -8,8 +8,6 @@
 //       conservation since α is symmetric across each face) and is bit-exact WORLD==SELF.
 // np = 1,2,4,8.
 //
-#include "test_util.hpp"
-
 #include <cmath>
 #include <vector>
 
@@ -19,6 +17,7 @@
 #include "peclet/amr/poisson.hpp"
 #include "peclet/core/common/mpi.hpp"
 #include "peclet/core/common/types.hpp"
+#include "test_util.hpp"
 
 using namespace peclet::core;
 using namespace peclet::amr;

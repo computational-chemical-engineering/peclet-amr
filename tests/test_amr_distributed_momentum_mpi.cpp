@@ -13,8 +13,6 @@
 //   (3) np>1: the distributed BiCGStab converges and matches the single-rank solution to
 //       Krylov tolerance (the iterate sequence differs only through dot reduction order).
 //
-#include "test_util.hpp"
-
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -28,6 +26,7 @@
 #include "peclet/amr/momentum.hpp"
 #include "peclet/core/common/mpi.hpp"
 #include "peclet/core/common/view.hpp"
+#include "test_util.hpp"
 
 using namespace peclet::core;
 using namespace peclet::amr;

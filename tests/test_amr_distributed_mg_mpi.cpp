@@ -9,8 +9,6 @@
 // cell are all on one rank — the nested ORB decompositions guarantee it), and
 // piecewise-constant prolongation.
 //
-#include "test_util.hpp"
-
 #include <cmath>
 #include <vector>
 
@@ -18,6 +16,7 @@
 #include "peclet/amr/distributed_poisson.hpp"
 #include "peclet/amr/leaf_field.hpp"
 #include "peclet/core/common/mpi.hpp"
+#include "test_util.hpp"
 
 using namespace peclet::core;
 using namespace peclet::amr;

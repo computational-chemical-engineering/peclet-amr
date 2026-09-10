@@ -4,8 +4,6 @@
 // bit-for-bit (the device port is exact), (2) match the single-block MPI_COMM_SELF reference
 // bit-for-bit (consistent across rank counts), and (3) actually solve. np = 1,2,4,8.
 //
-#include "test_util.hpp"
-
 #include <cmath>
 #include <Kokkos_Core.hpp>
 #include <vector>
@@ -14,6 +12,7 @@
 #include "peclet/amr/distributed_poisson.hpp"
 #include "peclet/amr/distributed_view.hpp"
 #include "peclet/core/common/mpi.hpp"
+#include "test_util.hpp"
 
 using namespace peclet::core;
 using namespace peclet::amr;

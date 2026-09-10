@@ -37,21 +37,18 @@
 #ifndef PECLET_AMR_DISTRIBUTED_FLOW_MG_HPP
 #define PECLET_AMR_DISTRIBUTED_FLOW_MG_HPP
 
-#include "peclet/amr/common.hpp"
-
-
 #include <array>
 #include <memory>
 #include <vector>
 
-#include "peclet/core/common/view.hpp"
-
+#include "peclet/amr/common.hpp"
 #include "peclet/amr/distributed_octree.hpp"
 #include "peclet/amr/fv_op.hpp"
 #include "peclet/amr/leaf_halo.hpp"
 #include "peclet/amr/multigrid.hpp"  // restrictField / prolongAdd (shared transfer kernels)
 #include "peclet/amr/poisson.hpp"
 #include "peclet/core/common/mpi.hpp"
+#include "peclet/core/common/view.hpp"
 
 namespace peclet::amr {
 
@@ -180,8 +177,8 @@ class DistributedFlowMultigrid {
   struct Level {
     DO d;  // coarsened copy of the flow octree (carries the decomposition)
     Poisson ap;
-    LeafHalo<Dim, Bits> halo;                  // own registry (unused when hp aliases shared0)
-    const LeafHalo<Dim, Bits>* hp = nullptr;   // the registry in force (own or the shared one)
+    LeafHalo<Dim, Bits> halo;                 // own registry (unused when hp aliases shared0)
+    const LeafHalo<Dim, Bits>* hp = nullptr;  // the registry in force (own or the shared one)
     LeafHaloExchange ex;
     FvOp op;
     Index n = 0, nExt = 0;
@@ -244,8 +241,7 @@ class DistributedFlowMultigrid {
         std::vector<unsigned> glv(static_cast<std::size_t>(h.numGhosts()));
         for (Index g = 0; g < h.numGhosts(); ++g) {
           for (int a = 0; a < Dim; ++a)
-            glo[static_cast<std::size_t>(g)][a] =
-                static_cast<long>(h.ghostCoord(g)[a]) - shift[a];
+            glo[static_cast<std::size_t>(g)][a] = static_cast<long>(h.ghostCoord(g)[a]) - shift[a];
           glv[static_cast<std::size_t>(g)] = static_cast<unsigned>(h.level(h.numLocal() + g));
         }
         lv.ap.setGhosts(std::move(glo), std::move(glv));
@@ -365,8 +361,7 @@ class DistributedFlowMultigrid {
         col[static_cast<std::size_t>(i)] = ca[static_cast<std::size_t>(i) * F + fi];
       h.exchangeHost(col);
       for (Index g = 0; g < ngc; ++g)
-        ca[static_cast<std::size_t>(nc + g) * F + fi] =
-            col[static_cast<std::size_t>(nc + g)];
+        ca[static_cast<std::size_t>(nc + g) * F + fi] = col[static_cast<std::size_t>(nc + g)];
     }
     levels_[L + 1]->ap.setOpennessRaw(std::move(ca));
   }

@@ -4,8 +4,6 @@
 //   (2) theta = 0.3 keeps the per-particle acceleration within a few percent of
 //       direct (controlled multipole error).
 //
-#include "test_util.hpp"
-
 #include <cmath>
 #include <cstdint>
 #include <vector>
@@ -13,6 +11,7 @@
 #include "peclet/amr/barnes_hut.hpp"
 #include "peclet/amr/leaf_field.hpp"
 #include "peclet/core/common/types.hpp"
+#include "test_util.hpp"
 
 using namespace peclet::core;
 using namespace peclet::amr;

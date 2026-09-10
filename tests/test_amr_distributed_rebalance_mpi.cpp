@@ -8,8 +8,6 @@
 //   (3) the per-rank leaf-count imbalance (max/mean) drops vs the equal-cell decomposition.
 // np = 1,2,4,8.
 //
-#include "test_util.hpp"
-
 #include <algorithm>
 #include <cmath>
 #include <vector>
@@ -17,6 +15,7 @@
 #include "peclet/amr/distributed_octree.hpp"
 #include "peclet/amr/leaf_field.hpp"
 #include "peclet/core/common/mpi.hpp"
+#include "test_util.hpp"
 
 using namespace peclet::core;
 using namespace peclet::amr;

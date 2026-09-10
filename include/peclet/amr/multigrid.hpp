@@ -25,9 +25,6 @@
 #ifndef PECLET_AMR_MULTIGRID_HPP
 #define PECLET_AMR_MULTIGRID_HPP
 
-#include "peclet/amr/common.hpp"
-
-
 #include <cmath>
 #include <memory>
 #include <utility>
@@ -35,6 +32,7 @@
 
 #include "peclet/amr/assembly.hpp"  // assembleFv (device per-level operator rebuild, D5)
 #include "peclet/amr/block_octree.hpp"
+#include "peclet/amr/common.hpp"
 #include "peclet/amr/fv_op.hpp"
 #include "peclet/amr/poisson.hpp"
 #include "peclet/core/common/host_parallel.hpp"
@@ -139,8 +137,7 @@ class Multigrid {
   template <class OpenFn>
   void build(const Octree& finest, double h0, OpenFn&& openFn, bool periodic = true,
              bool immersedWall = false) {
-    build(finest, detail::filledVec<Dim>(h0), std::forward<OpenFn>(openFn), periodic,
-          immersedWall);
+    build(finest, detail::filledVec<Dim>(h0), std::forward<OpenFn>(openFn), periodic, immersedWall);
   }
   template <class OpenFn>
   void build(const Octree& finest, const Vec<Dim>& h0, OpenFn&& openFn, bool periodic = true,
@@ -371,7 +368,7 @@ class Multigrid {
     const Index n = t.numLeaves();
     std::vector<std::vector<std::pair<Index, double>>> per(static_cast<std::size_t>(n));
     const Vec<Dim>& h0 = ap.h0();  // Phase 3: per-axis
-    hostParFor(n, [&](Index i) {  // per[i]-disjoint (rung 2)
+    hostParFor(n, [&](Index i) {   // per[i]-disjoint (rung 2)
       const unsigned Li = t.level(i);
       const double invV = 1.0 / ap.cellVolume(i);
       ap.forEachFaceNeighbor(i, [&](Index j, Real c, int axis, double a) {

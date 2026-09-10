@@ -11,8 +11,6 @@
 //   O(dt) splitting error -> ~ -11% at N=32; the rotational term fixed it.)
 // This test runs the cheapest resolved point and asserts a tight match.
 //
-#include "test_util.hpp"
-
 #include <cmath>
 #include <vector>
 
@@ -22,6 +20,7 @@
 #include "peclet/amr/refine.hpp"
 #include "peclet/core/common/types.hpp"
 #include "peclet/core/geom/sdf.hpp"
+#include "test_util.hpp"
 
 using namespace peclet::core;
 using namespace peclet::amr;
