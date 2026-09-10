@@ -1,6 +1,6 @@
 # Every test is registered through peclet_amr_add_test / peclet_amr_add_mpi_test
 # (cmake/PecletAmrTest.cmake): SKIP_RETURN_CODE 77 and the mpi / np8 / bench labels live there.
-# Every binary links peclet::amr (the headers + core + morton + Kokkos, + MPI when PECLET_AMR_MPI).
+# Every binary links peclet::amr (the headers + core + morton + Kokkos + MPI).
 # The ctest NAMES are the ones the battery had in peclet-core (relocated 2026-09-10), so the
 # per-test history in that repo's logs still applies.
 
@@ -65,21 +65,19 @@ foreach(t IN ITEMS study_amr_ghost_apriori study_amr_seam_census study_amr_seam_
 endforeach()
 
 # ---- distributed (MPI): every test at np = 1, 2, 4, 8 (np8 = a local gate) -----------------------
-if(PECLET_AMR_MPI)
   # host octree / halo / adapt / rebalance / Poisson + MG, and the device-resident distributed
   # view, leaf halo, momentum, flow MG, flow step, adaptive flow and the mixed-level seam.
-  set(_mpi_tests amr_distributed amr_distributed_poisson amr_distributed_mg amr_distributed_fv
-                 amr_distributed_graded_mg amr_distributed_openness amr_distributed_adapt
-                 amr_distributed_rebalance amr_leaf_halo
-                 amr_distributed_view amr_leaf_halo_view amr_distributed_momentum
-                 amr_distributed_flow_mg amr_distributed_flow amr_distributed_adaptflow
-                 amr_distributed_seam)
+set(_mpi_tests amr_distributed amr_distributed_poisson amr_distributed_mg amr_distributed_fv
+               amr_distributed_graded_mg amr_distributed_openness amr_distributed_adapt
+               amr_distributed_rebalance amr_leaf_halo
+               amr_distributed_view amr_leaf_halo_view amr_distributed_momentum
+               amr_distributed_flow_mg amr_distributed_flow amr_distributed_adaptflow
+               amr_distributed_seam)
+foreach(t IN LISTS _mpi_tests)
+  _amr_test_exe(test_${t}_mpi)
+endforeach()
+foreach(np IN ITEMS 1 2 4 8)
   foreach(t IN LISTS _mpi_tests)
-    _amr_test_exe(test_${t}_mpi)
+    peclet_amr_add_mpi_test(${t}_np${np} test_${t}_mpi ${np})
   endforeach()
-  foreach(np IN ITEMS 1 2 4 8)
-    foreach(t IN LISTS _mpi_tests)
-      peclet_amr_add_mpi_test(${t}_np${np} test_${t}_mpi ${np})
-    endforeach()
-  endforeach()
-endif()
+endforeach()

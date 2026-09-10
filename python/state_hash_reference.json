@@ -11,5 +11,6 @@
  "amr.flow_ghost": "eb1c975b6a0abc743927c3a2b9c69256e18785a5efb7eae04928b684ec531c10",
  "amr.flow_sampled": "e4392e1e60a25d0804d1a7599b23b6325271387ffad74998db1f1a70ea952306",
  "amr.octree": "cd9e8ddd13eaa62ac9c4fb56bd1c239d6ec24fd3f3c9a4aa10cc5bf2d74c41de",
- "amr.poisson": "3626dcda9044260a233b5c3b5da12189a6bdffcc8b0d28cee21cf64ddb1ac052"
+ "amr.poisson": "3626dcda9044260a233b5c3b5da12189a6bdffcc8b0d28cee21cf64ddb1ac052",
+ "toolchain": "GNU 14.2.0 Release x86_64 Kokkos 5.1.1"
 }

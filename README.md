@@ -12,7 +12,7 @@ layer every method code uses, AMR is a method under active development, so it is
 Header-only C++20 over [peclet-core](https://github.com/computational-chemical-engineering/peclet-core)
 (decomposition, halos, SDF geometry, the face-CSR solver layer) and
 [peclet-morton](https://github.com/computational-chemical-engineering/peclet-morton) (Z-order codes),
-compiled through **Kokkos** (CUDA / HIP / OpenMP) with optional **MPI**. The suite-wide design
+compiled through **Kokkos** (CUDA / HIP / OpenMP) over **MPI** (both required). The suite-wide design
 contract lives in `../docs/` ([architecture](../docs/ARCHITECTURE.md),
 [conventions](../docs/CONVENTIONS.md), [naming](../docs/NAMING.md), [style](../docs/STYLE.md)).
 
@@ -44,7 +44,7 @@ contract lives in `../docs/` ([architecture](../docs/ARCHITECTURE.md),
 ```bash
 source ../.venv/bin/activate          # the suite venv: nanobind, numpy, mpi4py
 cmake -S . -B build -DCMAKE_PREFIX_PATH="$PWD/../extern/install/host-openmp" \
-      -DPECLET_AMR_BUILD_TESTS=ON      # + -DPECLET_AMR_MPI=OFF for the single-rank stub build
+      -DPECLET_AMR_BUILD_TESTS=ON
 cmake --build build -j                 # -> build/peclet/amr/_amr.*.so  (import peclet.amr)
 OMP_NUM_THREADS=2 OMP_PROC_BIND=false ctest --test-dir build --output-on-failure -LE 'bench|np8'
 OMP_NUM_THREADS=1 ctest --test-dir build -L np8          # the 8-rank instances: a local gate
@@ -53,11 +53,12 @@ PYTHONPATH=$PWD/build python python/example_amr.py       # three worked examples
 
 Requires the sibling checkouts `../core` and `../morton` (or, standalone, the pinned tags fetched
 by `cmake/PecletDeps.cmake`), a Kokkos prefix on `CMAKE_PREFIX_PATH` (`../tools/bootstrap_deps.sh`;
-`nvidia-cuda` for the GPU) and, with `PECLET_AMR_MPI=ON` (default), MPI. Tests are registered only
-with `PECLET_AMR_BUILD_TESTS=ON`: 92 C++ ctests with MPI (28 single-rank + 16 distributed tests at
-np = 1, 2, 4, 8), 28 without, plus 5 `bench`-labelled studies and three Python ctests
+`nvidia-cuda` for the GPU) and MPI. Tests are registered only with `PECLET_AMR_BUILD_TESTS=ON`:
+92 C++ ctests (28 single-rank + 16 distributed tests at np = 1, 2, 4, 8), plus 5 `bench`-labelled
+studies and three Python ctests
 (`python_amr`, `python_amr_np2`, and `python_state_hash` — the byte gate of
-`python/state_hash.py`, whose reference hashes are `python/state_hash_reference.json`). A test that
+`python/state_hash.py`, whose reference hashes are `python/state_hash_reference.json` — recorded on
+one toolchain and SKIPPED on any other). A test that
 cannot run in a configuration exits 77 and ctest reports it **skipped**, never passed. `CLAUDE.md`
 carries the developer notes, the environment-variable table and the gotchas.
 

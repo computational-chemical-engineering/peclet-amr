@@ -879,6 +879,7 @@ NB_MODULE(_amr, m) {
   // finalize() and execution_space are the suite-wide pattern (teardown registry above). Per-leaf
   // arrays are host-vector-backed (no Views).
   peclet::core::python::install(m);
+  m.attr("build_toolchain") = PECLET_AMR_BUILD_TOOLCHAIN;  // the byte gate compares like with like
   m.attr("__doc__") =
       "peclet.amr — adaptive mesh refinement: per-block Octree (serial) and DistributedOctree "
       "(MPI ORB) for the mesh, the geometric-multigrid Poisson solver, and the device (Kokkos) "

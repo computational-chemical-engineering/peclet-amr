@@ -56,6 +56,13 @@ def import_amr():
     return amr
 
 
+def toolchain():
+    """The module's compiler / version / build type (`build_toolchain`). Hashes are comparable only
+    between builds of one toolchain: the last bits of a Krylov iterate depend on FMA contraction and
+    the optimisation level, so a reference recorded elsewhere is SKIPPED, not failed."""
+    return getattr(import_amr(), "build_toolchain", "unknown")
+
+
 def run_amr(out, comm):
     amr = import_amr()
     size, rank = (comm.size, comm.rank) if comm is not None else (1, 0)
@@ -185,6 +192,12 @@ def main():
     rc = 0
     if args.check:
         ref = json.load(open(args.check))
+        want = ref.pop("toolchain", None)
+        have = toolchain()
+        if want is not None and want != have:
+            print(f"state_hash: reference recorded with toolchain '{want}', this build is '{have}' — "
+                  "not comparable; SKIPPED (exit 77). Re-record with --save on this toolchain to gate it.")
+            return 77
         # A recording may merge several rank counts; compare only the keys this run can produce
         # (no `.npN` suffix, or the suffix of the current communicator size).
         size = comm.size if comm is not None else 1
@@ -200,6 +213,7 @@ def main():
                 rc = 1
         print("state_hash: " + ("IDENTICAL" if rc == 0 else "DIFFERENCES FOUND"))
     if args.save:
+        out["toolchain"] = toolchain()
         with open(args.save, "w") as f:
             json.dump(out, f, indent=1, sort_keys=True)
     return rc

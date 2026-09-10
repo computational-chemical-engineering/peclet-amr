@@ -12,11 +12,11 @@ project(peclet_amr VERSION ${PECLET_AMR_VERSION} LANGUAGES CXX)
 # 2026-09-10 (suite/docs/QUALITY_PLAN.md D6 / G.2). Header-only C++20 over peclet-core (the
 # decomposition, halos, geometry and the face-CSR solver layer) and peclet-morton (Z-order codes),
 # compiled through Kokkos (CUDA / HIP / OpenMP — the backend is whatever prefix CMAKE_PREFIX_PATH
-# points at, e.g. ../extern/install/host-openmp from ../tools/bootstrap_deps.sh).
+# points at, e.g. ../extern/install/host-openmp from ../tools/bootstrap_deps.sh) over MPI.
 #
 # Build (the suite layout, core + morton as siblings):
 #   cmake -S . -B build -DCMAKE_PREFIX_PATH="$PWD/../extern/install/host-openmp" \
-#         -DPECLET_AMR_BUILD_TESTS=ON
+#         -DPECLET_AMR_BUILD_TESTS=ON      # MPI + a Kokkos prefix are required
 #   cmake --build build -j       ->  build/peclet/amr/_amr.*.so  (import peclet.amr)
 #   ctest --test-dir build --output-on-failure -LE bench
 
@@ -27,12 +27,11 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
 endif()
 
-# MPI: ON links MPI and builds the distributed octree / flow (the LeafHalo, DistributedOctree,
-# rebalance, the multi-rank step) and the Python module (whose DistributedOctree runs over
-# MPI_COMM_WORLD); OFF compiles the single-rank paths against core's no-MPI stub (mpi_stub.hpp)
-# and builds no Python module.
-option(PECLET_AMR_MPI "Build against MPI (distributed octree + flow, Python module)" ON)
-# The Python module `peclet.amr` (nanobind, found via the active interpreter). Needs PECLET_AMR_MPI.
+# MPI is REQUIRED: the distributed octree / flow (LeafHalo, DistributedOctree, rebalance, the
+# multi-rank step) and the Python module (whose DistributedOctree runs over MPI_COMM_WORLD) link
+# it, and the device flow reaches core's Kokkos grid halo, which has no no-MPI stub (core's
+# mpi_stub.hpp covers the host halo only — a Kokkos + no-MPI build was never a core configuration).
+# The Python module `peclet.amr` (nanobind, found via the active interpreter).
 option(PECLET_AMR_BUILD_PYTHON "Build the peclet.amr Python module" ON)
 # Tests: registers the C++ battery (tests/), the benchmarks + measurement studies (label `bench`)
 # and the Python ctests (test_amr.py serial + np=2, state_hash.py). OFF by default so a
@@ -63,22 +62,17 @@ target_compile_features(peclet_amr INTERFACE cxx_std_20)
 target_link_libraries(peclet_amr INTERFACE Kokkos::kokkos)
 target_compile_definitions(peclet_amr INTERFACE MORTON_ENABLE_KOKKOS=1)
 
-if(PECLET_AMR_MPI)
-  find_package(MPI REQUIRED COMPONENTS CXX)
-  # Pin MPIEXEC_EXECUTABLE to the launcher next to mpicxx (cmake/PecletAmrPinMpiexec.cmake): a
-  # foreign launcher on PATH silently runs every rank as a singleton.
-  include(PecletAmrPinMpiexec)
-  target_link_libraries(peclet_amr INTERFACE MPI::MPI_CXX)
-  message(STATUS "peclet-amr: MPI found (${MPI_CXX_COMPILER}) — distributed octree + flow enabled")
-else()
-  target_compile_definitions(peclet_amr INTERFACE PECLET_CORE_NO_MPI=1)
-  message(STATUS "peclet-amr: MPI disabled — single-rank paths against core's mpi_stub; no Python module")
-endif()
+find_package(MPI REQUIRED COMPONENTS CXX)
+# Pin MPIEXEC_EXECUTABLE to the launcher next to mpicxx (cmake/PecletAmrPinMpiexec.cmake): a
+# foreign launcher on PATH silently runs every rank as a singleton.
+include(PecletAmrPinMpiexec)
+target_link_libraries(peclet_amr INTERFACE MPI::MPI_CXX)
+message(STATUS "peclet-amr: MPI ${MPI_CXX_COMPILER}")
 
 # --- Python module: peclet.amr (private extension `_amr`, re-exported by peclet/amr/__init__.py,
 #     kept as a plain file under packaging/ and staged into <build>/peclet/amr so
 #     `PYTHONPATH=<build> python …` works in the dev loop). ---
-if(PECLET_AMR_BUILD_PYTHON AND PECLET_AMR_MPI)
+if(PECLET_AMR_BUILD_PYTHON)
   peclet_require_nanobind()
   # NB_STATIC: bundle nanobind's runtime. NOMINSIZE: nanobind's default -Os is rejected by nvcc
   # ("'s': expected a number") since the Kokkos device sources compile as CXX through the launch
@@ -87,6 +81,11 @@ if(PECLET_AMR_BUILD_PYTHON AND PECLET_AMR_MPI)
   set_target_properties(amr PROPERTIES OUTPUT_NAME _amr   # -> peclet.amr._amr (NB_MODULE(_amr))
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/peclet/amr")
   target_link_libraries(amr PRIVATE peclet_amr)
+  # `peclet.amr.build_toolchain`: the byte gate (python/state_hash.py) compares hashes only between
+  # builds of one toolchain — the last bits of a Krylov solve depend on the compiler, its version and
+  # the optimisation level — and SKIPS (77) against a reference recorded elsewhere.
+  target_compile_definitions(amr PRIVATE
+    "PECLET_AMR_BUILD_TOOLCHAIN=\"${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION} ${CMAKE_BUILD_TYPE} ${CMAKE_SYSTEM_PROCESSOR} Kokkos ${Kokkos_VERSION}\"")
   # -mfma on the HOST halves of the MODULE only (docs/amr_setup_parallel_plan.md rung 0b): the
   # scene layer's fma-canonical expressions otherwise compile std::fma to a libm CALL — measured
   # ~15% of setSolid at one thread. nvcc route: -Xcompiler. std::fma itself is correctly rounded
@@ -123,8 +122,6 @@ if(PECLET_AMR_BUILD_PYTHON AND PECLET_AMR_MPI)
             DESTINATION peclet/amr COMPONENT python)
   endif()
   message(STATUS "peclet-amr: Python module peclet.amr (Kokkos ${Kokkos_VERSION}, ${Kokkos_DEVICES})")
-elseif(PECLET_AMR_BUILD_PYTHON)
-  message(STATUS "peclet-amr: Python module needs PECLET_AMR_MPI=ON — not built")
 endif()
 
 # --- Install: the headers + an exported header-only target (find_package(peclet-amr CONFIG)). The
@@ -166,11 +163,13 @@ if(PECLET_AMR_BUILD_TESTS)
     set_tests_properties(python_amr_np2 PROPERTIES LABELS "mpi;python"
       ENVIRONMENT "${_py_env};PECLET_AMR_TEST_NP=2")
     # The structural byte gate (QUALITY_PLAN §3.G): fixed-seed reference runs of every public entry
-    # path, hashed; `--check python/state_hash_reference.json` fails on any drift.
+    # path, hashed; `--check python/state_hash_reference.json` fails on any drift. The reference is
+    # toolchain-specific (its `toolchain` key); a build of another compiler / version / build type
+    # exits 77 and ctest reports the gate SKIPPED (CI), never passed.
     add_test(NAME python_state_hash
              COMMAND "${Python_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/python/state_hash.py"
                      --check "${CMAKE_CURRENT_SOURCE_DIR}/python/state_hash_reference.json")
-    set_tests_properties(python_state_hash PROPERTIES LABELS "python"
+    set_tests_properties(python_state_hash PROPERTIES LABELS "python" SKIP_RETURN_CODE 77
       ENVIRONMENT "${_py_env};OMP_NUM_THREADS=1")
   endif()
 endif()
