@@ -809,6 +809,64 @@ class FlowDiagnostics {
   Flow& f_;
 };
 
+// ---- the members Octree and DistributedOctree share, bound ONCE (QUALITY_PLAN G.5) --------------
+// Both wrappers expose the same leaf read-outs, refinement / balance / adapt entry points and VTU
+// writer with identical signatures (the distributed one acts on THIS rank's block and is
+// collective where the docstring says so); the 14+ verbatim `.def` lines they used to carry each
+// live here.
+template <class T>
+void bindOctreeCommon(nb::class_<T>& c) {
+  c.def_prop_ro("cells", &T::cells,
+                "Finest-level cell counts per axis (root*2**lmax; the GLOBAL grid on a "
+                "DistributedOctree).")
+      .def_prop_ro("extent", &T::extent, "Box side lengths in world units (cells*spacing).")
+      .def_prop_ro("spacing", &T::spacing,
+                   "Finest cell size (dx, dy, dz), per axis. Equal on a cubic octree.")
+      .def_prop_ro("num_leaves", &T::num_leaves,
+                   "Number of leaves (Z-order slots; this rank's on a DistributedOctree).")
+      .def_prop_ro("lmax", &T::lmax, "Root-cell level (max refinement depth).")
+      .def_prop_ro("origin", &T::origin, "Lower corner in world coordinates.")
+      .def("centers", &T::centers,
+           "Leaf world centres, (num_leaves, 3) float64 (global coordinates).")
+      .def("sizes", &T::sizes, nb::arg("axis") = 0,
+           "Leaf world widths along `axis`: spacing[axis]*2**level, (num_leaves,) float64. A leaf "
+           "is a BOX, so `axis` selects which of the three widths (0 by default, which is THE "
+           "width on a cubic octree).")
+      .def("levels", &T::levels, "Leaf refinement levels, (num_leaves,) int32 (0 = finest).")
+      .def("codes", &T::codes, "Leaf block-local Morton origin codes, (num_leaves,) uint64.")
+      .def("refine_to_sphere", &T::refine_to_sphere, nb::arg("center"), nb::arg("radius"),
+           nb::arg("target_level") = 0u, nb::arg("band") = 1.0, nb::arg("balance") = true,
+           "Refine leaves the sphere surface passes through (plus `band` cells) down to "
+           "target_level; optionally restore 2:1 balance (cross-block, collective, on a "
+           "DistributedOctree). Returns the (local) number of refinements performed.")
+      .def("refine_to_sdf", &T::refine_to_sdf, nb::arg("sdf"), nb::arg("target_level") = 0u,
+           nb::arg("band") = 1.0, nb::arg("balance") = true,
+           "Refine toward an arbitrary signed-distance field given as a callable f(x,y,z)->distance "
+           "(suite sign: <0 inside solid), down to target_level — rings / packed beds / any "
+           "non-sphere geometry. Collective when balance=True on a DistributedOctree. Returns "
+           "refinements performed.")
+      .def("balance", &T::balance,
+           "Enforce 2:1 graded balance to a fixpoint (cross-block and collective on a "
+           "DistributedOctree); returns (this rank's) refinements performed.")
+      .def("lohner_indicator", &T::lohner_indicator, nb::arg("field"), nb::arg("eps") = 0.01,
+           "Löhner normalized-second-difference feature indicator E in [0,1] per leaf from a scalar "
+           "field (num_leaves,); large E = steep feature (refine), small = smooth (coarsen). On a "
+           "DistributedOctree it is evaluated across the owner-based halo (collective).")
+      .def("adapt", &T::adapt, nb::arg("field"), nb::arg("refine_thresh"),
+           nb::arg("coarsen_thresh"), nb::arg("finest_level") = 0u, nb::arg("eps") = 0.01,
+           nb::arg("linear") = true,
+           "Solution-adaptive step (Löhner-driven): refine where the indicator > refine_thresh (to "
+           "finest_level), coarsen sibling groups all < coarsen_thresh, 2:1-balance, and "
+           "conservatively remap `field`. MUTATES the octree in place; returns the remapped field "
+           "(M,). `linear` uses minmod-limited prolongation (else piecewise-constant). On a "
+           "DistributedOctree: per block, cross-block balance, ORB ownership kept, bit-identical "
+           "across rank counts (collective).")
+      .def("write_vtu", &T::write_vtu, nb::arg("path"), nb::arg("name"), nb::arg("field"),
+           "Write the octree (this rank's block on a DistributedOctree — one file per rank, "
+           "combine in ParaView) + a per-leaf scalar field (num_leaves,) as a VTK UnstructuredGrid "
+           "(.vtu, ASCII, one cell per leaf).");
+}
+
 }  // namespace peclet::amr::pybind
 
 NB_MODULE(_amr, m) {
@@ -850,11 +908,12 @@ NB_MODULE(_amr, m) {
       "anisotropic form of `spacing_from_extent`: it accepts any positive extent, because the "
       "octree's cells are boxes (core/docs/amr_anisotropic.md).");
 
-  nb::class_<Octree>(
+  nb::class_<Octree> octree(
       m, "Octree",
       "Serial single-block adaptive octree with a world placement (origin + finest "
       "spacing per axis). Leaves are addressed in Z-order slot order; every per-leaf "
-      "array is indexed by that slot.")
+      "array is indexed by that slot.");
+  octree
       .def(
           "__init__",
           [](Octree* self, std::array<long, 3> cells, unsigned lmax, std::array<double, 3> origin,
@@ -876,34 +935,10 @@ NB_MODULE(_amr, m) {
           "The cells are BOXES (core/docs/amr_anisotropic.md): any positive extent is accepted, "
           "the octree refines by 2 on every axis, and every level inherits the root aspect "
           "ratio. Read the three numbers back from `.spacing`.")
-      .def_prop_ro("cells", &Octree::cells, "Finest-level cell counts per axis (root*2**lmax).")
-      .def_prop_ro("extent", &Octree::extent, "Block side lengths in world units (cells*spacing).")
-      .def_prop_ro("spacing", &Octree::spacing,
-                   "Finest cell size (dx, dy, dz), per axis. Equal on a cubic octree.")
-      .def_prop_ro("num_leaves", &Octree::num_leaves, "Number of leaves (Z-order slots).")
-      .def_prop_ro("lmax", &Octree::lmax, "Root-cell level (max refinement depth).")
-      .def_prop_ro("origin", &Octree::origin, "Block lower corner in world coordinates.")
       .def("is_balanced", &Octree::is_balanced,
            "True iff every face-adjacent leaf pair differs by at most one level (2:1).")
-      .def("centers", &Octree::centers, "Leaf world centres, (num_leaves, 3) float64.")
-      .def("sizes", &Octree::sizes, nb::arg("axis") = 0,
-           "Leaf world widths along `axis`: spacing[axis]*2**level, (num_leaves,) float64. A leaf "
-           "is a BOX, so `axis` selects which of the three widths (0 by default, which is THE "
-           "width on a cubic octree).")
-      .def("levels", &Octree::levels, "Leaf refinement levels, (num_leaves,) int32 (0 = finest).")
-      .def("codes", &Octree::codes, "Leaf block-local Morton origin codes, (num_leaves,) uint64.")
       .def("find", &Octree::find, nb::arg("x"),
            "Index of the leaf containing world point x=(x,y,z), or -1 if outside the block.")
-      .def("refine_to_sphere", &Octree::refine_to_sphere, nb::arg("center"), nb::arg("radius"),
-           nb::arg("target_level") = 0u, nb::arg("band") = 1.0, nb::arg("balance") = true,
-           "Refine leaves the sphere surface passes through (plus `band` cells) down to "
-           "target_level; "
-           "optionally restore 2:1 balance. Returns the number of refinements performed.")
-      .def(
-          "refine_to_sdf", &Octree::refine_to_sdf, nb::arg("sdf"), nb::arg("target_level") = 0u,
-          nb::arg("band") = 1.0, nb::arg("balance") = true,
-          "Refine toward an arbitrary signed-distance field given as a callable f(x,y,z)->distance "
-          "(suite sign: <0 inside solid), down to target_level. Returns refinements performed.")
       .def("refine_to_sdf_graded", &Octree::refine_to_sdf_graded, nb::arg("sdf"),
            nb::arg("target_level"), nb::arg("band") = 2.0, nb::arg("balance") = true,
            "GRADED surface refinement (the mixed-level cut band, "
@@ -926,23 +961,8 @@ NB_MODULE(_amr, m) {
            "the AMReX multi-valued-cell rule inverted: coarsening never merges or disconnects "
            "fluid.")
       .def("refine_leaf", &Octree::refine_leaf, nb::arg("i"),
-           "Split leaf `i` into its 8 children; returns True if it was split (level>0).")
-      .def("balance", &Octree::balance,
-           "Enforce 2:1 graded balance to a fixpoint; returns refinements performed.")
-      .def(
-          "lohner_indicator", &Octree::lohner_indicator, nb::arg("field"), nb::arg("eps") = 0.01,
-          "Löhner normalized-second-difference feature indicator E in [0,1] per leaf from a scalar "
-          "field (num_leaves,); large E = steep feature (refine), small = smooth (coarsen).")
-      .def("adapt", &Octree::adapt, nb::arg("field"), nb::arg("refine_thresh"),
-           nb::arg("coarsen_thresh"), nb::arg("finest_level") = 0u, nb::arg("eps") = 0.01,
-           nb::arg("linear") = true,
-           "Solution-adaptive step (Löhner-driven): refine where the indicator > refine_thresh (to "
-           "finest_level), coarsen sibling groups all < coarsen_thresh, 2:1-balance, and "
-           "conservatively remap `field`. MUTATES the octree in place; returns the remapped field "
-           "(M,). `linear` uses minmod-limited prolongation (else piecewise-constant).")
-      .def("write_vtu", &Octree::write_vtu, nb::arg("path"), nb::arg("name"), nb::arg("field"),
-           "Write the octree + a per-leaf scalar field (num_leaves,) as a VTK UnstructuredGrid "
-           "(.vtu, ASCII, one cell per leaf), openable in ParaView.");
+           "Split leaf `i` into its 8 children; returns True if it was split (level>0).");
+  bindOctreeCommon(octree);
 
   nb::class_<Poisson>(
       m, "Poisson",
@@ -1142,13 +1162,14 @@ NB_MODULE(_amr, m) {
            "marching-squares (DEFAULT since 2026-08-26), 1 = legacy one-sample model. "
            "Call before set_solid.");
 
-  nb::class_<DistributedOctree>(
+  nb::class_<DistributedOctree> distributed(
       m, "DistributedOctree",
       "MPI octree: an ORB block decomposition of a global root grid (one BlockOctree per rank, "
       "over "
       "MPI_COMM_WORLD). Construct it collectively; refine/balance/rebalance/face_neighbor_gather "
       "are "
-      "collective. Per-leaf arrays describe THIS rank's local block in global world coordinates.")
+      "collective. Per-leaf arrays describe THIS rank's local block in global world coordinates.");
+  distributed
       .def(
           "__init__",
           [](DistributedOctree* self, std::array<long, 3> cells, unsigned lmax,
@@ -1171,43 +1192,12 @@ NB_MODULE(_amr, m) {
           "dz)); default 1. Passing both raises. Read the three numbers back from `.spacing`.")
       .def_prop_ro("rank", &DistributedOctree::rank, "This process's MPI rank.")
       .def_prop_ro("size", &DistributedOctree::size, "Number of ranks (blocks).")
-      .def_prop_ro("num_leaves", &DistributedOctree::num_leaves, "Leaves owned by this rank.")
-      .def_prop_ro("lmax", &DistributedOctree::lmax, "Root-cell level.")
-      .def_prop_ro("cells", &DistributedOctree::cells,
-                   "GLOBAL finest-level cell counts per axis (global root cells * 2**lmax).")
-      .def_prop_ro("extent", &DistributedOctree::extent,
-                   "Global box side lengths in world units (cells*spacing).")
-      .def_prop_ro("origin", &DistributedOctree::origin,
-                   "Global lower corner in world coordinates.")
-      .def_prop_ro("spacing", &DistributedOctree::spacing,
-                   "Finest cell size (dx, dy, dz), per axis.")
       .def_prop_ro("block_origin_root", &DistributedOctree::block_origin_root,
                    "This rank's block lower corner, in global root-cell coordinates.")
       .def_prop_ro("block_brick", &DistributedOctree::block_brick,
                    "This rank's block size in root cells per axis.")
       .def_prop_ro("global_root_size", &DistributedOctree::global_root_size,
                    "Global grid size in root cells per axis.")
-      .def("centers", &DistributedOctree::centers,
-           "Local leaf world centres, (num_leaves, 3) float64 (global coordinates).")
-      .def("sizes", &DistributedOctree::sizes, nb::arg("axis") = 0,
-           "Local leaf world widths along `axis`, (num_leaves,) float64 (see Octree.sizes).")
-      .def("levels", &DistributedOctree::levels, "Local leaf levels, (num_leaves,) int32.")
-      .def("codes", &DistributedOctree::codes,
-           "Local leaf block-local Morton origin codes, (num_leaves,) uint64.")
-      .def("refine_to_sphere", &DistributedOctree::refine_to_sphere, nb::arg("center"),
-           nb::arg("radius"), nb::arg("target_level") = 0u, nb::arg("band") = 1.0,
-           nb::arg("balance") = true,
-           "Refine the local block toward a GLOBAL sphere surface down to target_level, then (if "
-           "balance) restore cross-block 2:1 balance collectively. Returns the local count.")
-      .def(
-          "refine_to_sdf", &DistributedOctree::refine_to_sdf, nb::arg("sdf"),
-          nb::arg("target_level") = 0u, nb::arg("band") = 1.0, nb::arg("balance") = true,
-          "Refine the local block toward an arbitrary GLOBAL surface given as a callable f(x,y,z)->"
-          "distance (suite sign: <0 inside solid) — the distributed analogue of "
-          "Octree.refine_to_sdf, "
-          "for rings / packed beds / any non-sphere geometry. Collective when balance=True.")
-      .def("balance", &DistributedOctree::balance,
-           "Restore cross-block 2:1 graded balance (collective). Returns this rank's refinements.")
       .def("rebalance", &DistributedOctree::rebalance, nb::arg("fields"),
            "Re-decompose by leaf count (weighted ORB) and migrate leaves + their fields. `fields` "
            "is (num_leaves, K) float64; returns this rank's (M, K) columns after migration. Pure "
@@ -1216,21 +1206,6 @@ NB_MODULE(_amr, m) {
            nb::arg("sentinel") = 0.0,
            "For each local leaf, the field value across each of its 6 faces, gathered over the "
            "owner-based halo. `field` is (num_leaves,); returns (num_leaves, 6) laid out "
-           "[+x,-x,+y,-y,+z,-z]; domain boundaries carry `sentinel` (collective).")
-      .def("lohner_indicator", &DistributedOctree::lohner_indicator, nb::arg("field"),
-           nb::arg("eps") = 0.01,
-           "Löhner feature indicator per local leaf, evaluated across the owner-based halo so "
-           "cross-block neighbours count exactly as in a whole-domain solve. `field` is "
-           "(num_leaves,); returns (num_leaves,) (collective).")
-      .def("adapt", &DistributedOctree::adapt, nb::arg("field"), nb::arg("refine_thresh"),
-           nb::arg("coarsen_thresh"), nb::arg("finest_level") = 0u, nb::arg("eps") = 0.01,
-           nb::arg("linear") = true,
-           "Distributed solution-adaptive step (Löhner-driven): refine/coarsen each block, restore "
-           "cross-block 2:1 balance, and conservatively remap `field` (num_leaves,) onto the new "
-           "local mesh. MUTATES the octree in place (keeping ORB ownership); returns the remapped "
-           "local field (M,). Bit-identical across rank counts (collective).")
-      .def("write_vtu", &DistributedOctree::write_vtu, nb::arg("path"), nb::arg("name"),
-           nb::arg("field"),
-           "Write this rank's local octree + a per-leaf scalar (num_leaves,) as a .vtu (one file "
-           "per rank; combine in ParaView).");
+           "[+x,-x,+y,-y,+z,-z]; domain boundaries carry `sentinel` (collective).");
+  bindOctreeCommon(distributed);
 }

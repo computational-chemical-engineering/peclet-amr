@@ -1,5 +1,5 @@
 """
-core adaptive-mesh-refinement: per-block BlockOctree (serial) and DistributedOctree (MPI ORB) for the mesh, plus the device (Kokkos) AmrFlow cut-cell Stokes/Navier-Stokes solver. Build a graded octree, refine to an SDF surface, read leaf geometry + per-leaf fields as numpy, load-rebalance, gather face neighbours, export VTU, and run the flow step on device.
+peclet.amr — adaptive mesh refinement: per-block Octree (serial) and DistributedOctree (MPI ORB) for the mesh, the geometric-multigrid Poisson solver, and the device (Kokkos) Flow cut-cell Stokes/Navier-Stokes solver. Build a graded octree, refine to an SDF surface, read leaf geometry + per-leaf fields as numpy, load-rebalance, gather face neighbours, export VTU, and run the flow step on device.
 """
 
 from collections.abc import Callable, Sequence
@@ -40,62 +40,14 @@ class Octree:
         The cells are BOXES (core/docs/amr_anisotropic.md): any positive extent is accepted, the octree refines by 2 on every axis, and every level inherits the root aspect ratio. Read the three numbers back from `.spacing`.
         """
 
-    @property
-    def cells(self) -> list[int]:
-        """Finest-level cell counts per axis (root*2**lmax)."""
-
-    @property
-    def extent(self) -> list[float]:
-        """Block side lengths in world units (cells*spacing)."""
-
-    @property
-    def spacing(self) -> list[float]:
-        """Finest cell size (dx, dy, dz), per axis. Equal on a cubic octree."""
-
-    @property
-    def num_leaves(self) -> int:
-        """Number of leaves (Z-order slots)."""
-
-    @property
-    def lmax(self) -> int:
-        """Root-cell level (max refinement depth)."""
-
-    @property
-    def origin(self) -> list[float]:
-        """Block lower corner in world coordinates."""
-
     def is_balanced(self) -> bool:
         """
         True iff every face-adjacent leaf pair differs by at most one level (2:1).
         """
 
-    def centers(self) -> NDArray[numpy.float64]:
-        """Leaf world centres, (num_leaves, 3) float64."""
-
-    def sizes(self, axis: int = 0) -> NDArray[numpy.float64]:
-        """
-        Leaf world widths along `axis`: spacing[axis]*2**level, (num_leaves,) float64. A leaf is a BOX, so `axis` selects which of the three widths (0 by default, which is THE width on a cubic octree).
-        """
-
-    def levels(self) -> NDArray[numpy.int32]:
-        """Leaf refinement levels, (num_leaves,) int32 (0 = finest)."""
-
-    def codes(self) -> NDArray[numpy.uint64]:
-        """Leaf block-local Morton origin codes, (num_leaves,) uint64."""
-
     def find(self, x: Sequence[float]) -> int:
         """
         Index of the leaf containing world point x=(x,y,z), or -1 if outside the block.
-        """
-
-    def refine_to_sphere(self, center: Sequence[float], radius: float, target_level: int = 0, band: float = 1.0, balance: bool = True) -> int:
-        """
-        Refine leaves the sphere surface passes through (plus `band` cells) down to target_level; optionally restore 2:1 balance. Returns the number of refinements performed.
-        """
-
-    def refine_to_sdf(self, sdf: Callable[[float, float, float], float], target_level: int = 0, band: float = 1.0, balance: bool = True) -> int:
-        """
-        Refine toward an arbitrary signed-distance field given as a callable f(x,y,z)->distance (suite sign: <0 inside solid), down to target_level. Returns refinements performed.
         """
 
     def refine_to_sdf_graded(self, sdf: Callable[[float, float, float], float], target_level: Callable[[float, float, float], int], band: float = 2.0, balance: bool = True) -> int:
@@ -113,24 +65,74 @@ class Octree:
         Split leaf `i` into its 8 children; returns True if it was split (level>0).
         """
 
+    @property
+    def cells(self) -> list[int]:
+        """
+        Finest-level cell counts per axis (root*2**lmax; the GLOBAL grid on a DistributedOctree).
+        """
+
+    @property
+    def extent(self) -> list[float]:
+        """Box side lengths in world units (cells*spacing)."""
+
+    @property
+    def spacing(self) -> list[float]:
+        """Finest cell size (dx, dy, dz), per axis. Equal on a cubic octree."""
+
+    @property
+    def num_leaves(self) -> int:
+        """Number of leaves (Z-order slots; this rank's on a DistributedOctree)."""
+
+    @property
+    def lmax(self) -> int:
+        """Root-cell level (max refinement depth)."""
+
+    @property
+    def origin(self) -> list[float]:
+        """Lower corner in world coordinates."""
+
+    def centers(self) -> NDArray[numpy.float64]:
+        """Leaf world centres, (num_leaves, 3) float64 (global coordinates)."""
+
+    def sizes(self, axis: int = 0) -> NDArray[numpy.float64]:
+        """
+        Leaf world widths along `axis`: spacing[axis]*2**level, (num_leaves,) float64. A leaf is a BOX, so `axis` selects which of the three widths (0 by default, which is THE width on a cubic octree).
+        """
+
+    def levels(self) -> NDArray[numpy.int32]:
+        """Leaf refinement levels, (num_leaves,) int32 (0 = finest)."""
+
+    def codes(self) -> NDArray[numpy.uint64]:
+        """Leaf block-local Morton origin codes, (num_leaves,) uint64."""
+
+    def refine_to_sphere(self, center: Sequence[float], radius: float, target_level: int = 0, band: float = 1.0, balance: bool = True) -> int:
+        """
+        Refine leaves the sphere surface passes through (plus `band` cells) down to target_level; optionally restore 2:1 balance (cross-block, collective, on a DistributedOctree). Returns the (local) number of refinements performed.
+        """
+
+    def refine_to_sdf(self, sdf: Callable[[float, float, float], float], target_level: int = 0, band: float = 1.0, balance: bool = True) -> int:
+        """
+        Refine toward an arbitrary signed-distance field given as a callable f(x,y,z)->distance (suite sign: <0 inside solid), down to target_level — rings / packed beds / any non-sphere geometry. Collective when balance=True on a DistributedOctree. Returns refinements performed.
+        """
+
     def balance(self) -> int:
         """
-        Enforce 2:1 graded balance to a fixpoint; returns refinements performed.
+        Enforce 2:1 graded balance to a fixpoint (cross-block and collective on a DistributedOctree); returns (this rank's) refinements performed.
         """
 
     def lohner_indicator(self, field: Annotated[NDArray[numpy.float64], dict(order='C')], eps: float = 0.01) -> NDArray[numpy.float64]:
         """
-        Löhner normalized-second-difference feature indicator E in [0,1] per leaf from a scalar field (num_leaves,); large E = steep feature (refine), small = smooth (coarsen).
+        Löhner normalized-second-difference feature indicator E in [0,1] per leaf from a scalar field (num_leaves,); large E = steep feature (refine), small = smooth (coarsen). On a DistributedOctree it is evaluated across the owner-based halo (collective).
         """
 
     def adapt(self, field: Annotated[NDArray[numpy.float64], dict(order='C')], refine_thresh: float, coarsen_thresh: float, finest_level: int = 0, eps: float = 0.01, linear: bool = True) -> NDArray[numpy.float64]:
         """
-        Solution-adaptive step (Löhner-driven): refine where the indicator > refine_thresh (to finest_level), coarsen sibling groups all < coarsen_thresh, 2:1-balance, and conservatively remap `field`. MUTATES the octree in place; returns the remapped field (M,). `linear` uses minmod-limited prolongation (else piecewise-constant).
+        Solution-adaptive step (Löhner-driven): refine where the indicator > refine_thresh (to finest_level), coarsen sibling groups all < coarsen_thresh, 2:1-balance, and conservatively remap `field`. MUTATES the octree in place; returns the remapped field (M,). `linear` uses minmod-limited prolongation (else piecewise-constant). On a DistributedOctree: per block, cross-block balance, ORB ownership kept, bit-identical across rank counts (collective).
         """
 
     def write_vtu(self, path: str, name: str, field: Annotated[NDArray[numpy.float64], dict(order='C')]) -> None:
         """
-        Write the octree + a per-leaf scalar field (num_leaves,) as a VTK UnstructuredGrid (.vtu, ASCII, one cell per leaf), openable in ParaView.
+        Write the octree (this rank's block on a DistributedOctree — one file per rank, combine in ParaView) + a per-leaf scalar field (num_leaves,) as a VTK UnstructuredGrid (.vtu, ASCII, one cell per leaf).
         """
 
 class Poisson:
@@ -208,24 +210,14 @@ class Flow:
     def set_advection(self, on: bool) -> None:
         """Enable explicit momentum advection (Navier-Stokes); off = Stokes."""
 
-    def set_ghost_gradient(self, on: bool) -> None:
-        """
-        Directional ghost cell-gradient on cut cells for the pressure predictor and the projection's cell correction (2nd-order one-sided, never reads decoupled solid pressure — removes the gauge-dependent O(1/h) cut-cell gradient error of the plain ABC gradient). The aperture projection itself is unchanged. Call before set_solid.
-        """
-
-    def set_aperture_order(self, order: int) -> None:
-        """
-        Aperture estimator for the (fallback) aperture projection: 2 = analytic marching-squares (DEFAULT since 2026-08-26), 1 = legacy one-sample model. Call before set_solid.
-        """
-
     def set_ghost_projection(self, on: bool, matrix_order: int = 2, rhs_order: int = 2) -> None:
         """
         DEFAULT since 2026-08-25 (AUTO: ghost, with an aperture fallback + stderr notice when the finest band is too thin): the fluid-only constraint scheme — family-free, unconditionally stable, protocol-independent (flow's attractor-campaign verdicts; == flow's set_collocated_scheme('ghost')). FULL directional ghost-cell projection (the AMR port): binary-openness pressure operator + wall-anchored closure overlay on the finest-band rows, MG-preconditioned BiCGStab, ghost-closed divergence constraint; implies set_ghost_gradient. (matrix_order, rhs_order) closure orders: (2, 2) default and the only pair cleared for production — the (1, 2) mixed form is march-UNSTABLE above ~2000 spheres (flow hardening Phase A), kept callable for parity records only. Raises if the finest band is too thin (a closure would cross a 2:1 boundary). Call before set_solid.
         """
 
-    def set_ghost_sampled(self, on: bool) -> None:
+    def set_ghost_sampled(self, on: bool, rho: float = 2.2, max_samples: int = 0) -> None:
         """
-        MIXED-LEVEL CUT BAND (docs/amr_mixed_level_cut_band_plan.md): allow cut cells at MULTIPLE octree levels — the finest-band contract is dropped. Chain entries that cross a 2:1 boundary become degree-2 LS virtual samples at the uniform closure positions (identity weights at same level, so a uniform finest band is BIT-IDENTICAL to set_ghost_sampled(False)); face classification uses the level-aware canonical openness; the momentum xi-row seam correction and the wall-aware C/F tangential fallback ride along. Implies the ghost projection (engages when the resolved scheme is ghost — the AUTO default or an explicit set_ghost_projection(True)). Single-rank only (the distributed sample halo is a later rung). Call before set_solid.
+        MIXED-LEVEL CUT BAND (docs/amr_mixed_level_cut_band_plan.md): allow cut cells at MULTIPLE octree levels — the finest-band contract is dropped. Chain entries that cross a 2:1 boundary become degree-2 LS virtual samples at the uniform closure positions (identity weights at same level, so a uniform finest band is BIT-IDENTICAL to set_ghost_sampled(False)); face classification uses the level-aware canonical openness; the momentum xi-row seam correction and the wall-aware C/F tangential fallback ride along. Implies the ghost projection (engages when the resolved scheme is ghost — the AUTO default or an explicit set_ghost_projection(True)). Distributed since 2026-08-30 (the clouds are a deterministic probe set through the leaf halo). `rho` is the least-squares cloud radius factor (rho = factor * max(h, H); 2.2 = the shipped behaviour) and `max_samples` the nearest-N candidate cap (0 = uncapped) — the M2a cloud-economy knobs, inert at their defaults; do not change them in production without the M2a table. Call before set_solid.
         """
 
     def set_pressure(self, values: Annotated[NDArray[numpy.float64], dict(order='C')]) -> None:
@@ -263,26 +255,6 @@ class Flow:
         Implicit first-order-upwind deferred-correction advection (default on): unconditionally stable. Off = fully explicit high-order advection.
         """
 
-    def set_momentum_mg(self, on: bool) -> None:
-        """
-        Use the Galerkin velocity multigrid as the momentum solve preconditioner (default on; makes the momentum solve scale with resolution). Call before set_solid.
-        """
-
-    def set_momentum_gs(self, on: bool) -> None:
-        """
-        Use the symmetric multicolour Gauss-Seidel smoother in the momentum multigrid (default off = weighted Jacobi). Call before set_solid.
-        """
-
-    def set_velocity_mg_staircase(self, on: bool) -> None:
-        """
-        Use the rediscretised staircase velocity-MG instead of Galerkin (default off).
-        """
-
-    def set_momentum_mg_solver(self, on: bool) -> None:
-        """
-        Solve the momentum predictor with the velocity-MG as the solver (no Krylov), mirroring flow's velocity solve (default off = BiCgStab with the MG as preconditioner).
-        """
-
     def set_outer_iterations(self, n: int, tol: float = 1e-06) -> None:
         """
         Picard outer iterations over the lagged advection per step (default 1).
@@ -307,11 +279,6 @@ class Flow:
         Volume-weighted L2 norm of the residual cell divergence (projection-quality diagnostic).
         """
 
-    def divergence_norm_face(self) -> float:
-        """
-        L2 norm of the divergence of the ABC divergence-free FACE field (≈ pressure-solve residual, far below divergence_norm — including across 2:1 interfaces).
-        """
-
     def pressure(self) -> NDArray[numpy.float64]:
         """Per-leaf pressure (incremental-rotational p), (num_leaves,) float64."""
 
@@ -330,6 +297,17 @@ class Flow:
         Pressure projection only (no momentum solve) — project an externally-set velocity field to divergence-free. Returns nothing; read the result via velocity()/velocities().
         """
 
+    @property
+    def diagnostics(self) -> FlowDiagnostics:
+        """
+        The developer tier: iteration counts of the last step, the face-field divergence, and the solver-internals / ablation switches (FlowDiagnostics). A view onto this Flow.
+        """
+
+class FlowDiagnostics:
+    """
+    Developer instruments and ablation switches of a Flow, reached as `flow.diagnostics` (suite/docs/QUALITY_PLAN.md D2: the public Flow surface is what a user needs to set up, run and read out a simulation; this is what a developer uses to inspect or ablate it).
+    """
+
     def last_mom_iters(self) -> int:
         """
         Total momentum BiCGStab iterations (summed over the 3 components) of the last step.
@@ -341,6 +319,41 @@ class Flow:
     def last_outer_iters(self) -> int:
         """
         Picard outer iterations actually run in the last step (1 unless set_outer_iterations(>1)).
+        """
+
+    def divergence_norm_face(self) -> float:
+        """
+        L2 norm of the divergence of the ABC divergence-free FACE field (≈ pressure-solve residual, far below divergence_norm — including across 2:1 interfaces).
+        """
+
+    def set_momentum_mg(self, on: bool) -> None:
+        """
+        Use the Galerkin velocity multigrid as the momentum solve preconditioner (default on; makes the momentum solve scale with resolution). Call before set_solid.
+        """
+
+    def set_momentum_gs(self, on: bool) -> None:
+        """
+        Use the symmetric multicolour Gauss-Seidel smoother in the momentum multigrid (default off = weighted Jacobi). Call before set_solid.
+        """
+
+    def set_velocity_mg_staircase(self, on: bool) -> None:
+        """
+        Use the rediscretised staircase velocity-MG instead of Galerkin (default off).
+        """
+
+    def set_momentum_mg_solver(self, on: bool) -> None:
+        """
+        Solve the momentum predictor with the velocity-MG as the solver (no Krylov), mirroring flow's velocity solve (default off = BiCgStab with the MG as preconditioner).
+        """
+
+    def set_ghost_gradient(self, on: bool) -> None:
+        """
+        Directional ghost cell-gradient on cut cells for the pressure predictor and the projection's cell correction (2nd-order one-sided, never reads decoupled solid pressure — removes the gauge-dependent O(1/h) cut-cell gradient error of the plain ABC gradient). The ghost projection (the default) implies it; this switch matters for the aperture fallback only. Call before set_solid.
+        """
+
+    def set_aperture_order(self, order: int) -> None:
+        """
+        Aperture estimator for the (fallback) aperture projection: 2 = analytic marching-squares (DEFAULT since 2026-08-26), 1 = legacy one-sample model. Call before set_solid.
         """
 
 class DistributedOctree:
@@ -364,32 +377,6 @@ class DistributedOctree:
         """Number of ranks (blocks)."""
 
     @property
-    def num_leaves(self) -> int:
-        """Leaves owned by this rank."""
-
-    @property
-    def lmax(self) -> int:
-        """Root-cell level."""
-
-    @property
-    def cells(self) -> list[int]:
-        """
-        GLOBAL finest-level cell counts per axis (global root cells * 2**lmax).
-        """
-
-    @property
-    def extent(self) -> list[float]:
-        """Global box side lengths in world units (cells*spacing)."""
-
-    @property
-    def origin(self) -> list[float]:
-        """Global lower corner in world coordinates."""
-
-    @property
-    def spacing(self) -> list[float]:
-        """Finest cell size (dx, dy, dz), per axis."""
-
-    @property
     def block_origin_root(self) -> list[int]:
         """This rank's block lower corner, in global root-cell coordinates."""
 
@@ -401,37 +388,6 @@ class DistributedOctree:
     def global_root_size(self) -> list[int]:
         """Global grid size in root cells per axis."""
 
-    def centers(self) -> NDArray[numpy.float64]:
-        """
-        Local leaf world centres, (num_leaves, 3) float64 (global coordinates).
-        """
-
-    def sizes(self, axis: int = 0) -> NDArray[numpy.float64]:
-        """
-        Local leaf world widths along `axis`, (num_leaves,) float64 (see Octree.sizes).
-        """
-
-    def levels(self) -> NDArray[numpy.int32]:
-        """Local leaf levels, (num_leaves,) int32."""
-
-    def codes(self) -> NDArray[numpy.uint64]:
-        """Local leaf block-local Morton origin codes, (num_leaves,) uint64."""
-
-    def refine_to_sphere(self, center: Sequence[float], radius: float, target_level: int = 0, band: float = 1.0, balance: bool = True) -> int:
-        """
-        Refine the local block toward a GLOBAL sphere surface down to target_level, then (if balance) restore cross-block 2:1 balance collectively. Returns the local count.
-        """
-
-    def refine_to_sdf(self, sdf: Callable[[float, float, float], float], target_level: int = 0, band: float = 1.0, balance: bool = True) -> int:
-        """
-        Refine the local block toward an arbitrary GLOBAL surface given as a callable f(x,y,z)->distance (suite sign: <0 inside solid) — the distributed analogue of Octree.refine_to_sdf, for rings / packed beds / any non-sphere geometry. Collective when balance=True.
-        """
-
-    def balance(self) -> int:
-        """
-        Restore cross-block 2:1 graded balance (collective). Returns this rank's refinements.
-        """
-
     def rebalance(self, fields: Annotated[NDArray[numpy.float64], dict(order='C')]) -> NDArray[numpy.float64]:
         """
         Re-decompose by leaf count (weighted ORB) and migrate leaves + their fields. `fields` is (num_leaves, K) float64; returns this rank's (M, K) columns after migration. Pure redistribution; the partition is updated in place (collective).
@@ -442,17 +398,72 @@ class DistributedOctree:
         For each local leaf, the field value across each of its 6 faces, gathered over the owner-based halo. `field` is (num_leaves,); returns (num_leaves, 6) laid out [+x,-x,+y,-y,+z,-z]; domain boundaries carry `sentinel` (collective).
         """
 
+    @property
+    def cells(self) -> list[int]:
+        """
+        Finest-level cell counts per axis (root*2**lmax; the GLOBAL grid on a DistributedOctree).
+        """
+
+    @property
+    def extent(self) -> list[float]:
+        """Box side lengths in world units (cells*spacing)."""
+
+    @property
+    def spacing(self) -> list[float]:
+        """Finest cell size (dx, dy, dz), per axis. Equal on a cubic octree."""
+
+    @property
+    def num_leaves(self) -> int:
+        """Number of leaves (Z-order slots; this rank's on a DistributedOctree)."""
+
+    @property
+    def lmax(self) -> int:
+        """Root-cell level (max refinement depth)."""
+
+    @property
+    def origin(self) -> list[float]:
+        """Lower corner in world coordinates."""
+
+    def centers(self) -> NDArray[numpy.float64]:
+        """Leaf world centres, (num_leaves, 3) float64 (global coordinates)."""
+
+    def sizes(self, axis: int = 0) -> NDArray[numpy.float64]:
+        """
+        Leaf world widths along `axis`: spacing[axis]*2**level, (num_leaves,) float64. A leaf is a BOX, so `axis` selects which of the three widths (0 by default, which is THE width on a cubic octree).
+        """
+
+    def levels(self) -> NDArray[numpy.int32]:
+        """Leaf refinement levels, (num_leaves,) int32 (0 = finest)."""
+
+    def codes(self) -> NDArray[numpy.uint64]:
+        """Leaf block-local Morton origin codes, (num_leaves,) uint64."""
+
+    def refine_to_sphere(self, center: Sequence[float], radius: float, target_level: int = 0, band: float = 1.0, balance: bool = True) -> int:
+        """
+        Refine leaves the sphere surface passes through (plus `band` cells) down to target_level; optionally restore 2:1 balance (cross-block, collective, on a DistributedOctree). Returns the (local) number of refinements performed.
+        """
+
+    def refine_to_sdf(self, sdf: Callable[[float, float, float], float], target_level: int = 0, band: float = 1.0, balance: bool = True) -> int:
+        """
+        Refine toward an arbitrary signed-distance field given as a callable f(x,y,z)->distance (suite sign: <0 inside solid), down to target_level — rings / packed beds / any non-sphere geometry. Collective when balance=True on a DistributedOctree. Returns refinements performed.
+        """
+
+    def balance(self) -> int:
+        """
+        Enforce 2:1 graded balance to a fixpoint (cross-block and collective on a DistributedOctree); returns (this rank's) refinements performed.
+        """
+
     def lohner_indicator(self, field: Annotated[NDArray[numpy.float64], dict(order='C')], eps: float = 0.01) -> NDArray[numpy.float64]:
         """
-        Löhner feature indicator per local leaf, evaluated across the owner-based halo so cross-block neighbours count exactly as in a whole-domain solve. `field` is (num_leaves,); returns (num_leaves,) (collective).
+        Löhner normalized-second-difference feature indicator E in [0,1] per leaf from a scalar field (num_leaves,); large E = steep feature (refine), small = smooth (coarsen). On a DistributedOctree it is evaluated across the owner-based halo (collective).
         """
 
     def adapt(self, field: Annotated[NDArray[numpy.float64], dict(order='C')], refine_thresh: float, coarsen_thresh: float, finest_level: int = 0, eps: float = 0.01, linear: bool = True) -> NDArray[numpy.float64]:
         """
-        Distributed solution-adaptive step (Löhner-driven): refine/coarsen each block, restore cross-block 2:1 balance, and conservatively remap `field` (num_leaves,) onto the new local mesh. MUTATES the octree in place (keeping ORB ownership); returns the remapped local field (M,). Bit-identical across rank counts (collective).
+        Solution-adaptive step (Löhner-driven): refine where the indicator > refine_thresh (to finest_level), coarsen sibling groups all < coarsen_thresh, 2:1-balance, and conservatively remap `field`. MUTATES the octree in place; returns the remapped field (M,). `linear` uses minmod-limited prolongation (else piecewise-constant). On a DistributedOctree: per block, cross-block balance, ORB ownership kept, bit-identical across rank counts (collective).
         """
 
     def write_vtu(self, path: str, name: str, field: Annotated[NDArray[numpy.float64], dict(order='C')]) -> None:
         """
-        Write this rank's local octree + a per-leaf scalar (num_leaves,) as a .vtu (one file per rank; combine in ParaView).
+        Write the octree (this rank's block on a DistributedOctree — one file per rank, combine in ParaView) + a per-leaf scalar field (num_leaves,) as a VTK UnstructuredGrid (.vtu, ASCII, one cell per leaf).
         """
