@@ -20,6 +20,24 @@ module link it, and core's `mpi_stub.hpp` covers the host halo only, not the Kok
 device flow reaches — a Kokkos + no-MPI build was never a core configuration either). The suite-wide contract is in `../docs/`
 (`ARCHITECTURE.md`, `CONVENTIONS.md`, `NAMING.md`, `STYLE.md`); read them before cross-cutting changes.
 
+## Settled decisions — do not reverse silently
+
+Chosen *against* the obvious or textbook alternative, on measured evidence. Full entries with
+verbatim quotes and provenance in [`../docs/decisions/amr.md`](../docs/decisions/amr.md); the index is
+[`../docs/DECISIONS.md`](../docs/DECISIONS.md). Reversing one takes a new recorded decision, not a
+judgement call in the moment.
+
+- **The collocated pressure coupling is the Almgren–Bell–Colella approximate projection — NEVER
+  Rhie–Chow.** The residual cell divergence is *intrinsic* to cell-centred velocity placement. This
+  has been re-proposed by mistake repeatedly; it is not an "upgrade".
+- **AMR keeps the ORB block decomposition**, not a global SFC partition.
+- **The pressure smoother is MG-PCG, NOT multicolor-GS**; Chebyshev was not pursued for pressure.
+- **The rebalance weight grid is defined over root cells**, not fine cells.
+- **Cut-cell openness α is evaluated at the finer neighbour's actual lower corner.**
+- **MG-as-solver with a Picard outer loop projects ONCE per step**, never inside the loop.
+- **Projection, MG transfers and V-cycle orchestration are deliberately NOT consolidated** onto a
+  shared abstraction — that separation is intentional.
+
 ## Build / test
 
 ```bash
