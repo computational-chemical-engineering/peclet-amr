@@ -1,5 +1,10 @@
 # peclet-amr
 
+> **Status: 0.x, under active development.** Functional and tested (92 C++ + 3 Python ctests, np = 1–8,
+> byte-gated), but a research code: no external validation page yet, unfinished rungs recorded in
+> `CLAUDE.md`, and an API that may change between minor versions until it graduates to 1.0.0 on its own
+> merits (suite `docs/QUALITY_PLAN.md` D9, 2026-09-11). The rest of the peclet family is 1.0.0 and semver.
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/computational-chemical-engineering/peclet-amr/blob/main/LICENSE)
 [![CI](https://github.com/computational-chemical-engineering/peclet-amr/actions/workflows/ci.yml/badge.svg)](https://github.com/computational-chemical-engineering/peclet-amr/actions/workflows/ci.yml)
 
