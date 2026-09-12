@@ -16,7 +16,7 @@ authors:
     email: e.a.j.f.peters@gmail.com
     affiliation: "Eindhoven University of Technology"
 version: 0.1.0
-date-released: 2026-09-10
+date-released: 2026-09-12
 license: MIT
 repository-code: "https://github.com/computational-chemical-engineering/peclet-amr"
 keywords:

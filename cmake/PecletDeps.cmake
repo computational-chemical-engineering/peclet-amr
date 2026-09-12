@@ -19,8 +19,8 @@ set(PECLET_KOKKOS_TAG "5.1.1" CACHE STRING "Vendored Kokkos git tag")
 # csr_operator,csr_bicgstab,vector_ops}.hpp), lifted out of the AMR tree on 2026-09-10 and first
 # shipped in the core release that follows v0.6.1: until that tag exists, main builds against core's
 # main (CI passes -DPECLET_CORE_TAG=main) and the pin below is repinned by the release.
-set(PECLET_CORE_TAG    "v0.6.1"  CACHE STRING "Vendored core git tag (headers)")
-set(PECLET_MORTON_TAG  "v0.2.1"  CACHE STRING "Vendored morton git tag (headers)")
+set(PECLET_CORE_TAG    "v1.0.0"  CACHE STRING "Vendored core git tag (headers)")
+set(PECLET_MORTON_TAG  "v1.0.0"  CACHE STRING "Vendored morton git tag (headers)")
 option(PECLET_VENDOR_DEPS "Force FetchContent-build of Kokkos / fetch of the sibling headers (self-contained sdist)" OFF)
 
 # nanobind — found via the active interpreter (scikit-build-core supplies it as a build requirement).
