@@ -22,7 +22,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "peclet-amr"
-version = "0.1.0"
+version = "0.1.1"
 description = "peclet.amr — block-local-Morton AMR octree and the collocated cut-cell Navier–Stokes solver on it (Kokkos + MPI)"
 readme = "README.md"
 requires-python = ">=3.10"

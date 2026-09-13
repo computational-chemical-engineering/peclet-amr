@@ -6,7 +6,7 @@
 
 DOXYFILE_ENCODING      = UTF-8
 PROJECT_NAME           = "peclet-amr"
-PROJECT_NUMBER         = 0.1.0
+PROJECT_NUMBER         = 0.1.1
 PROJECT_BRIEF          = "Block-local-Morton AMR octree + collocated cut-cell Navier–Stokes solver (header-only C++20, Kokkos + MPI)"
 OUTPUT_DIRECTORY       = docs
 HTML_OUTPUT            = html
