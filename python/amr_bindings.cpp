@@ -551,6 +551,8 @@ class Flow : public Releasable {
   }
 
   void set_outer_iterations(int n, double tol) { flow_.setOuterIterations(n, tol); }
+  void set_pressure_tolerance(double rtol) { flow_.setPressureTol(rtol); }
+  void set_momentum_tolerance(double rtol) { flow_.setMomentumTol(rtol); }
 
   // Advance one collocated projection step (Stokes, or NS if advection is on).
   void step(int mom_iters, int pres_iters) { flow_.step(mom_iters, pres_iters); }
@@ -1100,6 +1102,20 @@ NB_MODULE(_amr, m) {
           "stable. Off = fully explicit high-order advection.")
       .def("set_outer_iterations", &Flow::set_outer_iterations, nb::arg("n"), nb::arg("tol") = 1e-6,
            "Picard outer iterations over the lagged advection per step (default 1).")
+      .def("set_pressure_tolerance", &Flow::set_pressure_tolerance, nb::arg("rtol"),
+           "Relative tolerance of the PRESSURE solve, for both drivers -- the MG-PCG default and "
+           "the ghost projection's BiCGStab (flow shares its set_pressure_pcg tolerance with its "
+           "ghost BiCGStab the same way). Default 1e-10, the value that was hard-coded until "
+           "2026-09-21, so leaving it alone reproduces every earlier result. The iteration CAP is "
+           "step()'s `pres_iters`; this is the accuracy it works to, and loosening it is the "
+           "cheapest cost knob in the step.")
+      .def("set_momentum_tolerance", &Flow::set_momentum_tolerance, nb::arg("rtol"),
+           "Relative tolerance of the per-component MOMENTUM solve (BiCGStab, MG-preconditioned "
+           "by default). Default 1e-8. At the large dt used for steady drag the momentum operator "
+           "degrades toward a bare elliptic Laplacian and the solve gets expensive; this bounds "
+           "the over-solve. The cap is step()'s `mom_iters`. (flow spells the same concept "
+           "set_velocity_residual_tolerance -- the momentum/velocity divergence between the two "
+           "codes is a ../docs/NAMING.md item, not settled here.)")
       .def("step", &Flow::step, nb::arg("mom_iters") = 100, nb::arg("pres_iters") = 60,
            "Advance one collocated projection step on device: `mom_iters` momentum solver "
            "iterations "
@@ -1144,8 +1160,15 @@ NB_MODULE(_amr, m) {
            "Picard outer iterations actually run in the last step (1 unless "
            "set_outer_iterations(>1)).")
       .def("divergence_norm_face", &FlowDiagnostics::divergence_norm_face,
-           "L2 norm of the divergence of the ABC divergence-free FACE field (≈ pressure-solve "
-           "residual, far below divergence_norm — including across 2:1 interfaces).")
+           "L2 norm of the APERTURE-weighted divergence of the ABC face field. MEANINGFUL ON THE "
+           "APERTURE PATH ONLY (set_ghost_projection(False)), where it is the pressure-solve "
+           "residual, far below divergence_norm — including across 2:1 interfaces. Under the "
+           "GHOST projection (the DEFAULT) the solved constraint is this divergence PLUS an "
+           "overlay delta that is a functional of the CELL velocities, not of the face field, so "
+           "this norm omits it and reads O(1) on a perfectly healthy solve (34 at N=32, 184 at "
+           "N=64 on the Z&H sphere, with the velocities matching peclet.flow to 1e-6). There, "
+           "divergence_norm() is the residual you want. Unnormalized either way: it grows with "
+           "resolution and velocity magnitude, so read it as a trend, never as an absolute.")
       .def("set_momentum_mg", &FlowDiagnostics::set_momentum_mg, nb::arg("on"),
            "Use the Galerkin velocity multigrid as the momentum solve preconditioner (default on; "
            "makes the momentum solve scale with resolution). Call before set_solid.")

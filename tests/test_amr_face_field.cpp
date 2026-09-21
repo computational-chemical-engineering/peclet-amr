@@ -18,12 +18,12 @@ using Code = BO::Code;
 namespace {
 
 // Run a Stokes sphere to steady, return (divNorm cell, divNorm face).
-std::pair<double, double> run(BO& t, double R, Vec<3> c, int presIters) {
+std::pair<double, double> run(BO& t, double R, Vec<3> c, int presIters, bool ghost = false) {
   const double mu = 0.1, f = 1e-3, dt = 60.0;
   oracle::AmrFlow<21>
       fl;  // NB scheme pinned below: this test asserts APERTURE face-field properties
   fl.init(t, 1.0, Vec<3>{0, 0, 0});
-  fl.setGhostProjection(false);  // explicit aperture (the scheme under test)
+  fl.setGhostProjection(ghost);  // default: explicit aperture (the scheme under test)
   fl.setDensity(1.0);
   fl.setViscosity(mu);
   fl.setDt(dt);
@@ -87,6 +87,34 @@ void run_test() {
   auto [dCellG, dFaceG] = run(tg, Rg, Vec<3>{cg, cg, cg}, 30);
   PECLET_AMR_CHECK(dFaceG <
                    0.01 * dCellG);  // across 2:1: face field ≥100× cleaner than the cell field
+
+  // (3) THE SCOPE OF divNormFace, gated so it cannot quietly become a trap again.
+  //
+  // Everything above runs the APERTURE scheme, where divNormFace IS the projection residual: the
+  // face field comes out ~5e4x cleaner than the cell field. Under the GHOST projection — the
+  // production DEFAULT — the constraint actually solved is that divergence PLUS the overlay delta
+  // (ghostDivergDelta), which is a functional of the CELL velocities and so cannot appear in any
+  // norm of uf. divNormFace then measures a constraint the solver never solved, and carries no
+  // information: measured here at N=16 on the oracle,
+  //
+  //     aperture:  cell 3.4321e-03   face 6.8846e-08     (face is the residual, ~5e4x cleaner)
+  //     ghost:     cell 5.1770e-02   face 5.1709e-02     (face == cell; it says nothing)
+  //
+  // on a solve that is healthy — the device ghost path matches peclet.flow's collocated solver to
+  // 1e-6 on this very geometry (docs/amr_flow_uniform_parity.md §2, §2a). NB the ORACLE's
+  // divNormL2 is the plain aperture divergence on both schemes; it is the DEVICE AmrFlow's
+  // divNormL2() that folds the overlay delta in and is the right ghost residual.
+  BO tgh(IVec<3>{1, 1, 1}, L);
+  for (unsigned k = 0; k < L; ++k)
+    tgh.refineIf([](Code, unsigned) { return true; });
+  auto [dCellGh, dFaceGh] = run(tgh, R, Vec<3>{cc, cc, cc}, 30, /*ghost=*/true);
+  // Orders of magnitude above the aperture path's residual, where the same call IS the residual.
+  PECLET_AMR_CHECK(dFaceGh > 1e3 * dFace30);
+  // ...and indistinguishable from the cell divergence, i.e. it adds nothing over divergence_norm.
+  PECLET_AMR_CHECK(dFaceGh > 0.5 * dCellGh);
+  // If either check ever fails, either the overlay delta has been folded into divFaceNorm (good --
+  // retire this block and the caveats on AmrFlow::divNormFace and its binding) or the ghost
+  // constraint has changed (investigate before re-blessing).
 }
 
 }  // namespace

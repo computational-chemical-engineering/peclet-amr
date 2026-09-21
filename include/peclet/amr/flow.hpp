@@ -600,6 +600,13 @@ class AmrFlow {
   /// pressure, solved here per velocity component. Bounding the tolerance (this knob) caps the
   /// over-solve; making it actually *scale* needs the velocity multigrid (setMomentumMG).
   void setMomentumTol(double tol) { momTol_ = tol; }
+  /// Relative tolerance of the PRESSURE solve, for both drivers: the MG-PCG (the default) and the
+  /// ghost projection's BiCGStab, exactly as flow's set_pressure_pcg tolerance is shared with its
+  /// ghost BiCGStab. Default 1e-10 — the value hard-coded here until 2026-09-21, so the default
+  /// path is unchanged. The iteration CAP is the `presIters` argument of step()/project(); this is
+  /// the accuracy it works to. Tightening past the momentum tolerance buys nothing (the predictor
+  /// is what the projection is cleaning up); loosening it is the cheapest cost knob in the step.
+  void setPressureTol(double tol) { presTol_ = tol; }
   /// ABLATION (developer tier). The advecting velocity of the momentum advection: the projected,
   /// divergence-free face field uf (ON, the shipped Almgren–Bell–Colella scheme — the face field
   /// the projection just made solenoidal IS the conservative advecting flux) or, with `on=false`,
@@ -1287,7 +1294,7 @@ class AmrFlow {
     Kokkos::deep_copy(phi_, 0.0);
     if (ghostProj_) {
       spT = spMark();
-      lastPresIters_ = solveGhostBiCGStab(phi_, View<const double>(div_), presIters);
+      lastPresIters_ = solveGhostBiCGStab(phi_, View<const double>(div_), presIters, presTol_);
       spAdd(SP_PRES, spT);
       spT = spMark();
       finishProjection(n);
@@ -1368,8 +1375,9 @@ class AmrFlow {
     }
     spT = spMark();
     if (presPCG_) {
-      const auto R = dist_ ? pcg_.solve(presMGD_, phi_, View<const double>(div_), presIters, 1e-10)
-                           : pcg_.solve(presMG_, phi_, View<const double>(div_), presIters, 1e-10);
+      const auto R = dist_
+                         ? pcg_.solve(presMGD_, phi_, View<const double>(div_), presIters, presTol_)
+                         : pcg_.solve(presMG_, phi_, View<const double>(div_), presIters, presTol_);
       lastPresIters_ = R.iters;
       if (dbg)
         std::fprintf(stderr, "[amr pres] pcg iters=%d res0=%.3e res=%.3e rel=%.3e\n", R.iters,
@@ -1644,8 +1652,21 @@ class AmrFlow {
     }
     return std::sqrt(allSum(dotPlain(View<const double>(div_), View<const double>(div_), n_)));
   }
-  /// L2 norm of the divergence of the ABC face field uf_ (built each project()): the φ-solve
-  /// residual, far below the cell field's O(h²) divNormL2 — including across 2:1 interfaces.
+  /// L2 norm of the APERTURE-weighted divergence of the ABC face field uf_ (built each
+  /// project()).
+  ///
+  /// MEANINGFUL ON THE APERTURE PATH ONLY. There it is the φ-solve residual, far below the cell
+  /// field's O(h²) divNormL2 — including across 2:1 interfaces — and test_amr_face_field pins it.
+  ///
+  /// Under the GHOST projection it is NOT the residual of the constraint that was solved, and
+  /// reads O(1) on a perfectly healthy solve (measured on the Z&H sphere: 34 at N=32, 184 at
+  /// N=64, while the velocities match peclet.flow to 1e-6 — docs/amr_flow_uniform_parity.md §2a).
+  /// The reason is that the ghost scheme's constraint is this divergence PLUS the overlay delta
+  /// (ghostDivergDelta, folded into div_ by project() before the solve), and that delta is a
+  /// functional of the CELL velocities, not of uf — so the ghost residual cannot be written as a
+  /// norm of uf at all. divNormL2() already adds it and IS the right residual there; use that.
+  /// Note also that this is an unnormalized sum over fluid cells, so it grows with resolution and
+  /// with velocity magnitude and cannot be read as an absolute number.
   double divNormFace() {
     const double l = divFaceNorm(geom_, View<const double>(uf_));
     return std::sqrt(allSum(l * l));
@@ -2121,6 +2142,7 @@ class AmrFlow {
   int outerIters_ = 1;       // Picard outer iterations over the lagged advection (default 1)
   double outerTol_ = 1e-6;   // outer-loop early-stop tolerance on max|Δu|
   double momTol_ = 1e-8;     // per-step momentum BiCGStab relative tolerance (Phase-0 knob)
+  double presTol_ = 1e-10;   // pressure solve relative tolerance (MG-PCG and ghost BiCGStab)
   bool advect_ = false;      // momentum advection ∇·(u u) (off ⇒ Stokes)
   bool implicitFou_ = true;  // implicit-FOU deferred-correction (stable) vs fully-explicit
   int advScheme_ = 0;        // high-order flux: 0 = SOU (default), 1 = Koren TVD
