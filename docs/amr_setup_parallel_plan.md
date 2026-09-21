@@ -354,3 +354,11 @@ negative control gives, against a ceiling of 5e-6 relative:
 
 Note the np = 1 column: the defect is invisible there by construction, which is why a
 WORLD-vs-SELF check at np = 1 alone would not have been a gate at all.
+
+**The sampled band combined with the quadratic scheme** — the configuration the gate-free
+argument is really about, since `mom_` is not built inside the fixpoint at all on that path — is
+not a registered ctest (the gated configuration is the classic overlay, which keeps the run
+cheap) but is one command away, `CF_SAMPLED=1`. Measured: np = 1 bitwise, np = 2 rel 1.611e-07,
+np = 4 rel 1.104e-07, i.e. the same numbers as the classic overlay, because on a uniform finest
+band the sampled overlay is identity slots. The fixpoint does change — 4 rounds / ~1000 ghosts
+becomes 6–7 rounds / 2000–5200 — and that is the least-squares clouds' reach, not the C/F arm's.

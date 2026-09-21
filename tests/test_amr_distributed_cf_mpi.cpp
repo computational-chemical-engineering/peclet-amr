@@ -128,12 +128,29 @@ bool standardControl() {
   return e && e[0] == '1';
 }
 
+/// CF_SAMPLED=1 turns the mixed-level cut band on as well. That combination is what the discovery
+/// arm's gate-free design is really for: on the sampled path mom_ is not built AT ALL inside the
+/// fixpoint (D3's setup-cost fix moved its build after it), so the builders' fluid predicates are
+/// unusable during discovery and a probe arm that leaned on them would miss coordinates. Not a
+/// registered ctest - the gated configuration is the classic overlay, which keeps the run cheap -
+/// but the knob keeps the combination one command away. Measured: np = 1 bitwise, np = 2
+/// rel 1.611e-07, np = 4 rel 1.104e-07 - the same numbers as the classic overlay, because on a
+/// uniform finest band the sampled overlay is identity slots. What does change is the fixpoint,
+/// which goes from 4 rounds / ~1000 ghosts to 6-7 rounds / 2000-5200: that is the LS clouds'
+/// reach, not the C/F arm's.
+bool sampledBand() {
+  const char* e = std::getenv("CF_SAMPLED");
+  return e && e[0] == '1';
+}
+
 void configure(AmrFlow<kBits>& f) {
   f.setDensity(1.0);
   f.setViscosity(1.0);
   f.setBodyForce(1.0, 0.0, 0.0);
   f.setDt(1e6);
   f.setGhostProjection(true, 2, 2);
+  if (sampledBand())
+    f.setGhostSampled(true);
   if (!standardControl())
     f.setCfScheme(static_cast<int>(CfScheme::quadratic));
   f.setSolid(sphereSdf);
