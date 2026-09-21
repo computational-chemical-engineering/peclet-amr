@@ -81,15 +81,22 @@ namespace detail {
 /// the Martin–Cartwright per-tangential-axis quadratic — the same arithmetic as
 /// AmrPoisson::coarseStar / Multigrid::addCoarseStarStencil, plus the fluid gate.
 template <unsigned Bits, class Ent, class FluidFn>
-inline void cfAppendStencil(const AmrPoisson<3, Bits>& ap, const BlockOctree<3, Bits>& t,
-                            std::vector<Ent>& out, Index coarse, Index fine, int axis, double scale,
-                            FluidFn&& fluidOk, CfScheme scheme, const Ent& proto = Ent{}) {
+inline void cfAppendStencil(const AmrPoisson<3, Bits>& ap, std::vector<Ent>& out, Index coarse,
+                            Index fine, int axis, double scale, FluidFn&& fluidOk, CfScheme scheme,
+                            const Ent& proto = Ent{}) {
   if (scheme != CfScheme::quadratic)
     return;
-  auto bc = t.bounds(coarse);
-  auto bf = t.bounds(fine);
-  const double sc = static_cast<double>(Index(1) << t.level(coarse));
-  const double sf = static_cast<double>(Index(1) << t.level(fine));
+  // DISTRIBUTED (2026-09-21): every geometric query here goes through `ap`, never through the
+  // block octree. `coarse`/`fine` may be GHOST slots (loOf/levelOf serve those transparently) and
+  // the tangential probes may leave the block (probeSlot routes them through the LeafHalo
+  // resolver). Single-rank both spellings are the same lookup on the same coordinate — block ==
+  // domain and probeSlot's periodic wrap is the one this function used to do by hand — so the
+  // built CSRs are bit-identical there.
+  const std::array<long, 3> bc = ap.loOf(coarse);
+  const std::array<long, 3> bf = ap.loOf(fine);
+  const unsigned Lc = ap.levelOf(coarse);
+  const double sc = static_cast<double>(Index(1) << Lc);
+  const double sf = static_cast<double>(Index(1) << ap.levelOf(fine));
   auto push = [&](Index cell, double w) {
     Ent e = proto;
     e.cell = cell;
@@ -103,9 +110,9 @@ inline void cfAppendStencil(const AmrPoisson<3, Bits>& ap, const BlockOctree<3, 
     // axis `tt` — they were one `H` when the cells were cubes (`docs/amr_anisotropic.md` §3).
     const double H = ap.cellWidth(coarse, tt);
     // Phase 3: the tangential offset is a length along axis `tt` (`docs/amr_anisotropic.md` §3).
-    const double dt = ((static_cast<double>(bf[0][tt]) + 0.5 * sf) -
-                       (static_cast<double>(bc[0][tt]) + 0.5 * sc)) *
-                      ap.h0()[tt];
+    const double dt =
+        ((static_cast<double>(bf[tt]) + 0.5 * sf) - (static_cast<double>(bc[tt]) + 0.5 * sc)) *
+        ap.h0()[tt];
     // Tangential samples at the coarse cell's ± neighbours. Same-level neighbours contribute
     // directly. A FINER neighbour (an island corner/edge: the region across the tangential face
     // is refined — by 2:1 exactly one level finer) is sampled by the volume average of the 2^Dim
@@ -124,7 +131,8 @@ inline void cfAppendStencil(const AmrPoisson<3, Bits>& ap, const BlockOctree<3, 
       const Index nb = ap.periodicNeighbor(coarse, tt, dir);
       if (nb < 0)
         return sm;
-      if (t.level(nb) == t.level(coarse)) {
+      const unsigned Lnb = ap.levelOf(nb);
+      if (Lnb == Lc) {
         if (!fluidOk(nb))
           return sm;
         sm.cell[0] = nb;
@@ -133,29 +141,27 @@ inline void cfAppendStencil(const AmrPoisson<3, Bits>& ap, const BlockOctree<3, 
         sm.ok = true;
         return sm;
       }
-      if (t.level(nb) + 1 != t.level(coarse))
+      if (Lnb + 1 != Lc)
         return sm;  // coarser neighbour: keep the fallback
-      // Finer neighbour: enumerate the 2^Dim children covering the coarse-size region.
-      auto bc2 = t.bounds(coarse);
-      const auto sc2 = typename BlockOctree<3, Bits>::Coord(typename BlockOctree<3, Bits>::Coord(1)
-                                                            << t.level(coarse));
-      const auto sh = typename BlockOctree<3, Bits>::Coord(sc2 >> 1);
-      long ext[3];
-      for (int d = 0; d < 3; ++d)
-        ext[d] = static_cast<long>(t.brick()[d]) * (1L << t.lmax());
-      std::array<typename BlockOctree<3, Bits>::Coord, 3> lo = bc2[0];
-      const long shifted =
-          static_cast<long>(lo[tt]) + (dir > 0 ? static_cast<long>(sc2) : -static_cast<long>(sc2));
-      lo[tt] = static_cast<typename BlockOctree<3, Bits>::Coord>(((shifted % ext[tt]) + ext[tt]) %
-                                                                 ext[tt]);
+      // Finer neighbour: enumerate the 2^Dim children covering the coarse-size region. The child
+      // probes go through ap.probeSlot — NOT a hand-wrapped BlockOctree::find, which is what this
+      // did until 2026-09-21. probeSlot wraps in-block coords itself and hands out-of-block ones
+      // to the LeafHalo resolver, so a child owned by another rank resolves to its ghost slot.
+      // The hand wrap used the BLOCK period, which is the domain period only single-rank;
+      // multi-rank it folded a neighbour rank's child back into this block and `find` returned a
+      // real but unrelated leaf — either the guard below rejected it and the tangential side
+      // dropped silently to the raw coarse value, or it passed and the stencil read the wrong
+      // cell. Measured cost of that, np = 2 on tests/test_amr_distributed_cf_mpi: 131 % error.
+      const long scL = 1L << Lc, shL = scL >> 1;
+      std::array<long, 3> lo = bc;
+      lo[tt] += (dir > 0) ? scL : -scL;
       for (int oct2 = 0; oct2 < (1 << 3); ++oct2) {
-        std::array<typename BlockOctree<3, Bits>::Coord, 3> q = lo;
+        std::array<long, 3> q = lo;
         for (int d = 0; d < 3; ++d)
           if ((oct2 >> d) & 1)
-            q[d] = static_cast<typename BlockOctree<3, Bits>::Coord>(
-                (static_cast<long>(q[d]) + static_cast<long>(sh)) % ext[d]);
-        const Index ch = t.find(q);
-        if (ch < 0 || t.level(ch) + 1 != t.level(coarse) || !fluidOk(ch))
+            q[d] += shL;
+        const auto [ch, Lch] = ap.probeSlot(q);
+        if (ch < 0 || Lch + 1 != Lc || !fluidOk(ch))
           return Samp{};  // irregular cover or solid child: fall back
         sm.cell[sm.n] = ch;
         sm.w[sm.n] = 1.0 / static_cast<double>(1 << 3);
@@ -245,13 +251,13 @@ inline CfCsr buildCfLapDelta(const AmrPoisson<3, Bits>& ap, const BlockOctree<3,
     const unsigned Li = t.level(i);
     const double invV = 1.0 / ap.cellVolume(i);
     ap.forEachFaceNeighbor(i, [&](Index j, Real c, int axis, double a) {
-      const unsigned Lj = t.level(j);
+      const unsigned Lj = ap.levelOf(j);  // ghost-safe (j may be a ghost slot)
       if (Lj == Li)
         return;
       const Index coarse = (Lj > Li) ? j : i;
       const Index fine = (Lj > Li) ? i : j;
       const double scale = factor * invV * (a * c) * ((Lj > Li) ? 1.0 : -1.0);
-      detail::cfAppendStencil(ap, t, per[static_cast<std::size_t>(i)], coarse, fine, axis, scale,
+      detail::cfAppendStencil(ap, per[static_cast<std::size_t>(i)], coarse, fine, axis, scale,
                               fluidOk, scheme);
     });
   });
@@ -282,7 +288,7 @@ inline CfCompCsr buildCfDivDelta(const AmrPoisson<3, Bits>& ap, const BlockOctre
       const unsigned Li = t.level(i);
       const double invV = 1.0 / ap.cellVolume(i);
       ap.forEachFaceFull(i, [&](Index j, int axis, int dir, double area, double, double alpha) {
-        const unsigned Lj = t.level(j);
+        const unsigned Lj = ap.levelOf(j);  // ghost-safe
         if (Lj == Li)
           return;
         const Index coarse = (Lj > Li) ? j : i;
@@ -301,7 +307,7 @@ inline CfCompCsr buildCfDivDelta(const AmrPoisson<3, Bits>& ap, const BlockOctre
         eC.w = scale * (wC - 0.5);
         row.push_back(eF);
         row.push_back(eC);
-        detail::cfAppendStencil(ap, t, row, coarse, fine, axis, scale * wC, fluidOk, scheme, proto);
+        detail::cfAppendStencil(ap, row, coarse, fine, axis, scale * wC, fluidOk, scheme, proto);
       });
     });
   }
@@ -349,7 +355,7 @@ inline std::array<CfCsr, 3> buildCfGradDelta(const AmrPoisson<3, Bits>& ap,
         const int s = (dir > 0) ? 0 : 1;
         ++cnt[axis][s];
         sdist[axis][s] = dist;
-        if (t.level(j) != Li)
+        if (ap.levelOf(j) != Li)  // ghost-safe
           cf[axis][s] = true;
       });
       for (int a = 0; a < 3; ++a) {
@@ -374,14 +380,13 @@ inline std::array<CfCsr, 3> buildCfGradDelta(const AmrPoisson<3, Bits>& ap,
             row.push_back({i, -rw});
           }
           // (b) coarse* substitution inside the C/F face gradients, at the NEW side weight.
-          const unsigned Lj = t.level(j);
+          const unsigned Lj = ap.levelOf(j);  // ghost-safe
           if (Lj == Li)
             return;
           const Index coarse = (Lj > Li) ? j : i;
           const Index fine = (Lj > Li) ? i : j;
           const double ssgn = (Lj > Li) ? gsgn : -gsgn;  // sign of the substituted value in g
-          detail::cfAppendStencil(ap, t, row, coarse, fine, a, w * inv * ssgn / dist, fluidOk,
-                                  scheme);
+          detail::cfAppendStencil(ap, row, coarse, fine, a, w * inv * ssgn / dist, fluidOk, scheme);
         });
       }
     });
@@ -447,7 +452,7 @@ inline CfUfDelta buildCfUfDelta(const AmrPoisson<3, Bits>& ap, const BlockOctree
     auto& vrow = velPer[static_cast<std::size_t>(i)];
     auto& prow = phiPer[static_cast<std::size_t>(i)];
     ap.forEachFaceFull(i, [&](Index j, int axis, int dir, double, double dist, double) {
-      const unsigned Lj = t.level(j);
+      const unsigned Lj = ap.levelOf(j);  // ghost-safe
       if (Lj != Li && fluidOk(i) && fluidOk(j)) {
         const Index coarse = (Lj > Li) ? j : i;
         const Index fine = (Lj > Li) ? i : j;
@@ -463,14 +468,14 @@ inline CfUfDelta buildCfUfDelta(const AmrPoisson<3, Bits>& ap, const BlockOctree
         eC.w = wC - 0.5;
         ve.push_back(eF);
         ve.push_back(eC);
-        detail::cfAppendStencil(ap, t, ve, coarse, fine, axis, wC, fluidOk, scheme, proto);
+        detail::cfAppendStencil(ap, ve, coarse, fine, axis, wC, fluidOk, scheme, proto);
         for (const auto& e : ve)
           vrow.push_back(e);
         d.vel.start[static_cast<std::size_t>(slot) + 1] = static_cast<Index>(ve.size());
         // φ part: uf −= (φ₊−φ₋)/d; the coarse cell's φ is substituted with coarse*.
         const double sideSign = ((dir > 0) == (coarse == j)) ? 1.0 : -1.0;
         std::vector<detail::ScalarEnt> pe;
-        detail::cfAppendStencil(ap, t, pe, coarse, fine, axis, -sideSign / dist, fluidOk, scheme);
+        detail::cfAppendStencil(ap, pe, coarse, fine, axis, -sideSign / dist, fluidOk, scheme);
         for (const auto& e : pe)
           prow.push_back(e);
         d.phi.start[static_cast<std::size_t>(slot) + 1] = static_cast<Index>(pe.size());
