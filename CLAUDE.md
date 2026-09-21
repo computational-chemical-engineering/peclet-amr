@@ -52,10 +52,12 @@ PYTHONPATH=$PWD/build_q OMP_NUM_THREADS=1 python python/state_hash.py --check py
 export PATH=/usr/local/cuda-13.2/bin:$PATH                 # for the nvidia-cuda prefix
 ```
 
-**Counts** (host-openmp): **92** C++ ctests (28 single-rank + 16 distributed binaries × np = 1, 2,
+**Counts** (host-openmp): **96** C++ ctests (28 single-rank + 17 distributed binaries × np = 1, 2,
 4, 8) + 5 `bench` (four `study_amr_*` + `bench_amr_flow`) + 4 `python` (`python_amr`,
-`python_amr_np2`, `python_state_hash`, `python_flow_parity`) = 101. The battery was 92 + 2 Python ctests in core's
-`build_rel_k` / `build_rel_py` before the move and reproduces here test for test.
+`python_amr_np2`, `python_state_hash`, `python_flow_parity`) = 105. (92 / 101 until 2026-09-21,
+when `amr_distributed_cf` — the distributed C/F quadratic scheme — added a 17th distributed
+binary.) The battery was 92 + 2 Python ctests in core's `build_rel_k` / `build_rel_py` before the
+move and reproduces here test for test.
 
 **ctest protocol** (`cmake/PecletAmrTest.cmake`, the ONE place every test is registered through;
 QUALITY_PLAN §3.D): a binary that cannot run exits 77 (`tests/test_util.hpp kSkipExitCode`; MPI
