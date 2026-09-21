@@ -76,6 +76,26 @@ and what is left is each one's own distance from it:
 | rel diff `u` | 8.2e-7 | 2.9e-7 | 1.7e-7 |
 | rel diff `p` | 1.3e-4 | 1.0e-4 | 7.9e-5 |
 
+And it is not an accident of one resolution. The same case at **N = 64** (sphere R = 19.87,
+25 steps, 229 176 shared fluid cells): `u` 1.1e-6, `v`/`w` 3.9e-6, `p` 3.3e-4 — the same class,
+with pressure iterations 14–15 (`flow`) vs 16–17 (`amr`) and 3.13 s vs 4.46 s per step.
+
+### 2a. A diagnostic trap: `divergence_norm_face()` under the ghost scheme
+
+Worth knowing before it costs someone a day. On the runs above `amr`'s
+`Flow.diagnostics.divergence_norm_face()` reads **34** (N = 32) and **184** (N = 64) while
+`flow`'s `max_open_divergence()` reads 2e-14 and 7e-13 — and the velocity fields agree to 1e-6.
+The solver is fine; the diagnostic is measuring the wrong constraint. `divFaceNorm`
+(`flow.hpp`) sums the plain area-weighted face divergence, but the **ghost** scheme's constraint is
+that divergence **plus the overlay delta** (`ghostDivergDelta`, added to `div_` in `project()`
+before the solve). The diagnostic omits that term, so under the default scheme it reports the
+residual of a constraint the solver never solved. On the **aperture** path, where the diagnostic
+and the constraint do match, the same case reads 5.2e-12.
+
+It is also an *unnormalized* L2 sum over fluid cells, so it grows with both resolution and velocity
+magnitude and cannot be read as an absolute number. `divergence_norm()` (the cell divergence) is
+the honest residual of the approximate projection and is expected to be non-zero.
+
 ## 3. The one discretization difference: the advecting velocity
 
 L2 vs L2a localizes it exactly. After step 1 the two engines agree to 1e-10 in **`u`, `p` AND the

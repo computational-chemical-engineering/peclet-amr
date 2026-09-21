@@ -35,6 +35,11 @@ solver with published anchors — into a reference oracle for every uniform-grid
 - **A3 — cut cells under advection (P5).** A 1.6e-4 relative difference that is NOT the advecting
   velocity: the two engines reconstruct the advective flux differently at cut faces. Read the two
   reconstructions side by side; it is a half-day of reading, not a campaign.
+- **A3′ — `divergence_norm_face()` lies under the ghost scheme** (parity note §2a): it sums the
+  plain area-weighted face divergence and omits the ghost overlay delta that is part of the
+  constraint actually solved, so it reads 34 at N = 32 and 184 at N = 64 on a healthy solve. It is
+  also unnormalized. Either fold the overlay term in or rename it to say what it measures; as it
+  stands it is a day-losing trap for the next person who checks whether the projection worked.
 - **A4 — tolerance API (P4).** The pressure tolerance is hard-coded (`flow.hpp:1363`) and
   `setMomentumTol` is unbound in Python, so a user cannot trade accuracy for cost and a
   tolerance-matched comparison is not expressible. `flow` has `set_pressure_pcg(on, iters, rtol)`
