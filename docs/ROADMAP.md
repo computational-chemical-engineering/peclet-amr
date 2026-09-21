@@ -24,26 +24,52 @@ path costs 4–7× what `flow` costs for the same step.
 Finishing that is the cheapest accuracy work available, because it turns `flow` — a validated
 solver with published anchors — into a reference oracle for every uniform-grid case.
 
-- **A1 — the advecting velocity (parity note P1).** `flow` advects with the un-projected cell→face
-  average; this solver advects with the projected divergence-free `uf`, per its own recorded
-  decision. Deciding this is `flow`'s call and the user's (it moves `flow`'s collocated baselines);
-  until it is taken, the parity gate runs with the ablation switch. **Blocked on a decision, not on
-  work.**
+- **A1 — the advecting velocity (parity note P1)** — **DECIDED 2026-09-21 by the user: the
+  projected divergence-free face velocities are correct.** `amr` keeps what it does; `flow` is
+  adopting it, in the flow repo, in parallel. Nothing to do here except watch: the parity gate no
+  longer pins a convention, it PROBES which one `flow` is on and says so, passing either way and
+  failing only if `flow` matches neither. When the swap has landed and stuck, drop the legacy arm
+  of that probe.
 - **A2 — the aperture pair (P2).** Identify which `flow` scheme, if any, matches this solver's
   aperture path, or add a matched mode. Today only `ghost` ↔ `ghost` is an exact pair, which is
   enough for production but leaves the scheme matrix incomplete.
 - **A3 — cut cells under advection (P5).** A 1.6e-4 relative difference that is NOT the advecting
   velocity: the two engines reconstruct the advective flux differently at cut faces. Read the two
   reconstructions side by side; it is a half-day of reading, not a campaign.
-- **A3′ — `divergence_norm_face()` lies under the ghost scheme** (parity note §2a): it sums the
-  plain area-weighted face divergence and omits the ghost overlay delta that is part of the
-  constraint actually solved, so it reads 34 at N = 32 and 184 at N = 64 on a healthy solve. It is
-  also unnormalized. Either fold the overlay term in or rename it to say what it measures; as it
-  stands it is a day-losing trap for the next person who checks whether the projection worked.
-- **A4 — tolerance API (P4).** The pressure tolerance is hard-coded (`flow.hpp:1363`) and
-  `setMomentumTol` is unbound in Python, so a user cannot trade accuracy for cost and a
-  tolerance-matched comparison is not expressible. `flow` has `set_pressure_pcg(on, iters, rtol)`
-  and `set_velocity_residual_tolerance`; follow those names (`../docs/NAMING.md`).
+- **A3′ — `divergence_norm_face()` lies under the ghost scheme** — **DONE 2026-09-21.** It sums
+  the plain area-weighted face divergence and omits the ghost overlay delta that is part of the
+  constraint actually solved, so it reads 34 at N = 32 and 184 at N = 64 on a healthy solve, and is
+  unnormalized besides. Folding the overlay in is not possible — the delta is a functional of the
+  CELL velocities, so the ghost residual cannot be written as a norm of `uf` at all; `divNormL2()`
+  already adds it and is the right residual there. Closed by documenting it precisely in the C++ and
+  the binding, and by GATING it: `test_amr_face_field` now runs a ghost arm and asserts the
+  diagnostic is >1e3× the aperture residual and indistinguishable from the cell divergence.
+- **A5 — a mesh whose cut cells sit BELOW the finest level is SILENTLY WRONG.** Found by the
+  convergence study, 2026-09-21. Plane Poiseuille with grid-aligned walls, four **physically
+  identical** 4096-leaf meshes of leaf size 2 over a 32³ box:
+
+  | tree | max err | shape of the error |
+  |---|---:|---|
+  | `lmax=0, spacing 2.0` | 9.2e-14 | exact |
+  | `lmax=1` unrefined | **1.1250** | the exact parabola, shifted bodily |
+  | `lmax=2` unrefined | 1.4062 | ” |
+  | `lmax=3` unrefined | 1.4766 | ” |
+
+  The exact peak is 31.5, so ~3.6–4.7 %. The error is a **pure constant offset** (spread 5.8e-14),
+  so the interior operator is fine and the no-slip wall value is wrong; it fits
+  `1.5·(1 − 4^−lmax)` to every digit — a per-level `4^−k` term summed down the tree — and depends
+  only on `lmax`, which is a tree *capacity* parameter, not a physical one. Unaffected by
+  `set_ghost_projection(False)` or by `set_ghost_sampled(True)`. Refining the wall band to the
+  finest level (the supported configuration) removes most of it.
+
+  The tree documents a uniform-finest-band contract for the ghost projection, so this may be an
+  unenforced contract rather than a bug — but **nothing throws and nothing warns**, and the same
+  physical mesh is exact at `lmax=0`. Whatever the verdict, silence is not acceptable: a user who
+  builds an octree with room to refine and does not use it gets a quietly wrong wall.
+- **A4 — tolerance API (P4)** — **DONE 2026-09-21.** `Flow.set_pressure_tolerance(rtol)` (feeding
+  both the MG-PCG and the ghost BiCGStab, as flow does) and `Flow.set_momentum_tolerance(rtol)`,
+  public tier, defaults unchanged. Measured: rtol 1e-10/1e-6/1e-3 → 11/7/4 pressure iterations on
+  the Z&H sphere for the same answer to 6 digits.
 
 ## A′. Catch up with `flow`'s 2026-09 solver-control work
 
