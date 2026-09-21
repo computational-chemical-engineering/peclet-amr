@@ -16,6 +16,8 @@ def finalize() -> None:
 
 execution_space: str = 'OpenMP'
 
+build_toolchain: str = 'GNU 14.2.0 Release x86_64 Kokkos 5.1.1'
+
 def spacing_from_extent(extent: Sequence[float], root_cells: Sequence[int], lmax: int) -> float:
     """
     The finest cell width h0 = extent / (root_cells * 2**lmax) of a PHYSICAL domain — the one place an AMR spacing is computed, so no caller writes one (see suite/docs/PHYSICAL_UNITS_PLAN.md). Returns ONE number, so it raises when the extent does not give cubic cells — use `spacings_from_extent` for a box mesh.
@@ -354,6 +356,11 @@ class FlowDiagnostics:
     def set_aperture_order(self, order: int) -> None:
         """
         Aperture estimator for the (fallback) aperture projection: 2 = analytic marching-squares (DEFAULT since 2026-08-26), 1 = legacy one-sample model. Call before set_solid.
+        """
+
+    def set_uf_advection(self, on: bool) -> None:
+        """
+        ABLATION. The advecting velocity of the momentum advection: the projected, divergence-free face field uf (ON, the shipped Almgren-Bell-Colella scheme) or, with on=False, the un-projected 1/2(u_i+u_j) cell->face average that the first step uses before any projection has run. It is the ONE discretization difference between this solver and peclet.flow's SolverColocated on a uniform grid; turning it off makes the two agree to solver tolerance (docs/amr_flow_uniform_parity.md).
         """
 
 class DistributedOctree:

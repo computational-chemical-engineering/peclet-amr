@@ -805,6 +805,7 @@ class FlowDiagnostics {
   void set_momentum_mg_solver(bool on) { f_.engine().setMomentumMGSolver(on); }
   void set_ghost_gradient(bool on) { f_.engine().setGhostGradient(on); }
   void set_aperture_order(int order) { f_.engine().setApertureOrder(order); }
+  void set_uf_advection(bool on) { f_.engine().setUfAdvection(on); }
 
  private:
   Flow& f_;
@@ -1165,7 +1166,14 @@ NB_MODULE(_amr, m) {
       .def("set_aperture_order", &FlowDiagnostics::set_aperture_order, nb::arg("order"),
            "Aperture estimator for the (fallback) aperture projection: 2 = analytic "
            "marching-squares (DEFAULT since 2026-08-26), 1 = legacy one-sample model. "
-           "Call before set_solid.");
+           "Call before set_solid.")
+      .def("set_uf_advection", &FlowDiagnostics::set_uf_advection, nb::arg("on"),
+           "ABLATION. The advecting velocity of the momentum advection: the projected, "
+           "divergence-free face field uf (ON, the shipped Almgren-Bell-Colella scheme) or, with "
+           "on=False, the un-projected 1/2(u_i+u_j) cell->face average that the first step uses "
+           "before any projection has run. It is the ONE discretization difference between this "
+           "solver and peclet.flow's SolverColocated on a uniform grid; turning it off makes the "
+           "two agree to solver tolerance (docs/amr_flow_uniform_parity.md).");
 
   nb::class_<DistributedOctree> distributed(
       m, "DistributedOctree",

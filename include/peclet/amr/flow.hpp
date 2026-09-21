@@ -600,6 +600,15 @@ class AmrFlow {
   /// pressure, solved here per velocity component. Bounding the tolerance (this knob) caps the
   /// over-solve; making it actually *scale* needs the velocity multigrid (setMomentumMG).
   void setMomentumTol(double tol) { momTol_ = tol; }
+  /// ABLATION (developer tier). The advecting velocity of the momentum advection: the projected,
+  /// divergence-free face field uf (ON, the shipped Almgren–Bell–Colella scheme — the face field
+  /// the projection just made solenoidal IS the conservative advecting flux) or, with `on=false`,
+  /// the un-projected ½(u_i+u_j) cell→face average that the first step uses before any projection
+  /// has run. Exists to A/B exactly this choice: it is the ONE discretization difference between
+  /// this solver and peclet.flow's `SolverColocated` on a uniform grid (flow's `cadv::adv_vel`
+  /// still averages the cell velocities — the swap its own design note prescribes was never made).
+  /// See docs/amr_flow_uniform_parity.md.
+  void setUfAdvection(bool on) { ufAdvect_ = on; }
   /// Use the Galerkin velocity multigrid (MomentumMG) as the momentum BiCGStab
   /// preconditioner. This is the scalable momentum solver: the coarse operators are the exact
   /// assembled cut-cell operator coarsened by R·A·P, so the V-cycle is a consistent
@@ -1180,19 +1189,18 @@ class AmrFlow {
         // SOU/FOU deferred correction use the SAME velocity ⇒ the FOU cancels at steady state
         // (host-parity).
         const View<const double> ufv(uf_);
+        const bool useUf = faceFieldBuilt_ && ufAdvect_;
         if (implicitFou_)
           buildFou(geom_, View<const double>(u_[0]), View<const double>(u_[1]),
                    View<const double>(u_[2]), rho_, View<const double>(rscale_), advDiag_, advCoef_,
-                   ufv, faceFieldBuilt_);
+                   ufv, useUf);
         for (int c = 0; c < 3; ++c) {
           if (implicitFou_)
             deferredSou(geom_, View<const double>(u_[0]), View<const double>(u_[1]),
-                        View<const double>(u_[2]), c, rho_, advScheme_, defc_[c], ufv,
-                        faceFieldBuilt_);
+                        View<const double>(u_[2]), c, rho_, advScheme_, defc_[c], ufv, useUf);
           else
             advectExplicit(geom_, View<const double>(u_[0]), View<const double>(u_[1]),
-                           View<const double>(u_[2]), c, rho_, advScheme_, defc_[c], ufv,
-                           faceFieldBuilt_);
+                           View<const double>(u_[2]), c, rho_, advScheme_, defc_[c], ufv, useUf);
         }
         // The staircase MG's fine level mirrors the sharp operator; refresh it so it picks up the
         // current advection state (hasAdv). (The Galerkin MG is the static viscous operator.)
@@ -2168,6 +2176,8 @@ class AmrFlow {
   View<double> uf_;  // ABC/Basilisk divergence-free face field (one per CSR (sub)face)
   bool faceFieldBuilt_ =
       false;  // uf_ populated by a projection (else advection falls back to ½(u_i+u_j))
+  bool ufAdvect_ = true;  // ABLATION (diagnostics): advect with uf_ (ON, the shipped scheme) or
+                          // with the un-projected ½(u_i+u_j) — see setUfAdvection
   std::unique_ptr<Octree> adaptOldT_;          // beginAdapt topology snapshot
   std::array<std::vector<double>, 3> adaptU_;  // beginAdapt field snapshots
   std::vector<double> adaptP_;
