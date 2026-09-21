@@ -38,6 +38,12 @@ def main():
     if cfg["advection"]:
         s.set_advection_scheme(cfg["adv_scheme"])
         s.set_implicit_advection(cfg["implicit_adv"])
+        # Same knob, same spelling, on both engines since flow took the projected face field as
+        # its collocated advecting velocity (flow/doc/uf_advection.md, 2026-09-21). A case that
+        # sets it therefore ablates BOTH engines together, which is the only way the ablation
+        # keeps meaning a comparison.
+        if "uf_advection" in cfg:
+            s.diagnostics.set_uf_advection(cfg["uf_advection"])
     s.set_collocated_scheme(cfg["scheme"])
     if "rot_pressure" in cfg:
         s.diagnostics.set_rotational_pressure(cfg["rot_pressure"])

@@ -114,7 +114,8 @@ unaffected by ablating the rotational term. The cause is one function:
   the first step, before any projection has run. This is a **recorded settled decision**
   (`../docs/decisions/amr.md:13`, 2026-07-24) and it is the Almgren–Bell–Colella / Basilisk
   prescription: the field the projection just made solenoidal IS the conservative advecting flux.
-- **`flow`** advects with the *un-projected* cell→face average
+- **`flow`** advected (until 2026-09-21 — see the RESOLVED box below) with the *un-projected*
+  cell→face average
   `½(U(x)+U(x+1))` — `colocated_advection.hpp:29-36`. Its own header says the swap is pending:
   > *"in phase 2 (no pressure) the advecting velocity is the plain cell→face average … Once the
   > approximate projection lands (phase 3), the natural advecting field is the projected,
@@ -131,10 +132,16 @@ full Navier–Stokes). The ablation is `Flow.diagnostics.set_uf_advection(False)
 **developer tier, default unchanged**; it exists to A/B exactly this and to make the parity gate
 above runnable without touching either solver's numerics.
 
-**This is a `flow` defect against `flow`'s own design note, not an `amr` deviation.** Fixing it
-changes `flow`'s collocated numerics, so it is a recorded decision with a validation-campaign
-blast radius (regression baselines, the VoF work, the Z&H/Ghia/BFS anchors) — it is NOT taken here.
-See §7.
+**This was a `flow` defect against `flow`'s own design note, not an `amr` deviation.**
+
+> **RESOLVED 2026-09-21 — `flow` took the swap.** `peclet.flow`'s collocated momentum advection
+> now reads the projected divergence-free face field, with the same `set_uf_advection` knob (same
+> spelling) as the ablation. `flow/doc/uf_advection.md` carries the implementation, the evidence
+> and the limits; `suite/docs/decisions/flow.md` carries the decision. Measured afterwards, both
+> engines at their default: **vel 1.90e-11, pres 4.41e-11** over the same 20 NS steps — so the
+> gate case below is no longer an ablation but an agreement gate, and `tg_advect_matched.json`
+> dropped its `"uf_advection": false` (the tolerance tightened 1e-8 → 1e-9). §7's P1 is closed.
+> `amr`'s own scheme and `docs/decisions/amr.md:13` are unchanged: `flow` moved to `amr`.
 
 ### 3a. …and how much it is worth, measured
 
@@ -168,6 +175,13 @@ the change is low-risk and low-reward on smooth cases.** Where it could still bi
 the dt² scaling points at — large-dt steady driving on cut-cell beds, which is exactly `flow`'s
 production regime and is NOT covered by the two tests above.
 
+**Outcome (2026-09-21).** The user took it, and `flow` measured that last regime on its own side:
+a 32³ cut-cell sphere bed at dt=20 with implicit advection moves ⟨u_x⟩ by **1e-5 %**
+(2.115907e-01 → 2.115886e-01), and every advection-free collocated baseline is bit-identical
+because there is no advecting velocity in a Stokes run. The blast radius was smaller than the
+section feared; the table above predicted the direction correctly. See
+`flow/doc/uf_advection.md` §3.
+
 ## 4. What is not yet a matched pair
 
 The **aperture** family. `flow` exposes `set_collocated_scheme('ghost' | 'gauge-exact' | 'embed' |
@@ -196,7 +210,9 @@ CFL-limited dt it is small and at a large steady-driving dt it dominates. The tw
 therefore show up in *different* regimes, which is why neither was visible to the other's test.)
 
 The gate `sphere_ghost_advect` records this number with a deliberately loose tolerance. It is a
-tripwire against regression, not a parity claim.
+tripwire against regression, not a parity claim. (Re-measured 2026-09-21 after `flow` took the
+projected face field: **1.634e-04**, from 1.6497e-04 — confirming §5's reading that this is an
+independent cut-cell difference and not §3's.)
 
 ## 6. Reproducing
 
@@ -225,7 +241,7 @@ OMP_NUM_THREADS=2 OMP_PROC_BIND=false ctest --test-dir build_q -R python_flow_pa
 
 | # | question | default if nobody decides |
 |---|---|---|
-| P1 | Does `flow`'s `cadv::adv_vel` swap to the projected face field (§3)? It is `flow`'s own design note's step 3, it makes the FOU row-sum identity hold, and it removes the last uniform-grid difference — but it changes `flow`'s collocated numerics and every collocated baseline with it. | **not taken** — `amr` keeps the recorded scheme, the ablation switch keeps the gate runnable |
+| ~~P1~~ | ~~Does `flow`'s `cadv::adv_vel` swap to the projected face field (§3)?~~ | **CLOSED 2026-09-21 — taken.** `flow` swapped; both engines now agree to 1.9e-11 on the full NS step. Recorded in `suite/docs/decisions/flow.md`; evidence in `flow/doc/uf_advection.md` |
 | P2 | Which `flow` scheme (if any) is the pair of `amr`'s aperture path (§4)? | left unmatched; `ghost` is the gate |
 | P3 | Do the two engines have to agree on *iteration counts*, or only on results to solver tolerance? Exact iteration parity means one shared linear-algebra stack (`flow`'s structured RB-GS/CutcellMG vs `amr`'s face-CSR MG-PCG/BiCGStab), not a tuning exercise. On L5g they already agree to ±1. | results-to-tolerance is the gate; iteration count is reported, not gated |
 | P5 | What makes the cut-cell advective flux differ (§5)? | undiagnosed; gated as a tripwire |

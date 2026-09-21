@@ -34,8 +34,9 @@ GATES = [
      "the shared core: 7-point operator, divergence, ABC gradient, BE momentum, periodic wrap"),
     ("tg_advect_one_step.json", 1e-8, 1e-8,
      "the advection stencil itself (one step, before either engine has a projected face field)"),
-    ("tg_advect_matched.json", 1e-8, 1e-8,
-     "the full NS step with the advecting velocity matched (amr ablated to flow's choice)"),
+    ("tg_advect_matched.json", 1e-9, 1e-9,
+     "the full NS step -- both engines advecting with the projected face field, which is now the "
+     "default on both (flow took it 2026-09-21); measured 1.9e-11 / 4.4e-11"),
     ("channel_cut.json", 1e-8, None,
      "the cut-cell Robust-Scaled no-slip momentum overlay at non-grid-aligned walls"),
     ("sphere_ghost.json", 1e-5, 1e-3,
