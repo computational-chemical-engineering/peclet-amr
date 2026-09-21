@@ -74,8 +74,14 @@ quantity attained at a 2:1 interface whose local geometry — a coarse cell of w
 fine cells of width `h` — is identical at every rung, however much volume sits on either side.
 
 A ladder that wants a meaningful L2 has to hold the refined region fixed in PHYSICAL units, which
-means building the mesh from an explicit physical predicate rather than a cell-count band. Not done
-here; the max-norm result did not need it.
+means building the mesh from an explicit physical predicate rather than a cell-count band.
+`graded_poiseuille_ladder.py` does exactly that and is the one to extend; on it the coarse fraction
+is constant to four digits and **the L2 ratio comes out at 4.00, exactly matching the max** — which
+is the proof that the 1.71 / 1.89 above were the mesh family moving, not the scheme.
+
+The same flaw invalidated more than the L2 column: it made any comparison *between* the two
+interface orientations meaningless, because their meshes scaled differently. That is why the
+tangential result below was re-measured on the self-similar family before being believed.
 
 Where the error lives, at `n = 32` (levels: **0 is the finest**):
 
@@ -88,7 +94,7 @@ so the fine region — walls included — is exact, and the entire error is carr
 adjacent to the interface. That is the expected signature of a C/F flux error propagating into the
 coarse region as a smooth (here nearly constant) correction.
 
-## 3. `set_cf_scheme('quadratic')` is inert here, and that is correct
+## 3. `set_cf_scheme('quadratic')`: inert on the normal orientation, decisive on the tangential one
 
 Standard and quadratic agree to **6.0e-14** — byte-identical for practical purposes. That is not a
 bug and not a wiring failure: the Martin–Cartwright correction is a **tangential** quadratic, and
@@ -104,9 +110,50 @@ local truncation at the interface, because those rows sit on a set of codimensio
 contribution to the global error is one order higher. `docs/amr_mixed_level_cut_band_plan.md` makes
 the same argument for seam rows on a codim-2 set.
 
-**Not yet measured:** the complementary orientation, interface *parallel* to the variation, where
-the tangential correction does have something to do. Driver written and ready:
-`tests/study/convergence/graded_poiseuille_tangential.py`.
+### …and on a TANGENTIAL interface it is the difference between order 0.4 and order 1.6
+
+Measured on a **self-similar** mesh family (`tests/study/convergence/graded_poiseuille_ladder.py`;
+see the box below for why that matters), refining a fixed *physical* region — `|x - wall| < 2`,
+plus `y < 16` on the tangential arm — so the coarse fraction of the channel is constant to four
+digits at every rung.
+
+| n | orientation | cf | leaves | coarse % | max err | ratio | L2 | ratio |
+|---:|---|---|---:|---:|---:|---:|---:|---:|
+| 32 | normal | standard | 11264 | 27.27 | 3.7500e-01 | — | 3.2476e-01 | — |
+| 32 | normal | quadratic | 11264 | 27.27 | 3.7500e-01 | — | 3.2476e-01 | — |
+| 64 | normal | standard | 90112 | 27.27 | 9.3750e-02 | **4.00** | 8.1190e-02 | **4.00** |
+| 64 | normal | quadratic | 90112 | 27.27 | 9.3750e-02 | **4.00** | 8.1190e-02 | **4.00** |
+| 32 | tangential | standard | 22016 | 6.98 | 1.3778e+00 | — | 6.0309e-01 | — |
+| 32 | tangential | quadratic | 22016 | 6.98 | 3.5986e-01 | — | 2.4226e-01 | — |
+| 64 | tangential | standard | 176128 | 6.98 | 1.0394e+00 | 1.33 | 4.4737e-01 | 1.35 |
+| 64 | tangential | quadratic | 176128 | 6.98 | 1.1840e-01 | **3.04** | 7.9752e-02 | **3.04** |
+
+As orders (`log2(ratio)`), identical in max and L2 on every row:
+
+| orientation | standard (the DEFAULT) | quadratic |
+|---|---:|---:|
+| normal | **2.00** | 2.00 (inert — §3) |
+| tangential | **0.41** | **1.60** |
+
+On the normal orientation the default is second order and the quadratic scheme is inert, so the
+default costs nothing. **On the tangential orientation the default converges at order 0.41** — far
+below even first order — **while the quadratic scheme reaches 1.60**, and the absolute gap widens
+with refinement: 3.8× at n=32, **8.8× at n=64**.
+
+This independently confirms, and sharpens, a decision already in the register:
+`../docs/decisions/amr.md` "cf=1 (quadratic C/F flux) is not optional on graded meshes — *the
+standard flux cannot converge on graded meshes*", with cf=0 explicitly rejected there. The
+measurement says that is **orientation-dependent**: cf=0 is perfectly second order where the
+interface has no tangential variation, and only collapses where it does. Since a real graded mesh
+wrapping a curved body has interfaces at every orientation, the practical consequence is the same
+one the register already reached.
+
+**Open, and a decision for the user, not a judgement call here:** the shipped default is still
+`set_cf_scheme(0)`. Flipping it to `1` would align the code with the register entry, and it is
+**inert by geometry on any uniform or finest-band mesh** (no C/F faces ⇒ no delta), so only graded
+runs move. Against: it is a shipped default whose numerics move every graded result, and cf=1 has a
+stability history at cut rows (the `rowRegular` row-gate entry in the register). Recorded as
+ROADMAP A6.
 
 ## 4. What had to be fixed first: the cut-row viscous coefficient (ROADMAP A5)
 

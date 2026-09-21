@@ -101,6 +101,18 @@ across the suite:
 None of these change a number. They are the difference between two codes that agree numerically
 and two codes that *feel* like one suite.
 
+- **A6 — should `set_cf_scheme('quadratic')` be the DEFAULT?** *A decision for the user.* The
+  register already says cf=1 "is not optional on graded meshes" and explicitly rejects cf=0 there,
+  but the shipped default is cf=0. Measured on a self-similar ladder
+  (`docs/amr_graded_convergence.md` §3): on an interface NORMAL to the variation the default is a
+  clean order 2.00 and the quadratic scheme is inert, so it costs nothing; on a TANGENTIAL
+  interface the default manages **order 0.41** against quadratic's **1.60**, with the absolute gap
+  widening from 3.8× at n=32 to **8.8× at n=64**. A real graded mesh around a curved body has both
+  orientations. For the flip: it aligns the code with the register and is **inert by geometry** on
+  any uniform or finest-band mesh (no C/F faces ⇒ no delta), so only graded runs move. Against: it
+  is a shipped default, every graded result moves with it, and cf=1 has a stability history at cut
+  rows (the `rowRegular` row-gate register entry). Not flipped here.
+
 ## B. The accuracy question the parity work did NOT answer
 
 Parity at `lmax = 0` says the two agree **where the mesh is uniform**. It says nothing about the
