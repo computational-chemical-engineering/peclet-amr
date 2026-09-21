@@ -101,7 +101,7 @@ across the suite:
 None of these change a number. They are the difference between two codes that agree numerically
 and two codes that *feel* like one suite.
 
-- **A6 — should `set_cf_scheme('quadratic')` be the DEFAULT?** *A decision for the user.* The
+- **A6 — `set_cf_scheme('quadratic')` IS the DEFAULT** — **DONE 2026-09-21 (user decision).** The
   register already says cf=1 "is not optional on graded meshes" and explicitly rejects cf=0 there,
   but the shipped default is cf=0. Measured on a self-similar ladder
   (`docs/amr_graded_convergence.md` §3): on an interface NORMAL to the variation the default is a
@@ -111,7 +111,15 @@ and two codes that *feel* like one suite.
   orientations. For the flip: it aligns the code with the register and is **inert by geometry** on
   any uniform or finest-band mesh (no C/F faces ⇒ no delta), so only graded runs move. Against: it
   is a shipped default, every graded result moves with it, and cf=1 has a stability history at cut
-  rows (the `rowRegular` row-gate register entry). Not flipped here.
+  rows (the `rowRegular` row-gate register entry).
+
+  It could not be flipped until the scheme ran multi-rank: `setSolid` threw for
+  `dist_ && cfScheme_ != standard`, so the default would have broken every MPI run. That guard is
+  gone (`85e2664`, and `961ba10` for the two bugs it was hiding — a block-period wrap that could
+  return a geometrically unrelated leaf across ranks, and `t.level()` on ghost indices). Four
+  byte-gate hashes re-recorded: exactly the scenarios that build a graded mesh AND run a `Flow`.
+  Direct check on the byte gate's own graded sphere, against a uniform-fine reference: the
+  permeability error falls from 5.15e-02 to 1.22e-02.
   One blocker is gone: until 2026-09-21 `setSolid` THREW for `dist_ && cfScheme_ != standard`, so
   the scheme could not have been a default at all. It is now distributed
   (`docs/amr_setup_parallel_plan.md` §7, ctests `amr_distributed_cf_np{1,2,4,8}`).
