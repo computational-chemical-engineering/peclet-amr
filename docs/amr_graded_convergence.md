@@ -42,20 +42,40 @@ Driver: `tests/study/convergence/graded_poiseuille.py`.
 Box 32³, channel `x ∈ (8, 24)`, `lmax = 1`, wall band 2 cells, 30 steps at `dt = 1e6`
 (i.e. a Stokes solve), host-OpenMP Release. Exact peak `u_y = 32`.
 
-| n_fine | mesh | cf scheme | leaves | max err | L2 (vol-wtd) | order(L2) |
+| n_fine | mesh | cf scheme | leaves | max err | ratio | L2 (vol-wtd) |
 |---:|---|---|---:|---:|---:|---:|
-| 32 | uniform fine | standard | 32768 | 1.07e-13 | 5.38e-14 | — |
-| 32 | graded | standard | 18432 | 3.7500e-01 | 2.6517e-01 | — |
-| 32 | graded | quadratic | 18432 | 3.7500e-01 | 2.6517e-01 | — |
-| 64 | uniform fine | standard | 262144 | 1.42e-12 | 9.48e-13 | — |
-| 64 | graded | standard | 90112 | 9.3750e-02 | 8.1190e-02 | 1.71 |
-| 64 | graded | quadratic | 90112 | 9.3750e-02 | 8.1190e-02 | 1.71 |
+| 32 | uniform fine | standard | 32768 | 1.0658e-13 | — | 5.3752e-14 |
+| 32 | graded | standard | 18432 | 3.7500e-01 | — | 2.6517e-01 |
+| 32 | graded | quadratic | 18432 | 3.7500e-01 | — | 2.6517e-01 |
+| 64 | uniform fine | standard | 262144 | 1.4175e-12 | — | 9.4836e-13 |
+| 64 | graded | standard | 90112 | 9.3750e-02 | **4.00** | 8.1190e-02 |
+| 64 | graded | quadratic | 90112 | 9.3750e-02 | **4.00** | 8.1190e-02 |
+| 128 | uniform fine | standard | 2097152 | 1.6698e-12 | — | 1.2494e-12 |
+| 128 | graded | standard | 491520 | 2.3437e-02 | **4.00** | 2.1924e-02 |
+| 128 | graded | quadratic | 491520 | 2.3437e-02 | **4.00** | 2.1924e-02 |
 
-**The uniform arm is exact at every resolution** (1e-13), confirming the instrument. **The graded
-max error is 0.375 → 0.09375, exactly a factor of 4 — clean second order.** The volume-weighted L2
-order reads 1.71 rather than 2 for a bookkeeping reason, not a numerical one: the refined band is a
-fixed number of *cells*, so the coarse fraction of the channel grows as the ladder climbs and the
-two L2 norms are taken over different mixes.
+**The uniform arm is exact at every resolution** — 1.07e-13 at 32³ through 1.67e-12 at 2.1M leaves,
+a 64× range in cell count — which is what licenses reading any graded departure as scheme error.
+**The graded max error falls by exactly 4.00 at each refinement: clean second order**, on three
+points.
+
+### Read the max, not the L2 — this ladder is not a self-similar mesh family
+
+The volume-weighted L2 column is printed for completeness but is **not a valid order estimate
+here**, and the reason is a trap worth stating plainly because it is easy to publish by accident.
+`refine_to_sdf`'s `band` is a count of CELLS, so the refined region shrinks *physically* as the
+ladder climbs and the mesh changes shape under it. Measured coarse (level-1) fraction of the
+channel: **0.111 at n=32, 0.273 at n=64, 0.216 at n=128** — not constant, and not even monotone. An
+L2 norm taken over a different mix of coarse and fine cells at each rung is not comparing like with
+like, which is why that column wanders (1.71, 1.89) instead of converging.
+
+The **max** error is immune to this, which is why the second-order claim rests on it: it is a local
+quantity attained at a 2:1 interface whose local geometry — a coarse cell of width `2h` against
+fine cells of width `h` — is identical at every rung, however much volume sits on either side.
+
+A ladder that wants a meaningful L2 has to hold the refined region fixed in PHYSICAL units, which
+means building the mesh from an explicit physical predicate rather than a cell-count band. Not done
+here; the max-norm result did not need it.
 
 Where the error lives, at `n = 32` (levels: **0 is the finest**):
 
