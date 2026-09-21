@@ -568,15 +568,19 @@ class AmrFlow {
     gpsRho_ = rho;
     gpsMaxN_ = maxSamples;
   }
-  /// Coarse/fine (2:1) interface scheme (cf_scheme.hpp): 0 = standard two-point flux (default,
-  /// 1st-order at level boundaries, bit-identical legacy path), 1 = Martin–Cartwright tangential
-  /// quadratic (2nd-order — measured at C/F rows: divergence 1.95, cell gradient 1.95, momentum
-  /// SOLUTION 2.0 in test_amr_cf_vector). Applied to everything the STEADY solution feels: the
-  /// momentum diffusion (lagged deferred-correction RHS term), the RHS divergence constraint,
-  /// and the pressure gradients (predictor + cell correction). The pressure MATRIX / MG rails /
-  /// PCG / ghost BiCGStab stay on the standard consistent operator (at the fixed point φ→0, the
-  /// matrix C/F order does not move the steady solution — the (1,2)-mixed philosophy). Works in
-  /// both aperture and ghost-projection modes. Call before setSolid.
+  /// Coarse/fine (2:1) interface scheme (cf_scheme.hpp): 1 = Martin–Cartwright tangential
+  /// quadratic, THE DEFAULT since 2026-09-21; 0 = the standard two-point flux (the legacy path,
+  /// and first-order at level boundaries). Order at C/F rows: divergence 1.95, cell gradient 1.95,
+  /// momentum SOLUTION 2.0 (test_amr_cf_vector). End to end on a self-similar graded ladder
+  /// (docs/amr_graded_convergence.md §3) the DEFAULT matters where the interface has tangential
+  /// variation — order 1.60 (quadratic) against 0.41 (standard) — and is inert by geometry where
+  /// it does not, so cf=0 is kept only for reproducing pre-2026-09-21 graded results. Applied to
+  /// everything the STEADY solution feels: the momentum diffusion (lagged deferred-correction RHS
+  /// term), the RHS divergence constraint, and the pressure gradients (predictor + cell
+  /// correction). The pressure MATRIX / MG rails / PCG / ghost BiCGStab stay on the standard
+  /// consistent operator (at the fixed point φ→0, the matrix C/F order does not move the steady
+  /// solution — the (1,2)-mixed philosophy). Works in both aperture and ghost-projection modes.
+  /// Call before setSolid.
   void setCfScheme(int scheme) { cfScheme_ = static_cast<CfScheme>(scheme); }
   /// Enable momentum advection ∇·(u u) (default OFF ⇒ Stokes). The high-order flux is
   /// second-order upwind (SOU) by default; the first-order-upwind part is solved *implicitly*
@@ -2221,7 +2225,20 @@ class AmrFlow {
   int apertureOrder_ = 2;     // aperture estimator order (setApertureOrder; default 2)
   int gpMatrixOrder_ = 2, gpRhsOrder_ = 2;  // closure orders (2,2 = the production pair; the
                                             // (1,2) mixed form is march-unstable at scale)
-  CfScheme cfScheme_ = CfScheme::standard;  // 2:1 C/F interface scheme (setCfScheme)
+  // DEFAULT since 2026-09-21 (user decision): the Martin-Cartwright tangential quadratic, NOT the
+  // standard two-point flux. The register had already settled that "cf=1 is not optional on graded
+  // meshes" and rejected cf=0 there, but the shipped default stayed standard, so a user who built a
+  // graded mesh silently got the configuration the project had decided against. Measured on a
+  // self-similar ladder (docs/amr_graded_convergence.md §3), as orders:
+  //
+  //                          standard        quadratic
+  //      interface NORMAL to the variation      2.00    2.00 (inert: no tangential variation to
+  //      interface TANGENTIAL                   0.41    1.60  correct, so the delta is empty)
+  //
+  // with the absolute gap on the tangential arm widening 3.8x at n=32 to 8.8x at n=64. INERT BY
+  // GEOMETRY on any uniform or finest-band mesh: no C/F faces means an empty delta CSR and the
+  // identical code path, so only graded runs move.
+  CfScheme cfScheme_ = CfScheme::quadratic;  // 2:1 C/F interface scheme (setCfScheme)
   int outerIters_ = 1;       // Picard outer iterations over the lagged advection (default 1)
   double outerTol_ = 1e-6;   // outer-loop early-stop tolerance on max|Δu|
   double momTol_ = 1e-8;     // per-step momentum BiCGStab relative tolerance (Phase-0 knob)

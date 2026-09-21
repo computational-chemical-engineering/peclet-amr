@@ -814,13 +814,26 @@ class AmrFlow {
   CfCsr gpsMomDelta_;                       // momentum ξ-row seam correction (plan §6.2)
   std::vector<double> maskC_;               // 1 = coupled row (Krylov subspace), 0 = pinned
   std::vector<char> gpPocket_;              // fragmentation guard: 1 = decoupled pocket cell
-  CfScheme cfScheme_ = CfScheme::standard;  // 2:1 C/F interface scheme (setCfScheme)
-  CfCsr cfMom_;                             // +μ(∇²_scheme − ∇²_std) momentum RHS overlay
-  CfCompCsr cfDiv_;                         // (D_scheme − D_std) divergence overlay
-  std::array<CfCsr, 3> cfGrad_;             // (G_scheme − G_std) per gradient axis
-  CfUfDelta cfUf_;                          // (uf_scheme − uf_std) face-field overlay (slots)
-  bool implicitFou_ = true;                 // implicit-FOU deferred-correction advection (stable)
-  int advScheme_ = 0;                       // 0 = SOU (default), 1 = Koren TVD
+  // DEFAULT since 2026-09-21 (user decision): the Martin-Cartwright tangential quadratic, NOT the
+  // standard two-point flux. The register had already settled that "cf=1 is not optional on graded
+  // meshes" and rejected cf=0 there, but the shipped default stayed standard, so a user who built a
+  // graded mesh silently got the configuration the project had decided against. Measured on a
+  // self-similar ladder (docs/amr_graded_convergence.md §3), as orders:
+  //
+  //                          standard        quadratic
+  //      interface NORMAL to the variation      2.00    2.00 (inert: no tangential variation to
+  //      interface TANGENTIAL                   0.41    1.60  correct, so the delta is empty)
+  //
+  // with the absolute gap on the tangential arm widening 3.8x at n=32 to 8.8x at n=64. INERT BY
+  // GEOMETRY on any uniform or finest-band mesh: no C/F faces means an empty delta CSR and the
+  // identical code path, so only graded runs move.
+  CfScheme cfScheme_ = CfScheme::quadratic;  // 2:1 C/F interface scheme (setCfScheme)
+  CfCsr cfMom_;                              // +μ(∇²_scheme − ∇²_std) momentum RHS overlay
+  CfCompCsr cfDiv_;                          // (D_scheme − D_std) divergence overlay
+  std::array<CfCsr, 3> cfGrad_;              // (G_scheme − G_std) per gradient axis
+  CfUfDelta cfUf_;                           // (uf_scheme − uf_std) face-field overlay (slots)
+  bool implicitFou_ = true;                  // implicit-FOU deferred-correction advection (stable)
+  int advScheme_ = 0;                        // 0 = SOU (default), 1 = Koren TVD
   Vec<3> f_{};
   AmrCutCell<Bits> mom_;
   AmrPoisson<3, Bits> pres_;      // openness + divergence/gradient access

@@ -244,7 +244,7 @@ class Flow:
 
     def set_cf_scheme(self, scheme: int) -> None:
         """
-        Coarse/fine (2:1) interface scheme: 0 = standard two-point flux (default, 1st-order at level boundaries), 1 = Martin-Cartwright tangential quadratic (2nd-order; applied to the momentum diffusion, the divergence constraint, and the pressure gradients — the pressure matrix/MG stays standard, which does not move the steady solution). Works with both the aperture and the ghost projection. Call before set_solid.
+        Coarse/fine (2:1) interface scheme. 1 = Martin-Cartwright tangential quadratic, THE DEFAULT since 2026-09-21: second order, applied to the momentum diffusion, the divergence constraint and the pressure gradients (the pressure matrix/MG stays standard, which does not move the steady solution). 0 = the standard two-point flux, first-order at level boundaries, kept only to reproduce pre-2026-09-21 graded results. The default is INERT BY GEOMETRY on a uniform or finest-band mesh -- no C/F faces, no delta -- and matters where a 2:1 interface sees tangential variation, which on a self-similar graded ladder is the difference between order 1.60 and 0.41. Works with both the aperture and the ghost projection. Call before set_solid.
         """
 
     def set_advection_scheme(self, scheme: int) -> None:
