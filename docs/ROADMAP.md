@@ -44,8 +44,8 @@ solver with published anchors — into a reference oracle for every uniform-grid
   already adds it and is the right residual there. Closed by documenting it precisely in the C++ and
   the binding, and by GATING it: `test_amr_face_field` now runs a ghost arm and asserts the
   diagnostic is >1e3× the aperture residual and indistinguishable from the cell divergence.
-- **A5 — a mesh whose cut cells sit BELOW the finest level is SILENTLY WRONG.** Found by the
-  convergence study, 2026-09-21. Plane Poiseuille with grid-aligned walls, four **physically
+- **A5 — a mesh whose cut cells sit BELOW the finest level was SILENTLY WRONG** — **FIXED
+  2026-09-21** (`docs/amr_graded_convergence.md` §4). Found by the convergence study. Plane Poiseuille with grid-aligned walls, four **physically
   identical** 4096-leaf meshes of leaf size 2 over a 32³ box:
 
   | tree | max err | shape of the error |
@@ -62,10 +62,13 @@ solver with published anchors — into a reference oracle for every uniform-grid
   `set_ghost_projection(False)` or by `set_ghost_sampled(True)`. Refining the wall band to the
   finest level (the supported configuration) removes most of it.
 
-  The tree documents a uniform-finest-band contract for the ghost projection, so this may be an
-  unenforced contract rather than a bug — but **nothing throws and nothing warns**, and the same
-  physical mesh is exact at `lmax=0`. Whatever the verdict, silence is not acceptable: a user who
-  builds an octree with room to refine and does not use it gets a quietly wrong wall.
+  Root cause: `AmrCutCell::build` Pass 2 hoisted one `beta = μ/h_finest²` (and the diagonal built
+  from it) outside the per-leaf loop, so a cut cell at level L got a wall row `4^L` too stiff. A
+  bug, not an unenforced contract — the mixed-band note is explicit that a uniformly-coarse band is
+  legal, and every other row was already level-aware. Fixed by scaling per leaf; bit-for-bit inert
+  at the finest level. One byte-gate scenario moved (`amr.flow_sampled`), re-baselined separately.
+  **Still to re-take:** every `set_ghost_sampled(True)` graded-band number in
+  `amr_mixed_level_cut_band_plan.md`, headline +0.256 % included.
 - **A4 — tolerance API (P4)** — **DONE 2026-09-21.** `Flow.set_pressure_tolerance(rtol)` (feeding
   both the MG-PCG and the ghost BiCGStab, as flow does) and `Flow.set_momentum_tolerance(rtol)`,
   public tier, defaults unchanged. Measured: rtol 1e-10/1e-6/1e-3 → 11/7/4 pressure iterations on
@@ -103,11 +106,16 @@ and two codes that *feel* like one suite.
 Parity at `lmax = 0` says the two agree **where the mesh is uniform**. It says nothing about the
 refined mesh, which is the entire point of the package.
 
-- **B1 — a graded-mesh convergence study against an analytic solution.** The C/F schemes are gated
-  a-priori at C/F rows (`test_amr_cf_vector`) and the mixed-level band is gated by seam parity, but
-  there is no end-to-end "refine here, coarsen there, recover the known answer at design order"
-  result. This is the single biggest hole in the validation story and the thing a reviewer will ask
-  for first.
+- **B1 — a graded-mesh convergence study against an analytic solution** — **rung 1 done
+  2026-09-21, and the answer is SECOND ORDER** (`docs/amr_graded_convergence.md`). Plane Poiseuille
+  is exactly quadratic, so the uniform arm is machine-zero (1e-13) and any graded departure is the
+  C/F treatment alone: max error 0.375 → 0.09375 across a 32 → 64 refinement, exactly ÷4, with the
+  fine region (walls included) exact and the whole error in the coarse cells. Open rungs, in order:
+  the **tangential** interface orientation (where `set_cf_scheme('quadratic')` can actually act —
+  it is inert by construction on the normal orientation, and correctly so); a smooth **NS** ladder
+  on a graded mesh, since Poiseuille's projection is a no-op and so covers neither advection nor
+  the projection; and a genuinely **mixed-level** cut band via `refine_to_sdf_graded` +
+  `set_ghost_sampled`, whose accuracy is unmeasured since the A5 fix.
 - **B2 — an unsteady NS test.** Carried open in `amr_collocated_projection.md` since 2026-07-22:
   every steady case in the tree is `uf`-invariant by construction, so nothing currently exercises
   the conservation benefit that motivated the `uf` advection. A decaying Taylor–Green or a shedding
