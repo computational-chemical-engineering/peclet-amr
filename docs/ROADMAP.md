@@ -24,12 +24,12 @@ path costs 4–7× what `flow` costs for the same step.
 Finishing that is the cheapest accuracy work available, because it turns `flow` — a validated
 solver with published anchors — into a reference oracle for every uniform-grid case.
 
-- **A1 — the advecting velocity (parity note P1)** — **DECIDED 2026-09-21 by the user: the
-  projected divergence-free face velocities are correct.** `amr` keeps what it does; `flow` is
-  adopting it, in the flow repo, in parallel. Nothing to do here except watch: the parity gate no
-  longer pins a convention, it PROBES which one `flow` is on and says so, passing either way and
-  failing only if `flow` matches neither. When the swap has landed and stuck, drop the legacy arm
-  of that probe.
+- **A1 — the advecting velocity (parity note P1)** — **DONE 2026-09-21.** The user decided the
+  projected divergence-free face velocities are correct; `amr` kept them and `flow` adopted them
+  (`flow` `8e21724`). The parity gate's probe flipped cleanly: `flow` now matches `amr`'s default
+  to **4.414e-11** and its own former convention to 3.949e-04 — the two arms exactly swapped. The
+  last uniform-grid discretization difference between the engines is closed. Remaining nit: drop
+  the legacy arm of the probe once this has held for a while.
 - **A2 — the aperture pair (P2).** Identify which `flow` scheme, if any, matches this solver's
   aperture path, or add a matched mode. Today only `ghost` ↔ `ghost` is an exact pair, which is
   enough for production but leaves the scheme matrix incomplete.

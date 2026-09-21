@@ -10,7 +10,8 @@
 > geometry, diff cell-by-cell. Neither exposes that yet."* That is now done, and the answer is
 > better than the old table suggested: **on the production (ghost) scheme the two engines agree
 > to 3e-7 on the cut-cell sphere, and there is exactly ONE discretization difference between
-> them — in `flow`, not in `amr`.**
+> them — in `flow`, not in `amr` — and that one was closed on 2026-09-21 (§3), so the two
+> engines now agree to 4.4e-11 over 20 steps of full Navier–Stokes.**
 
 ## 1. The question, and why it has a crisp answer
 
@@ -142,6 +143,11 @@ above runnable without touching either solver's numerics.
 > gate case below is no longer an ablation but an agreement gate, and `tg_advect_matched.json`
 > dropped its `"uf_advection": false` (the tolerance tightened 1e-8 → 1e-9). §7's P1 is closed.
 > `amr`'s own scheme and `docs/decisions/amr.md:13` are unchanged: `flow` moved to `amr`.
+>
+> Landed in `flow` as `8e21724` / `f461151`, and measured independently from each side: `flow`
+> reports 2.5e-4 → 1.9e-11 on its case, this repo 3.950e-04 → 4.414e-11 on the gate case. Two
+> codebases, two harnesses, the same conclusion.
+
 
 ### 3a. …and how much it is worth, measured
 
