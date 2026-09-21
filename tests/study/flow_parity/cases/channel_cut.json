@@ -1,0 +1,26 @@
+{
+ "N": 32,
+ "nz": 4,
+ "rho": 1.0,
+ "mu": 0.1,
+ "dt": 50.0,
+ "steps": 60,
+ "advection": false,
+ "adv_scheme": "sou",
+ "implicit_adv": true,
+ "scheme": "gauge-exact",
+ "solid": "channel",
+ "cutcell_pressure": true,
+ "init": "none",
+ "U0": 1.0,
+ "mom_iters": 200,
+ "pres_iters": 200,
+ "pres_rtol": 1e-10,
+ "body_force": [
+  0.01,
+  0,
+  0
+ ],
+ "wall_lo": 10.3,
+ "wall_hi": 22.7
+}

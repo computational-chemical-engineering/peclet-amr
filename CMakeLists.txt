@@ -193,5 +193,19 @@ if(PECLET_AMR_BUILD_TESTS)
                      --check "${CMAKE_CURRENT_SOURCE_DIR}/python/state_hash_reference.json")
     set_tests_properties(python_state_hash PROPERTIES LABELS "python" SKIP_RETURN_CODE 77
       ENVIRONMENT "${_py_env};OMP_NUM_THREADS=1")
+    # Uniform-grid parity against peclet.flow's collocated solver (docs/amr_flow_uniform_parity.md):
+    # at lmax=0 the octree IS flow's structured brick, so the two engines must agree to solver
+    # tolerance. flow lives in a SIBLING REPO and the two modules cannot share an interpreter, so
+    # the gate shells out one subprocess per engine and is told where flow's build tree is by
+    # PECLET_AMR_FLOW_PYTHONPATH (a PATH, not a numerics switch — QUALITY_PLAN D3). Unset or
+    # missing => the gate exits 77 and ctest reports it SKIPPED, exactly as the morton-guarded
+    # tests do; CI, which checks out no flow, therefore shows it skipped rather than absent.
+    set(PECLET_AMR_FLOW_PYTHONPATH "" CACHE PATH
+        "Build tree of a peclet.flow Python module; enables the uniform-grid parity ctest")
+    add_test(NAME python_flow_parity
+             COMMAND "${Python_EXECUTABLE}"
+                     "${CMAKE_CURRENT_SOURCE_DIR}/tests/study/flow_parity/parity_gate.py")
+    set_tests_properties(python_flow_parity PROPERTIES LABELS "python" SKIP_RETURN_CODE 77
+      ENVIRONMENT "PECLET_AMR_PYTHONPATH=${CMAKE_CURRENT_BINARY_DIR};PECLET_AMR_FLOW_PYTHONPATH=${PECLET_AMR_FLOW_PYTHONPATH}")
   endif()
 endif()

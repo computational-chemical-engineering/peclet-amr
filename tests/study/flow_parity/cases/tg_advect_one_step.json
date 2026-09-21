@@ -1,0 +1,19 @@
+{
+ "N": 32,
+ "nz": 4,
+ "rho": 1.0,
+ "mu": 0.05,
+ "dt": 0.5,
+ "steps": 1,
+ "advection": true,
+ "adv_scheme": "sou",
+ "implicit_adv": true,
+ "scheme": "gauge-exact",
+ "solid": "none",
+ "cutcell_pressure": true,
+ "init": "taylor_green",
+ "U0": 1.0,
+ "mom_iters": 200,
+ "pres_iters": 200,
+ "pres_rtol": 1e-10
+}

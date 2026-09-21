@@ -53,8 +53,8 @@ export PATH=/usr/local/cuda-13.2/bin:$PATH                 # for the nvidia-cuda
 ```
 
 **Counts** (host-openmp): **92** C++ ctests (28 single-rank + 16 distributed binaries × np = 1, 2,
-4, 8) + 5 `bench` (four `study_amr_*` + `bench_amr_flow`) + 3 `python` (`python_amr`,
-`python_amr_np2`, `python_state_hash`) = 100. The battery was 92 + 2 Python ctests in core's
+4, 8) + 5 `bench` (four `study_amr_*` + `bench_amr_flow`) + 4 `python` (`python_amr`,
+`python_amr_np2`, `python_state_hash`, `python_flow_parity`) = 101. The battery was 92 + 2 Python ctests in core's
 `build_rel_k` / `build_rel_py` before the move and reproduces here test for test.
 
 **ctest protocol** (`cmake/PecletAmrTest.cmake`, the ONE place every test is registered through;
@@ -78,6 +78,17 @@ SKIPS the gate with exit 77 — CI shows it skipped — because the last bits of
 toolchain-specific; `-O0` vs `-O3` alone changes them through FMA contraction). Any structural
 change must leave every hash identical on the recording toolchain; a numerics change re-records the
 reference (`--save`) in its own commit and says so.
+
+**The uniform-grid parity gate** (`tests/study/flow_parity/parity_gate.py`, ctest
+`python_flow_parity`, `docs/amr_flow_uniform_parity.md`): at `lmax = 0` the octree IS the
+structured brick `peclet.flow` runs on — same extent, spacing and cell centres — so `Flow` and
+`flow.SolverColocated` must agree to solver tolerance, and six cases gate that from the shared
+7-point core up to the cut-cell ghost projection. `flow` is a SIBLING REPO and the two modules
+cannot share an interpreter, so the gate shells out one subprocess per engine and is pointed at
+flow's build tree by the CMake cache variable `PECLET_AMR_FLOW_PYTHONPATH` (a path, not a numerics
+switch). Unset — CI, and any checkout without a built `flow` — it exits 77 and ctest reports it
+skipped. Configure it with
+`-DPECLET_AMR_FLOW_PYTHONPATH=/path/to/flow/build_parity` and it runs in ~40 s.
 
 CI (`.github/workflows/ci.yml`): gcc + clang Release (tests, Python on gcc) and gcc Debug (minus
 `amr_flow_solver`, >40 min unoptimised), each with `core` (at `PECLET_CORE_REF`, `main` until the core release that
@@ -153,10 +164,13 @@ Header-only under `include/peclet/amr/` (namespace `peclet::amr`; `common.hpp` c
   simulation; `Flow.diagnostics` (a view holding a reference to the Flow — `last_mom_iters`,
   `last_pres_iters`, `last_outer_iters`, `divergence_norm_face`, and the solver-internals /
   ablation switches `set_momentum_mg`, `set_momentum_gs`, `set_velocity_mg_staircase`,
-  `set_momentum_mg_solver`, `set_ghost_gradient`, `set_aperture_order`) is what a developer uses to
-  inspect or ablate. String modes: `set_cf_scheme('standard' | 'quadratic')`,
+  `set_momentum_mg_solver`, `set_ghost_gradient`, `set_aperture_order`, `set_uf_advection`) is what
+  a developer uses to inspect or ablate. String modes: `set_cf_scheme('standard' | 'quadratic')`,
   `set_advection_scheme('sou' | 'koren')`.
-- Design notes (`docs/`): `amr_collocated_projection.md` (the collocated projection + `uf`
+- Design notes (`docs/`): `ROADMAP.md` (the one page of live items — **start here**),
+  `amr_flow_uniform_parity.md` (what this solver shares with `peclet.flow`'s collocated solver at
+  `lmax = 0`, measured cell by cell, and the two places it does not),
+  `amr_collocated_projection.md` (the collocated projection + `uf`
   advection), `amr_mixed_level_cut_band_plan.md`, `amr_setup_parallel_plan.md` (the parallel
   builders, D1′), `amr_anisotropic.md` (per-axis root spacing). The dated campaign records are in
   `docs/archive/` behind its README index — `amr_march_perf_and_distributed_plan.md` (march economics

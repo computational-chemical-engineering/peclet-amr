@@ -153,9 +153,18 @@ flow collocated reference run lived at `/tmp/sdflow_coloc_gpu.py` (single SC sph
    advection, flat 15–17 iters/step. The "near-nullspace issue" was characterised as an
    incompatible RHS fluid-mean (see `archive/amr_aperture_advection_plan.md` §RESOLVED), which the PCG's
    projection deflates.
-4. **The ~1% projection-structure difference** is still not isolated to one line. The clean way: expose
-   each engine's projection as a standalone `project(u)->u_divfree` callable, feed both the SAME
-   synthetic field on the SAME cut geometry, diff cell-by-cell. Neither exposes that yet.
+4. ~~**The ~1% projection-structure difference** is still not isolated to one line.~~ **RESOLVED
+   2026-09-21 — see `amr_flow_uniform_parity.md`.** Done cell-by-cell, and the conclusion is not
+   the one this table implied. On the GHOST projection (the production default in both engines
+   since 2026-08-25, which the 2026-07-22 table above predates) uniform AMR and flow collocated
+   agree to **2.9e-7** on the Z&H sphere and converge to the SAME steady state; the entire shared
+   core (operator, divergence, ABC gradient, BE momentum, cut-cell no-slip overlay, rotational
+   update) is parity to solver tolerance. There is exactly ONE discretization difference, and it is
+   in flow: flow's `cadv::adv_vel` still advects with the un-projected ½(u_i+u_j) cell→face average
+   instead of the projected face field its own design note prescribes. The "projection structure"
+   framing (AMR cell-centred FV vs flow's staggered-MAC heritage) was wrong — the structures agree.
+   The table's numbers were measured on the APERTURE path, which is still not a matched pair
+   (§4 of the parity note).
 
 Related memories: [[device-naming-retirement]] (the umbrella record of this whole arc),
 [[amr-gpu-smoother-flow-port]], [[flow-collocated-solver]], [[amr-octree-status]].

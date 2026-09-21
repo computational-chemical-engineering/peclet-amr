@@ -1,0 +1,30 @@
+{
+ "N": 32,
+ "nz": 32,
+ "rho": 1.0,
+ "mu": 1.0,
+ "dt": 0.05,
+ "steps": 20,
+ "advection": true,
+ "adv_scheme": "sou",
+ "implicit_adv": true,
+ "scheme": "ghost",
+ "solid": "sphere",
+ "cutcell_pressure": true,
+ "init": "none",
+ "U0": 1.0,
+ "mom_iters": 400,
+ "pres_iters": 400,
+ "pres_rtol": 1e-10,
+ "body_force": [
+  0.1,
+  0,
+  0
+ ],
+ "center": [
+  16.0,
+  16.0,
+  16.0
+ ],
+ "radius": 9.93
+}
