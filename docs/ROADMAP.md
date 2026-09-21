@@ -112,6 +112,9 @@ and two codes that *feel* like one suite.
   any uniform or finest-band mesh (no C/F faces ⇒ no delta), so only graded runs move. Against: it
   is a shipped default, every graded result moves with it, and cf=1 has a stability history at cut
   rows (the `rowRegular` row-gate register entry). Not flipped here.
+  One blocker is gone: until 2026-09-21 `setSolid` THREW for `dist_ && cfScheme_ != standard`, so
+  the scheme could not have been a default at all. It is now distributed
+  (`docs/amr_setup_parallel_plan.md` §7, ctests `amr_distributed_cf_np{1,2,4,8}`).
 
 ## B. The accuracy question the parity work did NOT answer
 

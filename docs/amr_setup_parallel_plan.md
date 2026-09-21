@@ -249,8 +249,108 @@ to be parallel-safe. Two shapes, neither attempted here:
    ghost-slot numbering could differ from the serial one across ranks.
 Note the same resolver is reachable from `AmrPoisson::forEachFaceNeighbor` / `forEachFaceFull`,
 so it constrains any future parallelization of a builder that walks faces on the distributed
-path. The rung-1 C/F builders are unaffected (`AmrFlow::setSolid` throws for
-`dist_ && cfScheme_ != standard`, so they never run multi-rank) and so is rung 4
-(`setGhostSampled` is single-rank-guarded); rung 2's `buildOpenness` is safe because the
-distributed `openFn`s are pure functions of the face centroid and the loop itself reads only
-`t_->bounds`.
+path. Rung 2's `buildOpenness` is safe because the distributed `openFn`s are pure functions of
+the face centroid and the loop itself reads only `t_->bounds`.
+
+(Two clauses of this paragraph have since expired. Rung 4's `setGhostSampled` lost its
+single-rank guard on 2026-08-30, rungs D0–D2; the rung-1 C/F builders lost theirs on 2026-09-21 —
+see the next section, which is also where the "they never run multi-rank" reasoning for them is
+replaced.)
+
+## 7. The C/F quadratic scheme across the seam (2026-09-21)
+
+`AmrFlow::setSolid` used to throw for `dist_ && cfScheme_ != CfScheme::standard`. It no longer
+does: the four `buildCf*Delta` builders discover their ghost neighbours inside
+`prepareDistributed`'s miss-collect fixpoint, and the real build stays where it was — in
+`setSolid`, after the fixpoint, by which point every ghost is resolved. This is the shape rungs
+D0–D2 established for the sampled overlay.
+
+**What the closure reaches for.** For one directed 2:1 sub-face, `cfAppendStencil`
+(`cf_scheme.hpp`) substitutes the coarse-side value with an interpolation of the coarse cell at
+the fine cell's tangential position. Per tangential axis `tt` and each direction it needs
+
+1. the coarse cell's tangential neighbour, `ap.periodicNeighbor(coarse, tt, dir)`; and
+2. when that neighbour is one level FINER, the `2^Dim` children covering the coarse-size region
+   across that face.
+
+Probe (1) already went through `AmrPoisson::probeSlot` and therefore through the resolver. Probe
+(2) called `BlockOctree::find` **directly**, on a coordinate it had wrapped modulo
+`t.brick() * 2^lmax` by hand — and that is the defect the guard was hiding. Single-rank the block
+IS the domain and the hand wrap is the correct period. Multi-rank it is not: the wrap folds a
+child belonging to a neighbouring rank back into this rank's own block, and `find` returns a real
+but geometrically unrelated leaf. Either the cover guard rejects it on level or fluid and the
+tangential side reverts silently to the raw coarse value, or it passes and the stencil reads a
+cell on the far side of the block. No crash, no missing ghost, no message — a
+decomposition-dependent wrong answer at the seams, measured at **131 % relative error** at
+np = 2/4 (the negative-control table under **Gate** below). Both probes now go through `ap`
+(`loOf` / `levelOf` / `probeSlot`), which also makes the builders safe when `coarse` or `fine` is
+itself a ghost slot; `t.level(j)` on a ghost `j` was reading past the octree's level array in all
+four builders.
+
+**The discovery arm** is `AmrFlow::probeCfScheme` / `probeCfTangential`, run in the fixpoint
+after the FaceGeom face sweep when `cfScheme_ != standard`. It is a light, **gate-free**
+traversal rather than the builders in a probe-only mode. The builders' row and fluid predicates
+come from `mom_`, which is mid-build during the fixpoint (and on the sampled path is not built at
+all until after it), so a probe sequence short-circuited by a gate that is not yet valid would
+leave a coordinate undiscovered — and `LeafHalo::resolve` throws on an unknown coord after
+`finalize()`. Issuing the full probe set unconditionally is a strict superset of anything the
+gates can ask for, and it is much cheaper than four CSR builds per round. It costs no extra
+ghosts: a child coordinate landing inside a same-level or coarser neighbour canonicalizes to that
+neighbour's own leaf anchor in `resolveMisses`, so the registry gains map entries, never slots.
+One traversal covers all four builders — `buildCfLapDelta` walks `mom_.lap()` and the other three
+walk `pres_`, but both are `AmrPoisson` over the same octree with the same resolver and ghost
+list, and they enumerate the identical neighbour set. It is host-parallel on the same argument as
+the face sweep (F1): the miss registration is mutex-guarded and the miss SET is coord-keyed, so
+ghost-slot numbering stays canonical under any schedule.
+
+**Cost.** Measured on `tests/test_amr_distributed_cf_mpi` (4³ roots, `lmax = 3`, graded ladder
+around a sphere) with `PECLET_AMR_PROFILE_SETUP=1`, at np = 2 on 5902 leaves,
+`OMP_NUM_THREADS=1`, against the same run with the scheme set to `standard` (`CF_STANDARD=1`,
+the test's control knob):
+
+| | rounds | ghosts (per rank) | `setSolid`, slowest rank |
+|---|---:|---:|---:|
+| standard (arm off) | 4 | 901 / 1060 | 0.094 s |
+| quadratic (arm on) | 4 | 911 / 1060 | 0.195 s |
+
+**The arm costs no extra rounds** — its probes resolve inside the rounds the existing probers
+already need — and 10 extra ghosts out of 911 on one rank, none on the other. Of the ~100 ms
+difference in `setSolid`, ~58 ms is the C/F overlay CSR build itself (intrinsic to the scheme and
+present single-rank too) and ~45 ms is the discovery arm spread over the four rounds. The box was
+heavily loaded during the measurement, so read these as indicative ratios, not as absolutes.
+
+**Apply side.** The `cfApply*` consumers read `f(sl(k))` by slot, so a CSR carrying ghost slots
+needs only an `nExt_`-sized source with a synced ghost tail. Five of the six call sites already
+had one. The sixth did not: the momentum delta `cfApply(cfMom_, u_[c], bmom_)` reads `u` at the
+coarse cell's tangential neighbours, and with advection OFF nothing had refreshed `u`'s ghost
+tail since the previous step's projection — the same position the sampled momentum seam delta was
+in (D2). The `syncVel()` guarding that case now covers the C/F scheme too.
+
+**Gate.** `tests/test_amr_distributed_cf_mpi.cpp` (ctests `amr_distributed_cf_np{1,2,4,8}`):
+WORLD vs SELF leaf by leaf through the global Morton code, bitwise at np = 1 and in the
+decomposition-independence class at np > 1, plus the positive check
+`AmrFlow::numCfGhostColumns() > 0` — the count of C/F overlay entries that read a ghost slot.
+
+Two things about that test are load-bearing and were found the hard way.
+
+*The sphere is OFF-CENTRE, at (0.41, 0.57, 0.5).* The first version put it at the box centre, and
+the negative control (child enumeration restored to the hand-wrapped `find`) **passed** — a gate
+that could not fail on the bug it exists for. The reason is that a centred sphere makes the mesh
+mirror-symmetric about every plane the ORB cuts the box with, so a coarse cell's tangential
+neighbour across a seam is its own mirror image and therefore always the SAME level: the
+finer-neighbour child branch is entered 24960 times and not once does a child coordinate leave
+the block. Off-centre, 13800 child coordinates leave the block at np = 2 and every one resolves to
+a ghost slot.
+
+*`numCfGhostColumns() > 0` is a liveness check, not the gate.* It is nonzero in the broken build
+too, because it also counts the columns the tangential-neighbour probe contributes and that probe
+was never broken. The gate is the WORLD-vs-SELF difference. On the off-centre geometry the
+negative control gives, against a ceiling of 5e-6 relative:
+
+| | np = 1 | np = 2 | np = 4 |
+|---|---:|---:|---:|
+| fixed | 0 (bitwise) | 1.61e-7 | 1.10e-7 |
+| negative control (hand-wrapped `find`) | 0 (bitwise) | **1.31e+0** | **1.31e+0** |
+
+Note the np = 1 column: the defect is invisible there by construction, which is why a
+WORLD-vs-SELF check at np = 1 alone would not have been a gate at all.
