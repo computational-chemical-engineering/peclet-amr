@@ -81,14 +81,14 @@ void run() {
   {
     const Vec<3> betaV = cc.beta();  // Phase 3: per axis (all equal on this cubic octree)
     const double beta[3] = {betaV[0], betaV[1], betaV[2]};
-    const double AC0 = cc.idiag() + ((2.0 * beta[0] + 2.0 * beta[1]) + 2.0 * beta[2]);
     View<double> sdfC = toDevice(cc.sdfCRaw(), "sdfC");
     View<Index> nb = toDevice(cc.nbRaw(), "nb");
     View<char> fluid = toDevice(cc.fluidRaw(), "fl");
     View<double> AC("AC", static_cast<std::size_t>(n)), off("off", static_cast<std::size_t>(n) * 6),
         rscale("rs", static_cast<std::size_t>(n));
     View<char> cut("cut", static_cast<std::size_t>(n));
-    rebuildCutStencil<kBits>(n, beta, AC0, sdfC, nb, fluid, AC, off, cut, rscale);
+    rebuildCutStencil<kBits>(n, beta, cc.idiag(), sdfC, nb, fluid, dev.levels, AC, off, cut,
+                             rscale);
     PECLET_AMR_CHECK_EQ(mismatch(cc.acRaw(), down(AC)), 0);
     PECLET_AMR_CHECK_EQ(mismatch(cc.offRaw(), down(off)), 0);
     PECLET_AMR_CHECK_EQ(mismatch(cc.cutRaw(), down(cut)), 0);

@@ -232,10 +232,29 @@ class AmrCutCell {
     // Pass 2: build per-leaf stencil.
     // Phase 3: the diagonal is 2*(beta_x + beta_y + beta_z), parenthesised as ONE sum so a cubic
     // octree reproduces the single correctly-rounded `6.0*beta` (Rule B).
-    const double AC0 = idiag + ((2.0 * beta[0] + 2.0 * beta[1]) + 2.0 * beta[2]);
-    const double betaArr[3] = {beta[0], beta[1], beta[2]};
+    //
+    // beta arrives as mu/h_finest^2 (AmrFlow::betaPerAxis), so it is the coefficient for a leaf at
+    // the FINEST level. A leaf at level L has width 2^L * h_finest, so its viscous coefficient is
+    // beta / 4^L. Scaling here, per leaf, rather than hoisting one beta/AC0 out of the loop: the
+    // xi-overlay row is a pure multiple of the beta it is handed, so a level-L cut cell built with
+    // the finest beta is 4^L too stiff -- an effective viscosity mu*4^L in the wall cells only.
+    // That was measured as a silent constant velocity offset of -(3/8)(F/mu) h_leaf^2 (1 - 4^-L)
+    // on plane Poiseuille (3.6-4.7% at L=1..3), with a perfect-looking parabola; see
+    // docs/ROADMAP.md A5. Every other row in the operator was already level-aware: the regular
+    // fluid rows use physical areas and volumes (assembleOperator below, -mu*invV*(a*c)), the
+    // velocity-MG coarse operator computes mu/cellWidth^2 per row (velocity_mg.hpp), and the
+    // mixed-level seam delta does exactly this scaling for seam rows only
+    // (ghost_projection_sampled.hpp "the ROW-LOCAL beta per axis") -- which is why a uniformly
+    // COARSE band, having no seam rows, kept the wrong coefficient.
+    //
+    // Exactly inert at the finest level: f == 1.0, so betaArr and AC0 are bit-for-bit the old beta
+    // and AC0 expressions, and any run whose cut cells are all finest is byte-identical.
     forLeaves([&](Index i) {  // own-leaf slots only (rung 3, Fable-pre-cleared: no
                               // neighbour-indexed stores in this body)
+      const double f = static_cast<double>(Index(1) << t_->level(i));  // h_leaf / h_finest
+      const double inv = 1.0 / (f * f);
+      const double betaArr[3] = {beta[0] * inv, beta[1] * inv, beta[2] * inv};
+      const double AC0 = idiag + ((2.0 * betaArr[0] + 2.0 * betaArr[1]) + 2.0 * betaArr[2]);
       if (!fluid_[static_cast<std::size_t>(i)]) {  // solid: identity row u=0
         AC_[static_cast<std::size_t>(i)] = 1.0;
         for (int k = 0; k < 6; ++k)
@@ -253,7 +272,7 @@ class AmrCutCell {
       cut_[static_cast<std::size_t>(i)] = anyGhost ? 1 : 0;
       double AC = AC0, off[6];
       for (int k = 0; k < 6; ++k)
-        off[k] = -beta[k / 2];  // face k belongs to axis k/2
+        off[k] = -betaArr[k / 2];  // face k belongs to axis k/2
       double rscale = 1.0, inhomCoef = 0.0;
       if (anyGhost)
         buildCutStencil(sdfC_[static_cast<std::size_t>(i)], sdf_n, betaArr, AC0, AC, off, rscale,

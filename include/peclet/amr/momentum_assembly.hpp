@@ -122,14 +122,20 @@ struct MomFaceEmit {
 /// part of a moving-boundary re-assembly, now device-resident; bit-exact vs the host
 /// AC_/off_/cut_/rscale_.
 template <unsigned Bits>
-void rebuildCutStencil(Index n, const double betaIn[3], double AC0, const View<double>& sdfC,
-                       const View<Index>& nbr6, const View<char>& fluid, View<double> AC,
-                       View<double> off, View<char> cut, View<double> rscale) {
-  // Phase 3: capture the three axis coefficients by value into the device lambda.
-  const double b0 = betaIn[0], b1 = betaIn[1], b2 = betaIn[2];
+void rebuildCutStencil(Index n, const double betaIn[3], double idiag, const View<double>& sdfC,
+                       const View<Index>& nbr6, const View<char>& fluid,
+                       const View<std::uint8_t>& levels, View<double> AC, View<double> off,
+                       View<char> cut, View<double> rscale) {
+  // Phase 3: capture the three axis coefficients by value into the device lambda. `betaIn` is
+  // mu/h_finest^2, so it must be divided by 4^level per leaf — the device twin of the host
+  // AmrCutCell::build Pass 2 (see the long note there; bit-for-bit the old expressions at level 0).
+  const double b0 = betaIn[0], b1 = betaIn[1], b2 = betaIn[2], id0 = idiag;
   Kokkos::parallel_for(
       "amr::cut_stencil", n, KOKKOS_LAMBDA(const Index i) {
-        const double beta[3] = {b0, b1, b2};
+        const double f = static_cast<double>(Index(1) << levels(i));  // h_leaf / h_finest
+        const double inv = 1.0 / (f * f);
+        const double beta[3] = {b0 * inv, b1 * inv, b2 * inv};
+        const double AC0 = id0 + ((2.0 * beta[0] + 2.0 * beta[1]) + 2.0 * beta[2]);
         const std::size_t s = static_cast<std::size_t>(i);
         if (!fluid(i)) {  // solid: identity row
           AC(i) = 1.0;
@@ -173,7 +179,6 @@ MomentumOp assembleMomentum(const AmrCutCell<Bits>& ccop, const BlockOctreeView<
   // Phase 3: beta per axis, and the diagonal as one parenthesised sum (Rule B).
   const Vec<3> betaV = ccop.beta();
   const double beta[3] = {betaV[0], betaV[1], betaV[2]};
-  const double AC0 = ccop.idiag() + ((2.0 * beta[0] + 2.0 * beta[1]) + 2.0 * beta[2]);
 
   // Stage build inputs + rebuild the ξ stencil on device.
   View<double> sdfC = toDevice(ccop.sdfCRaw(), "mom::sdfC");
@@ -187,7 +192,8 @@ MomentumOp assembleMomentum(const AmrCutCell<Bits>& ccop, const BlockOctreeView<
                  static_cast<std::size_t>(n));
   View<double> rscale(Kokkos::view_alloc("mom::rscale", Kokkos::WithoutInitializing),
                       static_cast<std::size_t>(n));
-  rebuildCutStencil<Bits>(n, beta, AC0, sdfC, nbr6, fluid, AC, off, cut, rscale);
+  rebuildCutStencil<Bits>(n, beta, ccop.idiag(), sdfC, nbr6, fluid, ov.levels, AC, off, cut,
+                          rscale);
 
   // The α=1 ∇² geometry for regular fluid cells (reuses the D2 traversal with openness off).
   FvFaceEmit<3, Bits> geom;
