@@ -35,6 +35,27 @@ Geometry, chosen so that one thing at a time can break it:
   (`last_pres_iters` comes back 0) and what is measured is the momentum operator plus the C/F
   scheme, nothing else.
 
+**Which projection path these numbers were taken on, since it is not the obvious one.** These
+graded meshes trip the AUTO fallback —
+
+```
+AmrFlow: AUTO scheme fell back to the aperture projection
+(the finest band is too thin for the ghost overlay)
+```
+
+— so the study ran on the **aperture** projection, not the ghost projection that is the production
+default and that the uniform-grid parity work gated against `peclet.flow` (2.9e-7, §
+`amr_flow_uniform_parity.md`). For *these* measurements that is immaterial: the projection is a
+no-op here, so the numbers are the momentum operator and the C/F scheme either way, and the C/F
+orders are unaffected. It does mean the wall band at `W = 2` is too thin for the ghost overlay's
+±2 closure reach, which also explains why `set_ghost_sampled(True)` reported `LS2 0, LS1 0` on
+these meshes — it found no mixed-level band to handle because the overlay had declined the geometry
+rather than engaged with it.
+
+**The consequence is a next rung, not a caveat on these results:** widen the band until AUTO stops
+falling back, then re-ladder, so the graded convergence of the scheme that actually ships is
+measured. Listed in §5.
+
 Driver: `tests/study/convergence/graded_poiseuille.py`.
 
 ## 2. Result: second order
@@ -209,12 +230,16 @@ it would bite.
 
 ## 5. Next rungs
 
-1. **The tangential orientation** (§3) — where `set_cf_scheme('quadratic')` should finally show a
-   difference, and the one place the documented 2nd-order C/F claim can be tested end to end.
-2. **A smooth NS ladder on a graded mesh** — Taylor–Green with a refined sub-region, so the
+1. ~~**The tangential orientation**~~ — **DONE**, §3: order 0.41 (standard) against 1.60
+   (quadratic).
+2. **A graded mesh the GHOST overlay accepts.** Everything above ran on the aperture projection via
+   the AUTO fallback (§1), because a 2-cell wall band is too thin for the ghost overlay's ±2
+   closure reach. Widen the band until the fallback stops firing and re-ladder, so the graded
+   convergence of the production default is measured rather than inferred.
+3. **A smooth NS ladder on a graded mesh** — Taylor–Green with a refined sub-region, so the
    measurement covers advection and the projection rather than a Stokes momentum solve alone.
    Poiseuille cannot test those: its projection is a no-op by construction.
-3. **Re-take the P3c gap-graded drag numbers** post-fix (§4).
-4. **A cut band that is genuinely mixed-level**, via `refine_to_sdf_graded` + `set_ghost_sampled`,
+4. **Re-take the P3c gap-graded drag numbers** post-fix (§4).
+5. **A cut band that is genuinely mixed-level**, via `refine_to_sdf_graded` + `set_ghost_sampled`,
    which is the configuration the sampled machinery exists for and the one whose accuracy is now
    unmeasured after the fix.
