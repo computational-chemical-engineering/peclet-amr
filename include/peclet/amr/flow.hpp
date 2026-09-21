@@ -669,9 +669,6 @@ class AmrFlow {
   template <class SdfFn>
   void setSolid(SdfFn&& sdfFn) {
     const Index n = t_->numLeaves();
-    if (dist_ && cfScheme_ != CfScheme::standard)
-      throw std::runtime_error(
-          "amr::AmrFlow: the C/F quadratic scheme is not distributed yet (rung-4 follow-up)");
     // Phase profiler (PECLET_AMR_PROFILE_SETUP=1): setSolid is the whole setup cost at bed
     // scale (measured 127 us/leaf single-threaded, [[performance-sota-yardstick]]) — the
     // per-phase breakdown is what any optimization must start from.
@@ -910,8 +907,7 @@ class AmrFlow {
     if (cfScheme_ != CfScheme::standard) {
       auto fluidOk = [&](Index i) { return mom_.isFluid(i); };
       auto rowRegular = [&](Index i) { return mom_.isFluid(i) && !mom_.isCut(i); };
-      cfMom_ = uploadCfCsr(buildCfLapDelta(mom_.lap(), *t_, mu_, rowRegular, fluidOk, cfScheme_),
-                           "cf_mom");
+      auto lapD = buildCfLapDelta(mom_.lap(), *t_, mu_, rowRegular, fluidOk, cfScheme_);
       // cfDiv/cfGrad rows: REGULAR fluid only — cut rows belong to the ghost closure family
       // (the overlay owns their divergence and gradients; adding the smooth-field C/F
       // substitution on top gives the constraint velocity reads the row's gradient never sees —
@@ -920,16 +916,33 @@ class AmrFlow {
       // step ~100; the cfDiv delta alone carries it (momentum/gradient/uf deltas exonerated by
       // bisection), and this row gate alone restores stability. On finest-band meshes cut rows
       // have no C/F faces, so the gate is inert there — bit-identity by geometry.
-      cfDiv_ =
-          uploadCfCompCsr(buildCfDivDelta(pres_, *t_, rowRegular, fluidOk, cfScheme_), "cf_div");
+      auto divD = buildCfDivDelta(pres_, *t_, rowRegular, fluidOk, cfScheme_);
       auto gd = buildCfGradDelta(pres_, *t_, rowRegular, fluidOk, cfScheme_);
+      auto ufd = buildCfUfDelta(pres_, *t_, fluidOk, cfScheme_);
+      // Distributed diagnostic (numCfGhostColumns): how many overlay entries read a GHOST slot.
+      // It is the observable that says the seam is actually exercised — a build that silently
+      // fell back to the raw coarse value at every block boundary reports zero.
+      cfGhostCols_ = 0;
+      auto countGhost = [&](const std::vector<Index>& col) {
+        for (Index c : col)
+          if (c >= n)
+            ++cfGhostCols_;
+      };
+      countGhost(lapD.slot);
+      countGhost(divD.slot);
+      for (int a = 0; a < 3; ++a)
+        countGhost(gd[static_cast<std::size_t>(a)].slot);
+      countGhost(ufd.vel.slot);
+      countGhost(ufd.phi.slot);
+      cfMom_ = uploadCfCsr(lapD, "cf_mom");
+      cfDiv_ = uploadCfCompCsr(divD, "cf_div");
       for (int a = 0; a < 3; ++a)
         cfGrad_[static_cast<std::size_t>(a)] =
             uploadCfCsr(gd[static_cast<std::size_t>(a)], "cf_grad");
-      auto ufd = buildCfUfDelta(pres_, *t_, fluidOk, cfScheme_);
       cfUfVel_ = uploadCfCompCsr(ufd.vel, "cf_ufvel");
       cfUfPhi_ = uploadCfCsr(ufd.phi, "cf_ufphi");
     } else {
+      cfGhostCols_ = 0;
       cfMom_ = CfCsrDev{};
       cfDiv_ = CfCompCsrDev{};
       for (int a = 0; a < 3; ++a)
@@ -1220,9 +1233,11 @@ class AmrFlow {
       // current iterate. ---
       // D2: the momentum ξ-seam delta is a CSR over the overlay's SAMPLE functionals, so on a
       // mixed-level band it reads ghost slots — and with advection off nothing else has refreshed
-      // uⁿ's ghost tail since the previous step's projection. (Zero ghosts single-rank / np=1, so
-      // this is a no-op exchange there and the path stays bit-identical.)
-      if (dist_ && ghostSampled_)
+      // uⁿ's ghost tail since the previous step's projection. The C/F momentum delta (cfMom_) is
+      // in exactly the same position: it reads u at the coarse cell's tangential neighbours,
+      // which are ghost slots at a block seam. (Zero ghosts single-rank / np=1, so this is a
+      // no-op exchange there and the path stays bit-identical.)
+      if (dist_ && (ghostSampled_ || cfScheme_ != CfScheme::standard))
         syncVel();
       for (int c = 0; c < 3; ++c) {
         spT = spMark();
@@ -1677,6 +1692,10 @@ class AmrFlow {
   Index numLeaves() const { return n_; }
   /// Distributed: number of ghost slots in the ±2 registry (0 single-rank).
   Index numGhostCells() const { return nExt_ - n_; }
+  /// Developer diagnostic: entries of the four C/F-scheme overlays that read a GHOST slot
+  /// (0 single-rank, 0 with CfScheme::standard). Nonzero is the evidence that the quadratic
+  /// closure actually reaches across a block seam instead of falling back there.
+  Index numCfGhostColumns() const { return cfGhostCols_; }
   /// Per-leaf fluid mask (false inside the solid) — for host-side post-processing / bindings.
   bool isFluid(Index i) const { return mom_.isFluid(i); }
   /// Total momentum BiCGStab iterations (summed over the 3 components) of the last step.
@@ -1783,6 +1802,8 @@ class AmrFlow {
         bool viol = false;
         (void)buildGhostOverlay(*t_, pres_, mom_.sdfCRaw(), gpMatrixOrder_, gpRhsOrder_, &viol);
       }
+      if (cfScheme_ != CfScheme::standard)
+        probeCfScheme();  // the four buildCf*Delta builders' tangential reach
       const double rBuildMs =
           std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - rT0).count();
       const long pend = dhalo_.resolveMisses();
@@ -1807,6 +1828,68 @@ class AmrFlow {
     dhex_.init(dhalo_);
     allred_ = [this](double s) { return allSum(s); };
     momSolver_.setDistributed([this](View<double> v) { dhex_.exchange(v); }, allred_, nExt_);
+  }
+
+  /// Discovery arm for the C/F quadratic scheme (cf_scheme.hpp), run inside
+  /// prepareDistributed's miss-collect fixpoint so the REAL build in setSolid — after the
+  /// fixpoint, with every ghost resolved — finds every coordinate already in the registry.
+  ///
+  /// It is a LIGHT, GATE-FREE traversal, not the builders in a probe mode, for two reasons.
+  /// (a) The builders' row/fluid predicates come from mom_, and mom_ is mid-build during the
+  /// fixpoint (on the sampled path it is not built at all until after it) — a probe sequence
+  /// short-circuited by a gate that is not yet valid would leave a coordinate undiscovered, and
+  /// LeafHalo::resolve THROWS on an unknown coord after finalize(). Issuing the full set
+  /// unconditionally is a strict superset of what any gating can ask for. (b) It is far cheaper
+  /// than four CSR builds per round.
+  ///
+  /// The extra probes cost no ghosts: a child coordinate that lands inside a same-level or
+  /// coarser neighbour canonicalizes to that neighbour's own leaf anchor in
+  /// LeafHalo::resolveMisses, so the registry gains map entries, never slots.
+  ///
+  /// One traversal covers all four builders: buildCfLapDelta walks mom_.lap() and the other
+  /// three walk pres_, but both are AmrPoisson over the SAME octree with the same resolver and
+  /// the same ghost list, their face enumerations visit the identical neighbour set, and
+  /// cfAppendStencil's probe pattern depends only on the C/F pair and the face axis.
+  ///
+  /// Host-parallel, like the FaceGeom face sweep above: LeafHalo::resolve's miss registration is
+  /// mutex-guarded and the miss SET is coord-keyed, so ghost-slot numbering stays canonical
+  /// under any schedule (docs/amr_setup_parallel_plan.md, F1).
+  void probeCfScheme() {
+    const Index n = t_->numLeaves();
+    hostParFor(n, [&](Index i) {
+      const unsigned Li = pres_.levelOf(i);
+      pres_.forEachFaceFull(i, [&](Index j, int axis, int, double, double, double) {
+        const unsigned Lj = pres_.levelOf(j);
+        if (Lj == Li)
+          return;
+        probeCfTangential((Lj > Li) ? j : i, axis);
+      });
+    });
+  }
+
+  /// Every coordinate cfAppendStencil can probe from the coarse cell of one C/F face: the
+  /// tangential ± neighbours on the two tangential axes, plus the 2^Dim children covering each
+  /// coarse-size tangential region (the finer-neighbour branch).
+  void probeCfTangential(Index coarse, int axis) {
+    const unsigned Lc = pres_.levelOf(coarse);
+    const std::array<long, 3> bc = pres_.loOf(coarse);
+    const long sc = 1L << Lc, sh = sc >> 1;
+    for (int tt = 0; tt < 3; ++tt) {
+      if (tt == axis)
+        continue;
+      for (int dir = -1; dir <= 1; dir += 2) {
+        (void)pres_.periodicNeighbor(coarse, tt, dir);
+        std::array<long, 3> lo = bc;
+        lo[tt] += (dir > 0) ? sc : -sc;
+        for (int oct = 0; oct < (1 << 3); ++oct) {
+          std::array<long, 3> q = lo;
+          for (int d = 0; d < 3; ++d)
+            if ((oct >> d) & 1)
+              q[d] += sh;
+          (void)pres_.probeSlot(q);
+        }
+      }
+    }
   }
 
   /// Mirror the halo registry's ghost metadata (block-local lo + level) into mom_ and pres_.
@@ -2187,6 +2270,7 @@ class AmrFlow {
   std::array<CfCsrDev, 3> cfGrad_;  // (G_scheme − G_std) per gradient axis
   CfCompCsrDev cfUfVel_;            // (uf_scheme − uf_std) face-field overlay: velocity part
   CfCsrDev cfUfPhi_;                //                                          φ part
+  Index cfGhostCols_ = 0;           // overlay entries reading a ghost slot (diagnostic)
   View<double> maskC_;              // 1 = coupled row (Krylov subspace), 0 = pinned
   View<double> gpr_, gprh_, gpp_, gpph_, gpv_, gps_, gpsh_, gpt_;  // ghost BiCGStab scratch
   View<double> rscale_;
