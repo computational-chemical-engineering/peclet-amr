@@ -6,6 +6,12 @@ could carry it, WITHOUT changing any numerics — every knob here is an existing
 
   cf   0 vs 1   : the wall-aware C/F tangential fallback is a LAGGED deferred-correction term
                   added in Phase-1 rung 2 and only active at cf=1. Stable at cf=0 => that term.
+                  NB the call MUST be unconditional. Between 2026-09-21 (when the quadratic
+                  scheme became the DEFAULT) and 2026-09-22 this read `if cf:
+                  fl.set_cf_scheme(cf)`, so the cf=0 arm did not select the standard scheme --
+                  it left the default, which is the quadratic one. The 16 configurations were
+                  8 distinct runs reported twice, and the cf bisection this probe exists for
+                  was measuring nothing.
   dt   60 vs 1e20 : a lagged-stiff-term instability is dt-dependent; a structurally singular
                   operator is not.
   mom  MG on/off : separates the momentum solve from the pressure/constraint side.
@@ -31,8 +37,7 @@ def probe(N, g, n, cf, dt, mom_mg, steps):
     fl.set_body_force(FX, 0.0, 0.0)
     fl.set_advection(False)
     fl.set_ghost_sampled(True)
-    if cf:
-        fl.set_cf_scheme(cf)
+    fl.set_cf_scheme(cf)  # UNCONDITIONAL: cf=0 must SELECT the standard scheme, not fall through
     fl.diagnostics.set_momentum_mg(mom_mg)
     fl.set_solid(make_sdf(N, g))
     w = np.asarray(t.sizes()) ** 3
