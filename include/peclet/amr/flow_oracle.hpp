@@ -36,6 +36,7 @@
 #include <cmath>
 #include <cstdio>
 #include <memory>
+#include <stdexcept>
 #include <vector>
 
 #include "peclet/amr/adapt.hpp"         // transferField (conservative remap for finishAdapt)
@@ -215,6 +216,20 @@ class AmrFlow {
     // two-sphere throat marched to k~1e12 with cut rows in cfDiv — see flow.hpp's cf section
     // and the P3a record). On finest-band meshes cut rows have no C/F faces: gate inert,
     // bit-identical.
+    // The per-FACE C/F gate's predicate (docs/amr_cf_flux_gate.md §6.1). The oracle is
+    // single-rank, so there is no ghost tail to exchange (§6.4): `regular` is the local flag.
+    {
+      const Index nl = t_->numLeaves();
+      cfRegular_.assign(static_cast<std::size_t>(nl), 0);
+      for (Index i = 0; i < nl; ++i)
+        cfRegular_[static_cast<std::size_t>(i)] = (mom_.isFluid(i) && !mom_.isCut(i)) ? 1 : 0;
+    }
+    auto regularOk = [&](Index s) {  // programming-error guard (§6.4)
+      if (s < 0 || s >= static_cast<Index>(cfRegular_.size()))
+        throw std::logic_error("peclet::amr oracle: C/F regular flag queried outside [0, n)");
+      return cfRegular_[static_cast<std::size_t>(s)] != 0;
+    };
+    cfCutFaces_ = countCfCutFaces(pres_, *t_, regularOk, [&](Index s) { return mom_.isFluid(s); });
     if (cfScheme_ != CfScheme::standard) {
       auto fluidOk = [&](Index j) { return mom_.isFluid(j); };
       auto rowRegular = [&](Index i) { return mom_.isFluid(i) && !mom_.isCut(i); };
@@ -248,6 +263,9 @@ class AmrFlow {
   const std::vector<double>& velocity(int c) const { return u_[c]; }
   Index numLeaves() const { return t_->numLeaves(); }
   bool isFluid(Index i) const { return mom_.isFluid(i); }
+  bool isCut(Index i) const { return mom_.isCut(i); }
+  /// The C/F census — see AmrFlow::numCfCutFaces (docs/amr_cf_flux_gate.md §6.5).
+  Index numCfCutFaces() const { return cfCutFaces_; }
 
   // ---- adaptivity during a run (mirror of the device AmrFlow's beginAdapt/finishAdapt) ----------
   void beginAdapt() {
@@ -831,6 +849,8 @@ class AmrFlow {
   // identical code path, so only graded runs move.
   CfScheme cfScheme_ = CfScheme::quadratic;  // 2:1 C/F interface scheme (setCfScheme)
   CfCsr cfMom_;                              // +μ(∇²_scheme − ∇²_std) momentum RHS overlay
+  std::vector<char> cfRegular_;              // regular = fluid && !cut, the per-FACE C/F gate
+  Index cfCutFaces_ = 0;                     // C/F slots where that gate withholds the quadratic
   CfCompCsr cfDiv_;                          // (D_scheme − D_std) divergence overlay
   std::array<CfCsr, 3> cfGrad_;              // (G_scheme − G_std) per gradient axis
   CfUfDelta cfUf_;                           // (uf_scheme − uf_std) face-field overlay (slots)

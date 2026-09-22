@@ -338,6 +338,12 @@ class FlowDiagnostics:
         L2 norm of the APERTURE-weighted divergence of the ABC face field. MEANINGFUL ON THE APERTURE PATH ONLY (set_ghost_projection(False)), where it is the pressure-solve residual, far below divergence_norm — including across 2:1 interfaces. Under the GHOST projection (the DEFAULT) the solved constraint is this divergence PLUS an overlay delta that is a functional of the CELL velocities, not of the face field, so this norm omits it and reads O(1) on a perfectly healthy solve (34 at N=32, 184 at N=64 on the Z&H sphere, with the velocities matching peclet.flow to 1e-6). There, divergence_norm() is the residual you want. Unnormalized either way: it grows with resolution and velocity magnitude, so read it as a trend, never as an absolute.
         """
 
+    @property
+    def num_cf_cut_faces(self) -> int:
+        """
+        How many 2:1 C/F sub-face slots of THIS RANK carry the standard two-point face value because the quadratic one is withheld: both incident cells must be REGULAR fluid (fluid and not cut) for set_cf_scheme('quadratic') to apply there, so this counts the sub-faces where a level boundary meets the wall. 0 on every uniform or finest-band mesh; on a graded mesh it measures the size of the set that runs at the standard scheme's local order. Each sub-face contributes two slots (one per incident cell) and the sum over ranks equals the single-rank count.
+        """
+
     def set_momentum_mg(self, on: bool) -> None:
         """
         Use the Galerkin velocity multigrid as the momentum solve preconditioner (default on; makes the momentum solve scale with resolution). Call before set_solid.

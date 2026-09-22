@@ -800,6 +800,8 @@ class FlowDiagnostics {
   // L2 norm of the divergence of the ABC divergence-free FACE field (≈ the pressure-solve residual,
   // far below divergence_norm — including across 2:1 interfaces).
   double divergence_norm_face() { return f_.engine().divNormFace(); }
+  // The C/F census (docs/amr_cf_flux_gate.md §6.5): a count, so a property (NAMING.md §1.2/§1.3).
+  peclet::core::Index num_cf_cut_faces() const { return f_.engine().numCfCutFaces(); }
   // Solver-internals and ablation switches (the production path needs none of them).
   void set_momentum_mg(bool on) { f_.engine().setMomentumMG(on); }
   void set_momentum_gs(bool on) { f_.engine().setMomentumGS(on); }
@@ -1173,6 +1175,15 @@ NB_MODULE(_amr, m) {
            "N=64 on the Z&H sphere, with the velocities matching peclet.flow to 1e-6). There, "
            "divergence_norm() is the residual you want. Unnormalized either way: it grows with "
            "resolution and velocity magnitude, so read it as a trend, never as an absolute.")
+      .def_prop_ro("num_cf_cut_faces", &FlowDiagnostics::num_cf_cut_faces,
+                   "How many 2:1 C/F sub-face slots of THIS RANK carry the standard two-point "
+                   "face value because the quadratic one is withheld: both incident cells must be "
+                   "REGULAR fluid (fluid and not cut) for set_cf_scheme('quadratic') to apply "
+                   "there, so this counts the sub-faces where a level boundary meets the wall. 0 "
+                   "on every uniform or finest-band mesh; on a graded mesh it measures the size "
+                   "of the set that runs at the standard scheme's local order. Each sub-face "
+                   "contributes two slots (one per incident cell) and the sum over ranks equals "
+                   "the single-rank count.")
       .def("set_momentum_mg", &FlowDiagnostics::set_momentum_mg, nb::arg("on"),
            "Use the Galerkin velocity multigrid as the momentum solve preconditioner (default on; "
            "makes the momentum solve scale with resolution). Call before set_solid.")

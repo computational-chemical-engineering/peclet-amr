@@ -908,6 +908,34 @@ class AmrFlow {
       gc_ = GhostGradOverlay{};  // sampled mode: the CSR overlay gcS_ owns all cut cells
     // C/F interface scheme overlays (cf_scheme.hpp): the same host builders the oracle uses
     // (parity by construction), uploaded once. Momentum delta = ×μ on the α=1 velocity geometry.
+    // The per-FACE C/F gate (docs/amr_cf_flux_gate.md §6.1, §6.4) needs `regular = fluid && !cut`
+    // at GHOST slots too: the gate is a property of the FACE, and a 2:1 sub-face at a block seam
+    // has one of its two cells on another rank. `cut(g)` cannot be recomputed here — it is the SDF
+    // sign at g's SIX face-neighbour centres, and the discovery fixpoint registers the C/F
+    // tangential reach and the face sweep's ±2 upstream reach, not those six — so the OWNER's flag
+    // is exchanged instead. One `syncScalar` on an nExt-sized View, exact by definition, and
+    // decomposition-independent because the owner's own SDF samples are.
+    std::vector<char> cfRegular(static_cast<std::size_t>(nExt_), 0);
+    for (Index i = 0; i < n; ++i)
+      cfRegular[static_cast<std::size_t>(i)] = (mom_.isFluid(i) && !mom_.isCut(i)) ? 1 : 0;
+    if (dist_) {
+      std::vector<double> rx(static_cast<std::size_t>(nExt_), 0.0);
+      for (Index i = 0; i < n; ++i)
+        rx[static_cast<std::size_t>(i)] = cfRegular[static_cast<std::size_t>(i)] ? 1.0 : 0.0;
+      View<double> rv = toDevice(rx, "cf_regular");
+      syncScalar(rv);
+      const std::vector<double> rh = toVector(rv);
+      for (Index s = n; s < nExt_; ++s)
+        cfRegular[static_cast<std::size_t>(s)] = (rh[static_cast<std::size_t>(s)] > 0.5) ? 1 : 0;
+    }
+    // Programming-error guard (§6.4): a builder that asks for a slot the flag was never filled for
+    // is a bug in the discovery, not a configuration the solver should tolerate silently.
+    auto regularOk = [&](Index s) {
+      if (s < 0 || s >= static_cast<Index>(cfRegular.size()))
+        throw std::logic_error("peclet::amr: C/F regular flag queried outside [0, nExt)");
+      return cfRegular[static_cast<std::size_t>(s)] != 0;
+    };
+    cfCutFaces_ = countCfCutFaces(pres_, *t_, regularOk, [&](Index s) { return mom_.isFluid(s); });
     if (cfScheme_ != CfScheme::standard) {
       auto fluidOk = [&](Index i) { return mom_.isFluid(i); };
       auto rowRegular = [&](Index i) { return mom_.isFluid(i) && !mom_.isCut(i); };
@@ -1721,6 +1749,13 @@ class AmrFlow {
   /// (0 single-rank, 0 with CfScheme::standard). Nonzero is the evidence that the quadratic
   /// closure actually reaches across a block seam instead of falling back there.
   Index numCfGhostColumns() const { return cfGhostCols_; }
+  /// The C/F census (docs/amr_cf_flux_gate.md §6.5): owned `forEachFaceFull` slots on a 2:1
+  /// sub-face between two FLUID cells where at least one incident cell is CUT, i.e. the sub-faces
+  /// on which the per-face gate withholds the quadratic face value and the scheme falls back to
+  /// the standard two-point one (§7: an O(h) face value, on a codimension-2 set for the
+  /// production graded meshes). `0` on every uniform or finest-band mesh. LOCAL under MPI, like
+  /// `numCfGhostColumns`; `Σ_ranks` is exactly the single-rank count.
+  Index numCfCutFaces() const { return cfCutFaces_; }
   /// Per-leaf fluid mask (false inside the solid) — for host-side post-processing / bindings.
   bool isFluid(Index i) const { return mom_.isFluid(i); }
   /// Total momentum BiCGStab iterations (summed over the 3 components) of the last step.
@@ -2309,6 +2344,7 @@ class AmrFlow {
   CfCompCsrDev cfUfVel_;            // (uf_scheme − uf_std) face-field overlay: velocity part
   CfCsrDev cfUfPhi_;                //                                          φ part
   Index cfGhostCols_ = 0;           // overlay entries reading a ghost slot (diagnostic)
+  Index cfCutFaces_ = 0;            // C/F slots where the face gate withholds the quadratic
   View<double> maskC_;              // 1 = coupled row (Krylov subspace), 0 = pinned
   View<double> gpr_, gprh_, gpp_, gpph_, gpv_, gps_, gpsh_, gpt_;  // ghost BiCGStab scratch
   View<double> rscale_;

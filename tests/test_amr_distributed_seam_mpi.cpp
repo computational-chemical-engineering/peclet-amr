@@ -145,6 +145,26 @@ void run() {
   configure(fs);
   const Fields s = runSteps(fs, kSteps);
 
+  {
+    // Gate C (docs/amr_cf_flux_gate.md §10). The C/F census counts the 2:1 sub-face slots where
+    // the quadratic face value is WITHHELD because an incident cell is cut. It is an exact
+    // integer and decomposition-invariant BY OWNERSHIP: a seam sub-face's two slots are owned by
+    // the two ranks that share it, so Σ_ranks is the single-rank count.
+    //
+    // This mesh is the configuration the gate exists for — a two-level latitude map ON the cut
+    // band, i.e. a level boundary that reaches the wall — so the count must be POSITIVE here. If
+    // it comes back 0 the mesh is not what this file's docstring says it is; investigate the mesh
+    // before touching this assertion.
+    long cw = static_cast<long>(fw.numCfCutFaces()), cwTot = 0;
+    MPI_Allreduce(&cw, &cwTot, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+    const long cs = static_cast<long>(fs.numCfCutFaces());
+    if (rank == 0)
+      std::printf("[seam-mpi] np=%d C/F cut-band face slots: WORLD Σranks %ld, SELF %ld\n", size,
+                  cwTot, cs);
+    PECLET_AMR_CHECK(cs > 0);
+    PECLET_AMR_CHECK_EQ(cwTot, cs);
+  }
+
   double dmax = 0.0, scale = 0.0;
   for (Index i = 0; i < n; ++i) {
     const Index si = self.local().find(world.globalCode(i));

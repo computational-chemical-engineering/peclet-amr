@@ -528,6 +528,43 @@ inline CfUfDelta buildCfUfDelta(const AmrPoisson<3, Bits>& ap, const BlockOctree
   return d;
 }
 
+/// The C/F CENSUS (docs/amr_cf_flux_gate.md §6.5): how many OWNED `forEachFaceFull` slots `(i, j)`
+/// are a 2:1 sub-face between two FLUID cells on which the per-face gate WITHHOLDS the quadratic
+/// value, i.e. at least one of the two incident cells is CUT. `regularOk` must be valid over
+/// `[0, nExt)` (the ghost tail carries the OWNER's flag — §6.4).
+///
+/// It is `0` on every uniform or finest-band mesh (cut cells there have no C/F face), so it is
+/// also the observable that says whether §7's O(h) face-value cost applies to a given mesh at
+/// all. Each 2:1 sub-face contributes TWO slots (it is enumerated from both incident cells), and
+/// under MPI the mirror slot of a seam sub-face is owned by the other rank, so `Σ_ranks` is
+/// exactly the single-rank count — an integer decomposition-invariance gate.
+template <unsigned Bits, class RegularFn, class FluidFn>
+inline Index countCfCutFaces(const AmrPoisson<3, Bits>& ap, const BlockOctree<3, Bits>& t,
+                             RegularFn&& regularOk, FluidFn&& fluidOk) {
+  const Index n = t.numLeaves();
+  // Per-leaf counts then a serial sum: disjoint writes (rung 1), and the total is an exact
+  // integer under any schedule. One face traversal, the same shape as the CSR builders beside it.
+  std::vector<Index> per(static_cast<std::size_t>(n), 0);
+  hostParFor(n, [&](Index i) {
+    if (!fluidOk(i))
+      return;
+    const unsigned Li = t.level(i);
+    Index c = 0;
+    ap.forEachFaceFull(i, [&](Index j, int, int, double, double, double) {
+      if (ap.levelOf(j) == Li || !fluidOk(j))
+        return;
+      if (regularOk(i) && regularOk(j))
+        return;
+      ++c;
+    });
+    per[static_cast<std::size_t>(i)] = c;
+  });
+  Index cnt = 0;
+  for (Index i = 0; i < n; ++i)
+    cnt += per[static_cast<std::size_t>(i)];
+  return cnt;
+}
+
 // ---- host applies (the oracle path; the device uses the same CSRs uploaded + SpMV kernels) ----
 
 /// out(i) += Σ coef·f(slot) (the scalar overlay: momentum ∇² delta, gradient delta per axis).

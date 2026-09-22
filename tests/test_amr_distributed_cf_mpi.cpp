@@ -209,6 +209,16 @@ void run() {
   configure(fs);
   const Fields s = runSteps(fs, kSteps);
 
+  {
+    // Gate C' (docs/amr_cf_flux_gate.md §10): this mesh's cut band is uniformly FINEST (targetLevel
+    // returns 0 inside 3.5 h0 of the surface), so no cut cell has a 2:1 face and the per-face C/F
+    // gate withholds nothing. The census must be exactly zero — on every rank and single-rank.
+    long cw = static_cast<long>(fw.numCfCutFaces()), cwTot = 0;
+    MPI_Allreduce(&cw, &cwTot, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+    PECLET_AMR_CHECK_EQ(cwTot, 0L);
+    PECLET_AMR_CHECK_EQ(static_cast<long>(fs.numCfCutFaces()), 0L);
+  }
+
   double dmax = 0.0, scale = 0.0;
   for (Index i = 0; i < n; ++i) {
     const Index si = self.local().find(world.globalCode(i));
