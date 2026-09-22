@@ -139,8 +139,19 @@ void run_test() {
   // passed over it.
   const Res rGq = run(tg, Rg, Vec<3>{cg, cg, cg}, 30, false, /*cf=*/1);
   const double dCellGq = rGq.dCell, dFaceGq = rGq.dFace;
-  PECLET_AMR_CHECK(dFaceGq < 0.01 * dCellGq);  // the SAME bar cf=0 is held to, above
-  // and within an order of magnitude of it -- not the 5e6x it was before the fix.
+  std::printf("[face-field] band=3: cf=0 cell %.4e face %.4e | cf=1 cell %.4e face %.4e\n", dCellG,
+              dFaceG, dCellGq, dFaceGq);
+  // THE BAR IS ABSOLUTE, NOT RELATIVE, ON THE APERTURE PATH. `dFace < 0.01 * dCell` passed this
+  // case at 1.3262e-09 against 4.8407e-01, i.e. with a 3.7e6x margin -- and on case (4) below at
+  // 1.9129e-12 against 5.6140e-01, a 2.9e9x margin. That is not a gate, it is a coincidence with
+  // a comparison operator in front of it: the phi-overlay defect it was credited with catching
+  // produced only a 1.3e-02-class dFace, i.e. it was caught by a hair. On the aperture path
+  // divNormFace IS the pressure-solve residual (D(uf) = D(u*) - L*phi exactly), so the honest
+  // bar is the residual class. At presIters=30 this lands at 1.3e-09 (invariant under
+  // OMP_NUM_THREADS 1/2/4/8 -- the oracle is serial host), so 1e-8 is the nearest decade with
+  // headroom; tighten the solve and it drops to the 1e-12 class (case 4).
+  PECLET_AMR_CHECK(dFaceGq < 1e-8);  // residual class, absolute
+  // and within an order of magnitude of the cf=0 arm -- not the 5e6x it was before the fix.
   PECLET_AMR_CHECK(dFaceGq < 100.0 * dFaceG);
   // Gate I' (docs/amr_cf_flux_gate.md §10): on THIS mesh the cut cells are uniformly finest, so no
   // cut cell has a 2:1 face, the per-FACE C/F gate withholds nothing, and rule (I) was already at
@@ -212,7 +223,10 @@ void run_test() {
       static_cast<long long>(rb.cutFaces), rb.dCell, rb.dFace, rb.ident, rb.identRef);
   // The mesh must actually contain the configuration, or this case gates nothing.
   PECLET_AMR_CHECK(rb.cutFaces > 0);
-  PECLET_AMR_CHECK(rb.dFace < 0.01 * rb.dCell);                      // the graded bar of case (2)
+  // Aperture path again, so the same absolute residual-class bar as case (2): this reads
+  // 1.9129e-12 against a 5.6140e-01 cell divergence, and the non-decaying O(1) mass source the
+  // old per-ROW gate left on this very mesh was 2.016e-01.
+  PECLET_AMR_CHECK(rb.dFace < 1e-8);
   PECLET_AMR_CHECK(rb.ident <= 1e-14 * std::max(1.0, rb.identRef));  // rule (I)
 
   // (4b) the same mesh on the production GHOST closure. band=0 is the mixed-level cut band, so the
