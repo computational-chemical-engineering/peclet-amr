@@ -118,8 +118,15 @@ and two codes that *feel* like one suite.
   gone (`85e2664`, and `961ba10` for the two bugs it was hiding — a block-period wrap that could
   return a geometrically unrelated leaf across ranks, and `t.level()` on ghost indices). Four
   byte-gate hashes re-recorded: exactly the scenarios that build a graded mesh AND run a `Flow`.
-  Direct check on the byte gate's own graded sphere, against a uniform-fine reference: the
-  permeability error falls from 5.15e-02 to 1.22e-02.
+  Direct check on a graded sphere against a uniform-fine reference: the permeability error falls
+  from 5.15e-02 to 1.22e-02. **Attribution corrected 2026-09-22:** that pair is NOT "the byte
+  gate's own graded sphere" (`state_hash.py`'s `sph`, r=0.22 in the unit box, lmax=1), as this
+  line said until then — that mesh gives 2.969e-02 → 4.586e-03, a factor 1.7 / 2.7 away. It is
+  `1b0d5b5`'s recipe, the Z&H sphere (solid fraction 0.125) in cell units at N=32, **lmax=2**,
+  band=3.0, which reproduces at 5.538e-02 → 1.176e-02 and whose absolute k matches the 47.182462
+  that commit records to 0.18 %. Both recipes are now in
+  `tests/study/convergence/zh_graded_permeability.py`, and both have `num_cf_cut_faces == 0`, so
+  both are bit-identical across the per-FACE C/F gate (`docs/amr_cf_flux_gate.md` gate P).
   One blocker is gone: until 2026-09-21 `setSolid` THREW for `dist_ && cfScheme_ != standard`, so
   the scheme could not have been a default at all. It is now distributed
   (`docs/amr_setup_parallel_plan.md` §7, ctests `amr_distributed_cf_np{1,2,4,8}`).

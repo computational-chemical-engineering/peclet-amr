@@ -100,9 +100,9 @@ f=1e-3, dt=60, advection off, 400 steps; reference = the same sphere on a unifor
   graded band=3.0, cf=1           k = 1.0147871218e-01   rel err 4.585605e-03
 
 BIT-IDENTICAL, digit for digit, in both arms. NB these absolutes do not reproduce the
-5.15e-02 -> 1.22e-02 pair quoted in ROADMAP §A6 and in the design note's gate P; that measurement's
-exact recipe was never recorded, so this file pins one. What the gate asserts — that a finest-band
-mesh does not move — holds.
+5.15e-02 -> 1.22e-02 pair quoted in ROADMAP §A6 and in the design note's gate P. RESOLVED under
+C8 below: that pair is a DIFFERENT sphere, and ROADMAP's attribution of it to this one was the
+error.
 
 
 ## Gate S — stability on the 12 throat-graded meshes
@@ -323,3 +323,43 @@ One further repair made while running it: tests/study/amr_two_sphere_gap.py carr
 `if cf: fl.set_cf_scheme(cf)` defect as the diverge probe. It is inert for every number recorded
 in this file (gates M and S were all run at cf=1, where the guard is true), but a `--cf 0` sweep
 of that script would silently have re-run the cf=1 sweep. Now unconditional.
+
+
+## C8 — gate P's attribution: ROADMAP §A6 had it on the wrong sphere
+
+Two records disagreed and neither had been tried.
+
+  `1b0d5b5`'s commit message   "MEASURED (graded sphere, N=32, lmax=2, band=3)" ... "Steady
+                               permeability 47.182462 before and after, error against a
+                               uniform-fine reference still 1.22e-02"
+  ROADMAP §A6                  "Direct check on the byte gate's own graded sphere, against a
+                               uniform-fine reference: the permeability error falls from
+                               5.15e-02 to 1.22e-02"
+
+Both recipes run on this branch (cfgate at 0e0a4bf, host-openmp Release, OMP_NUM_THREADS=2,
+mu=0.1, f=1e-3, dt=60, advection off, 400 steps; verified converged -- a stationarity march to
+1e-8 reproduces every digit below to five figures at 650-820 steps):
+
+  recipe                                          uniform-fine k   cf=0 rel err   cf=1 rel err
+  A  byte gate's own sphere, r=0.22 in the UNIT    1.0101549502e-01   2.968733e-02   4.585605e-03
+     box, cells=32^3, lmax=1, band=3.0
+  B  Z&H sphere (phi=0.125, R=(0.125*3/4pi)^(1/3)  4.0878444331e+01   5.537929e-02   1.175890e-02
+     *N) in CELL UNITS, N=32, lmax=2, band=3.0
+
+RECIPE B IS THE ONE. It reproduces the recorded 5.15e-02 -> 1.22e-02 pair to 8 % and 4 %; recipe
+A is a factor 1.7 and 2.7 away. B's absolute k agrees too: 41.359129933 superficial is
+47.267439 interstitial (divided by the 0.875 fluid fraction) against the 47.182462 that commit
+records, i.e. 0.18 % -- the residual being the normalisation 1b0d5b5 never wrote down
+(superficial vs interstitial, and which discrete fluid volume). And 1b0d5b5's own message says
+"lmax=2", which recipe A is not (it is lmax=1).
+
+SO: ROADMAP §A6's attribution was wrong, `1b0d5b5`'s was right. Fixed in docs/ROADMAP.md §A6 and
+in tests/study/convergence/zh_graded_permeability.py, which now RUNS BOTH recipes so neither
+number has to be reconstructed again.
+
+THE GATE'S ASSERTION HOLDS EITHER WAY, and is now a measurement rather than an inference:
+Flow.diagnostics.num_cf_cut_faces == 0 on the Z&H sphere at N=32 for BOTH lmax=1 and lmax=2
+(band=3.0) AND on the byte gate's own r=0.22 sphere. Zero census => the per-FACE gate withholds
+nothing => bit-identical, which is what the Gate P section above measured directly. Recipe A's
+three numbers above are unchanged, digit for digit, from the Gate P section recorded at ffd8834,
+which is also a check that C1-C6 are inert.
