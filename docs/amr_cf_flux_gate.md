@@ -171,11 +171,26 @@ stencil is non-symmetric (Martin–Cartwright's operator is), so the pressure ma
 SPD — PCG is no longer valid (BiCGStab/GMRES: ~2× the work per iteration, no monotone convergence
 guarantee), and the MG hierarchy (host, device, distributed) would need a quad-aware coarse
 operator at every level. The gain is the order of `uf`'s face gradient on C/F faces during
-transients only: at the fixed point φ → 0, and during a transient the error of `G_std φ` on a C/F
-face is `O(h)·|∇φ| = O(h·dt·∂_t p)` — a term of the same order as the incremental projection's own
-splitting error, confined to C/F faces. Formally nothing is gained. **The register entry stands;
-this note adds the transient half of its justification and the rule (I) that `uffix` established,
-as a new clarifying entry (WO5), not a supersession.**
+transients only: at the fixed point φ → 0, so the steady answer cannot move.
+
+*Correction (2026-09-22, review).* The size of that transient gain was stated here as
+`O(h)·|∇φ|`, and that is wrong — it is **`O(1)·|∇_tφ|`**, and it does not shrink with the mesh.
+`G_std` on a 2:1 face is the compact two-point `(φ_C − φ_F)/d`, whose two centres are offset
+TANGENTIALLY by `h/2` on each tangential axis over a normal distance `1.5h`, so
+
+    (φ_C − φ_F)/d = ∂_nφ ± (1/3)·∂_{t1}φ ± (1/3)·∂_{t2}φ + O(h).
+
+The ±(1/3) tangential leak is a fixed fraction of `|∇_tφ|`, not an `O(h)` term. Measured on the
+manufactured field of `test_amr_cf_vector` §5, the pointwise error of the whole `uf` at a C/F
+sub-face goes 4.547e+00 → 4.319e+00 → 4.224e+00 at N = 16/32/64 (order 0.07, 0.03), converging to
+`(2/3)·2π = 4.19` — exactly the bound above for `|∇φ| ≤ 2π`. So what option D buys is not a factor
+of `h`, it is the removal of an O(1) term that is present at every resolution and is proportional
+to `φ`, i.e. to `dt·∂_t p`. The rejection STANDS on the other grounds (SPD, the MG hierarchy) and
+because the steady answer is untouched, but "formally nothing is gained" was too strong: a
+time-accurate transient on a graded mesh would gain. §6.8 records the deferred-correction path
+that would buy it without giving up MG-PCG. **The register entry stands; this note adds the
+transient half of its justification and the rule (I) that `uffix` established, as a new
+clarifying entry (WO5), not a supersession.**
 
 **E. Forbid the configuration (throw when a cut cell touches a level boundary) — REJECTED.** A
 level jump that reaches the wall puts cut cells on both sides of a 2:1 face; that is the defining
@@ -247,9 +262,26 @@ each push today, in today's order and with today's association of the scale:
 - **Anisotropic finding (not in the brief).** Today the row builder takes `H, h` on axis 0 and
   `d = 0.5(H+h)`, the face builder takes `dist` on the face axis but `H, h` on axis 0, so on an
   anisotropic octree `wF + wC ≠ 1` in `uf` and the two CSRs disagree on EVERY C/F sub-face, cut
-  or not. The emitter's per-axis widths fix that as a side effect. No anisotropic graded test
-  exists; WO1 adds none (out of scope) but records the fact in the emitter's docstring, and the
-  equality test of §6.6 would catch it if one is ever written.
+  or not. The emitter's per-axis widths fix that as a side effect.
+
+  *Spelled out (2026-09-22, review — the sentence above is correct but was read as ambiguous, so
+  say which builder is wrong).* **The FACE builder is the culprit.** `buildCfUfDelta` mixed two
+  axes in one quotient: axis-0 widths over the face-axis `dist`. On `h0 = (1, ½, 2)` a y-directed
+  2:1 sub-face got `wF = 4/3`, `wC = 2/3`, i.e. `wF + wC = 2` — roughly DOUBLE the velocity on
+  every off-axis C/F sub-face. `buildCfDivDelta` was dimensionally RIGHT: it took `H`, `h` AND
+  `d = ½(H+h)` all on axis 0, so only their axis-free ratios entered and its weights were correct
+  on any mesh. Measured with `main`'s builders at `2426ef4`: rule (I) reads **7.447e+02** against
+  a 7.766e+01 reference on an `h0 = (1, ½, 2)` graded octree, and **4.399e-15** with the emitter;
+  the cubic control reads 5.286e-15 under both, bit for bit.
+
+  A gate now exists: `tests/test_amr_cf_vector` §7 (added 2026-09-22 on the review's instruction;
+  WO1 deliberately added none, and it was right that nothing else in the suite covers this —
+  every byte-gate scenario is `extent=[1,1,1]` and `test_amr_drag`'s `dragKAniso` is uniformly
+  refined, so it has no 2:1 face at all). NB the emitter also re-spells the DIVERGENCE builder's
+  weights, and the two spellings agree bitwise only when `h0[axis]/h0[0]` is a power of two
+  (measured: `wF`, `wC` differ in the last bit at aspect 0.3 and 0.7, equal at 0.5, 2, 1/3), so
+  the byte gate's "no hash moves" acceptance is an ISOTROPIC statement — true of every scenario
+  it runs.
 
 ### 6.3 The three builders
 
@@ -268,7 +300,7 @@ exonerated by the 2026-08-27 bisection; open question 1, §11).
   `cfFace(i, j)`. The side reweighting (a) is a row property and is unchanged in form; its trigger
   is now "a PASSING C/F face on this axis". Rationale: D and G must be paired face by face
   (§8, point 3) — a face whose value D takes as standard must be one whose gradient G takes as
-  standard.
+  standard. **Exactly, the pairing is of the SUPPORT, not of the weights** — see §8 point 3.
 - The slot numbering of `buildCfUfDelta` (cell-major, one row per `forEachFaceFull` slot) is
   unchanged; withheld faces are empty rows, as they are today for same-level faces.
 
@@ -295,8 +327,17 @@ issued, so the registry is a superset of what it can ask for), and is exact by d
 the owner's flag, and the owner's flag is decomposition-independent because its neighbours' SDF
 samples are.
 
-Guard: the builders assert `s < regular.size()` for every `s` they test (debug-only or a cheap
-`if` that throws `std::logic_error` — this is a programming-error guard, not a configuration guard).
+Guard: `regularOk` range-checks `s` against `regular.size()` on every query — a programming-error
+guard, not a configuration guard.
+
+*Correction (2026-09-22, review): it is a guard, not a throw.* The implementation raises
+`std::logic_error`, but every caller is inside a `hostParFor` body, i.e. inside a
+`Kokkos::parallel_for` over the host execution space (an OpenMP parallel region). An exception
+that escapes such a region does not propagate to the caller — it terminates the process. So the
+guarantee this buys is "the build dies loudly at the offending slot instead of reading out of
+bounds and producing a plausible wrong CSR", which is the whole of what a programming-error guard
+needs to do. Do not write a test that expects to CATCH it, and do not make any configuration
+depend on catching it.
 
 The oracle is single-rank: `regular` is the local vector, no exchange.
 
@@ -329,6 +370,49 @@ and their uploads are deleted, the `finishProjection` comment is shortened to th
 pointer to this note. The `ufgate` study that reads it computes `D(Δφ)` itself if it is ever
 rebased.
 
+**DONE 2026-09-22** (review, once `test_amr_cf_vector` §5 stopped reconstructing the φ term — it
+was the last reader). `CfUfDelta::phi`, the pass that builds it, `cfUfPhi_`, its upload and its
+`numCfGhostColumns` contribution are gone. Inert: all thirteen byte-gate keys identical at np=1
+and under `mpirun -np 2`; the only number that moved is the ghost-column DIAGNOSTIC it stopped
+counting (22504 → 18152 on `test_amr_distributed_cf_mpi` at np=2). If a quadratic face gradient
+in `uf` is ever wanted, §6.8 — not option D.
+
+### 6.8 DEFERRED — how to get a quadratic `uf` face gradient legally (review, 2026-09-22)
+
+§6.7 deletes the φ part of `cfUf` because rule (I) forbids applying it while `L = D_std·G_std`,
+and §5 option D rejects making the matrix quadratic. That leaves a real (if small) gap: on a
+graded mesh a time-accurate transient carries an `O(1)·|∇_tφ|` error in `uf`'s face gradient at
+C/F faces (§5 D, corrected), which is `O(dt·∂_t p)` and therefore invisible at steady state but
+not in, say, an advected-scalar budget during start-up. Nothing in this package needs it today,
+so it is DEFERRED with the mechanism written down rather than rediscovered.
+
+**The path: deferred correction on the pressure solve, the pattern `cfMom_` already uses.** Keep
+the matrix standard and put the quadratic operator on the right-hand side:
+
+    L_std φ^{k+1} = rhs − (L_quad − L_std) φ^k,        φ^0 = 0 (or the previous step's φ)
+
+one or two outer iterations. `(L_quad − L_std)` is exactly the CSR family this header already
+builds (`buildCfDivDelta` composed with the C/F face-gradient substitution), applied as one extra
+SpMV per outer iteration. At convergence of the outer loop, φ solves `L_quad φ = rhs`, so
+
+- `uf = F(u*) − G_quad φ` satisfies rule (I) against `D_std` exactly (`D_std uf = rhs − L_quad φ`
+  = the outer residual), i.e. the φ part could be applied again, and correctly;
+- the matrix the Krylov solver inverts is still the SPD standard operator, so **MG-PCG, the MG
+  hierarchy at every level, and the distributed BiCGStab path are all untouched** — which is the
+  entire reason option D was rejected;
+- the momentum path already runs this pattern (`cfMom_` is the lagged `μ(∇²_quad − ∇²_std)` term),
+  so it is a known-stable structure in this solver, not a new one.
+
+**Cost:** ~2× the pressure solves per step (one per outer iteration), which is the dominant cost
+of the step. **Convergence:** the outer iteration is a fixed-point on `L_std^{-1}(L_quad − L_std)`,
+whose spectral radius is the relative size of the C/F correction — small, because the correction
+lives on C/F faces only, but it has NOT been measured here and would have to be before shipping.
+
+**Default: do not build it.** Revisit only if a transient measurement on a graded mesh needs a
+conservative flux to better than `O(dt·∂_t p)·|∇_tφ|` at C/F faces. Recorded so the next session
+does not reach for option D (a quadratic matrix), which costs the whole solver stack for the same
+end.
+
 ## 7. What it costs at cut cells
 
 On a cut-adjacent 2:1 sub-face the face value is the standard `½(u_F + u_C)`, whose sample point
@@ -350,8 +434,32 @@ Where that set lives decides the global cost:
   diagnostic mesh, not a production one, and it is exactly the mesh on which today's rule leaves a
   non-decaying O(1) mass error.
 - Nothing changes on any finest-band mesh: the ladder's 2.00 / 1.60 orders and the Z&H graded
-  permeability (1.22e-02 vs uniform-fine) are bit-identical after this change, because those meshes
-  keep cut cells uniformly finest (the ladder's docstring says so; §10 asserts it).
+  permeability are bit-identical after this change, because those meshes keep cut cells uniformly
+  finest (the ladder's docstring says so; §10 asserts it). *Measured, 2026-09-22:*
+  `num_cf_cut_faces` is **0** on the Z&H graded sphere at N=32 for both `lmax=1` and `lmax=2`
+  (band=3.0) and on the byte gate's own `r=0.22` sphere — so the claim is a measurement now, not
+  an inference from the docstring.
+
+  *Attribution correction (2026-09-22, review).* The "1.22e-02 vs uniform-fine" figure quoted in
+  earlier drafts of this bullet, in §10's gate P and in `ROADMAP.md` §A6 belongs to the recipe
+  `1b0d5b5`'s commit message names — the **Z&H sphere** (φ = 0.125, `R = (0.125·3/4π)^{1/3}·N`) at
+  **N = 32, lmax = 2, band = 3.0** — and NOT to "the byte gate's own graded sphere" (`r = 0.22`
+  in the unit box, `lmax = 1`), which is what ROADMAP §A6 says. Re-run on this branch, cell units
+  (`spacing=1.0`), `mu=0.1`, `f=1e-3`, `dt=60`, advection off, marched to stationarity:
+
+  | recipe | cf=0 | cf=1 |
+  |---|---|---|
+  | Z&H sphere, N=32, **lmax=2**, band=3.0 (`1b0d5b5`'s) | 5.538e-02 | **1.176e-02** |
+  | Z&H sphere, N=32, lmax=1, band=3.0 | 3.063e-02 | 4.441e-03 |
+  | byte gate's own `r=0.22` sphere, lmax=1, band=3.0 | 2.969e-02 | 4.586e-03 |
+
+  The first row reproduces the recorded `5.15e-02 → 1.22e-02` pair to 8 % / 4 %; the byte-gate
+  sphere is a factor 1.7 / 2.7 away. Its absolute `k` also matches: 41.359 superficial, i.e.
+  47.267 divided by the fluid fraction, against `1b0d5b5`'s recorded 47.182462 (0.18 %). The
+  residual few percent is the normalisation that commit never recorded (superficial vs
+  interstitial, and which discrete fluid volume). `ROADMAP.md` §A6 is corrected on the
+  implementation branch, and `tests/study/convergence/zh_graded_permeability.py`'s docstring now
+  pins a recipe that is reproducible.
 
 The census (§6.5) reports the size of the affected set for any mesh, so the cost is measured, never
 silent.
@@ -373,13 +481,27 @@ Argued from the mechanism of the recorded instability, not from a test pass.
    design records as stable on all 12 throat meshes ("Stable at cf=0 ⇒ that term"). A scheme that
    is a face-wise mixture of two schemes each stable on its own is not automatically stable, so
    point 3 is the load-bearing one.
-3. **The D–G pairing is preserved face by face.** The instability needs a constraint component
-   the gradient cannot see. Under the new rule every C/F substitution in D at row `i` on face
-   `(i, j)` has its counterpart in G at row `i` on the same face (both fire on `cfFace(i, j)`),
-   and the face value in `uf` on `(i, j)` is the value D used (same emitter). No term is added
-   anywhere; terms are removed in matched pairs. The set of constraint reads at every row is a
-   subset of today's, and the set of gradient reads is the matching subset. There is no new
-   invisible component to accumulate.
+3. **The D–G pairing is preserved face by face — in the SUPPORT, which is what the mechanism
+   needs.** The instability needs a constraint component the gradient cannot see. Under the new
+   rule every C/F substitution in D at row `i` on face `(i, j)` has its counterpart in G at row
+   `i` on the same face (both fire on `cfFace(i, j)`), and the face value in `uf` on `(i, j)` is
+   the value D used (same emitter). No term is added anywhere; terms are removed in matched
+   pairs. The set of constraint reads at every row is a subset of today's, and the set of
+   gradient reads is the matching subset. There is no new invisible component to accumulate.
+
+   *Correction (2026-09-22, review): the pairing is exact for the SUPPORT and NOT for the
+   weights, on mixed sides.* `buildCfGradDelta`'s side reweighting (a) is triggered per axis and
+   side, not per sub-face: at a coarse regular row whose 2:1 side carries both cut and regular
+   fine children across one face, ONE passing sub-face sets `cf[axis][s]`, and the reweighting
+   `(w − ½)` is then applied to EVERY open face of that side — the withheld sub-faces included.
+   So a withheld sub-face's φ enters G at the reweighted distance weight `w` while its velocity
+   enters D at the standard ½. The invisible-subspace argument survives unchanged, because it is
+   an argument about WHICH CELLS a row reads: the reweighting reads no cell the standard operator
+   did not already read at that row, and adds no substitution. What it does mean is that `G` at
+   such a row is not literally "the standard operator on the withheld faces" — it is the standard
+   operator recentred on the row, which is what (a) is for and is independent of the C/F value
+   scheme. Stated here so the next reader does not take the stronger claim and be surprised by the
+   code.
 4. **The lagged momentum term is untouched.** `cfMom_` (the deferred-correction diffusion delta)
    keeps its gate; it was exonerated by the bisection and nothing here changes what it reads.
 
@@ -398,14 +520,19 @@ file touched with clang-format 18.1.8.
 (the div builder passes `dist` from `forEachFaceFull` instead of computing `0.5(H+h)`, and per-axis
 widths; the face builder passes `scale = 1`). No predicate change yet. Docstring records the
 anisotropic finding. *Acceptance:* the full battery green; `python/state_hash.py --check` passes
-with ALL ten hashes unchanged (this is the bit-identity claim of §6.2 — if any hash moves, stop:
-the association order was not reproduced).
+with ALL THIRTEEN scenario keys unchanged — the reference holds nine scenarios, four of which
+(`distributed_adapt`, `distributed_flow`, `distributed_octree`, `distributed_rebalance`) carry an
+`.np1` and an `.np2` key, plus a `toolchain` key that is not a hash; earlier drafts of this note
+said "ten". Run it BOTH at np=1 and under `mpirun -np 2`: a single-rank `--save`/`--check` never
+touches the four `.np2` keys. (This is the bit-identity claim of §6.2 — if any hash moves, stop:
+the association order was not reproduced.)
 
 **WO2 — the ghost-visible regular flag (inert plumbing).** Per §6.4 in `flow.hpp::setSolid`:
 build `regular` on `[0, nExt)`, exchange the tail, keep `regularOk`. Nothing reads the ghost tail
 yet (the builders still take today's predicates). Add `numCfCutFaces()` (§6.5) computed from the
 new flag, and its `diagnostics` binding (name per open question 4; regenerate `packaging/_amr.pyi`).
-*Acceptance:* battery green, all ten hashes unchanged; in `tests/test_amr_distributed_cf_mpi` add
+*Acceptance:* battery green, all thirteen scenario keys unchanged (np=1 AND `mpirun -np 2`); in
+`tests/test_amr_distributed_cf_mpi` add
 the assertion `Σ_ranks numCfCutFaces() == 0` (its mesh is a finest band — the count must be zero on
 every rank) and in `tests/test_amr_distributed_seam_mpi` the assertion
 `Σ_ranks numCfCutFaces()(np) == numCfCutFaces()(SELF)` exactly, and `> 0` (its two-level latitude
@@ -465,7 +592,7 @@ error), §10. Report the before/after tables in the commit message.
 | **I'** identity, inert mesh | same | `band=3` | ≤ 1e-14 (8.7e-17 today, unchanged) | 8.7e-17 |
 | **F** face divergence | `divNormFace` vs `divNormL2` | `band=0`, aperture, cf=1, 25 steps, presIters=30 | `dFace < 0.01·dCell`; absolute at the solve-residual level (report it) | 2.016e-01 (O(1) of the cell field) |
 | **F'** inert mesh | `divNormFace` | `band=3`, cf=1 | bitwise identical to today (~1.3e-12 at 300 iters) | 1.34e-12 |
-| **B** bit-identity of inert refactors | byte gate | WO1, WO2, WO5 | all ten hashes identical | — |
+| **B** bit-identity of inert refactors | byte gate, np=1 AND `mpirun -np 2` | WO1, WO2, WO5 | all THIRTEEN scenario keys identical | — |
 | **B'** byte gate after WO3 | byte gate | WO4 | `amr.flow_sampled` moves; the other nine identical | — |
 | **C** census invariance | `Σ_ranks numCfCutFaces()` | seam test np=1,2,4,8 vs SELF | exact integer equality, and > 0 | (new) |
 | **C'** census zero | same | `distributed_cf` test, `band=3` face-field cases | == 0 | (new) |
@@ -473,7 +600,7 @@ error), §10. Report the before/after tables in the commit message.
 | **S** stability | `amr_two_sphere_gap.py` + `amr_two_sphere_diverge_probe.py` | the 12 throat meshes (gaps 8,16 × n 1,2,3,4,6,8), cf=1, 400 steps | all 12 finite to the horizon; g=8 n=3,4 do not diverge | all 12 stable under the row gate |
 | **M** policy error | `amr_two_sphere_gap.py` k vs uniform finest band | same meshes | every mesh's policy error within ±0.3 % absolute of the value measured at the base commit in the same run, and ≤ 1.5 % | 0.1–1.3 % (M2a) |
 | **O** orders | `graded_poiseuille_ladder.py` | self-similar family, cf=1 | 2.00 normal / 1.60 tangential, bitwise identical (finest-band mesh) | 2.00 / 1.60 |
-| **P** permeability | Z&H graded vs uniform fine | cf=1 | 1.22e-02, bitwise identical (finest-band mesh) | 1.22e-02 |
+| **P** permeability | Z&H graded vs uniform fine | cf=1 | bitwise identical (finest-band mesh, census 0 — measured) | see §7's table; the recorded "1.22e-02" is the N=32 **lmax=2** Z&H sphere, not the byte gate's own |
 | **T** battery | ctest | host-openmp, np8 last | all green; count unchanged + the new cases | — |
 
 Gates O and P are expected NOT to move at all; if either moves, a finest-band mesh contains a
@@ -507,9 +634,12 @@ Each carries a default so work proceeds unattended.
 6. **Two-cut faces.** A 2:1 face with cut cells on BOTH sides today has no delta in D (both rows
    gated) and a delta in `uf` (both fluid) — the same mismatch, on both rows. `cfFace` withholds it
    everywhere; no separate handling. Stated so no one adds one.
-7. **The anisotropic inconsistency (§6.2)** is fixed as a side effect but has no test. *Needs a
-   fact* whether anyone runs graded anisotropic meshes. Default: no new test in this package; the
-   §6.6 equality test is the trip-wire if one is added.
+7. **The anisotropic inconsistency (§6.2)** is fixed as a side effect. *Was:* no test, default
+   "no new test in this package". **CLOSED 2026-09-22 by the review:** `test_amr_cf_vector` §7
+   runs rule (I) on an `h0 = (1, ½, 2)` graded octree and on a cubic control, and reads
+   4.399e-15 / 5.286e-15 where `main`'s builders read 7.447e+02 / 5.286e-15. The question of
+   whether anyone runs graded anisotropic meshes no longer has to be answered for the path to be
+   safe.
 
 ## 12. What the brief got wrong or understated
 
