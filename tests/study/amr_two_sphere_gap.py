@@ -112,8 +112,11 @@ def permeability(N, g, n, cf, tol=1e-7, max_steps=20000, dt=60.0):
     fl.set_body_force(FX, 0.0, 0.0)
     fl.set_advection(False)
     fl.set_ghost_sampled(True)
-    if cf:
-        fl.set_cf_scheme(cf)
+    # UNCONDITIONAL: cf=0 must SELECT the standard scheme. The quadratic scheme has been the
+    # DEFAULT since 2026-09-21, so `if cf:` silently turned a --cf 0 sweep into a second copy of
+    # the --cf 1 sweep (the defect repaired in amr_two_sphere_diverge_probe.py the same day).
+    # Inert for every recorded result here: gates M and S were all run at cf=1.
+    fl.set_cf_scheme(cf)
     fl.set_solid(make_sdf(N, g))
     w = np.asarray(t.sizes()) ** 3
     kprev, k, steps, confirm = None, None, 0, False
