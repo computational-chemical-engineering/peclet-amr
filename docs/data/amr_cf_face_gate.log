@@ -1,0 +1,192 @@
+# The C/F face-value delta gated per FACE — the gates of docs/amr_cf_flux_gate.md §10
+#
+# 2026-09-22, branch `cfgate`, host-openmp Release (GNU 14.2.0, Kokkos 5.1.1), 48-core host.
+# BASE  = `main` at 2426ef4 (the row gate).  AFTER = cfgate at ffd8834 (the per-FACE gate).
+# Both arms were run from the SAME scripts, on the same host, with OMP_NUM_THREADS as noted.
+#
+# The one-sentence rule: the quadratic C/F face value applies on a 2:1 sub-face iff BOTH incident
+# cells are regular fluid (fluid && !cut), and that one predicate drives the divergence RHS, the
+# ABC cell-gradient substitution and the advecting face field through one emitter, so that
+# D_std(Δuf) ≡ Δ_cfDiv holds identically.
+
+
+## Gates I / I' / F — rule (I) and the face divergence (tests/test_amr_face_field.cpp)
+
+Mesh: refineToSdf(band=0) on BO({8,8,8}, lmax=2) = 32^3 fine, sphere R = (0.125·3/4π)^(1/3)·32 at
+the centre, cf=1, 25 steps at presIters=30. band=0 puts the finest level ONLY where the surface
+cuts, so the 2:1 interface coincides with the cut band — the configuration the gate exists for.
+`cfCutFaces` is Flow.diagnostics.num_cf_cut_faces (the C/F census, §6.5).
+
+                                              row gate (BASE)   face gate (AFTER)
+  band=0, aperture, cf=1
+    cfCutFaces                                      672               672
+    ‖D_std(Δuf) − Δ_cfDiv‖₂   (gate I)          2.0190e-01        9.8797e-17     (ref 5.5e-01)
+    divNormFace               (gate F)          2.0182e-01        1.9129e-12
+    divNormL2 (cell field)                      5.6084e-01        5.6140e-01
+  band=0, sampled ghost closure, cf=1
+    ‖D_std(Δuf) − Δ_cfDiv‖₂                     2.3476e-01        1.0597e-16     (ref 5.5e-01)
+    divNormFace over REGULAR fluid rows          4.9184e-13        2.7695e-13
+    divNormL2 over REGULAR fluid rows           5.5584e-01        5.5727e-01
+  band=3 (finest band), aperture, cf=1
+    cfCutFaces                (gate C')                0                 0
+    ‖D_std(Δuf) − Δ_cfDiv‖₂   (gate I')         1.0114e-16        1.0114e-16     unchanged
+
+The note predicted 2.018e-01 / 2.016e-01 for the aperture band=0 pair; reproduced at
+2.0190e-01 / 2.0182e-01. It also predicted the ghost path's REGULAR rows would carry "the
+2e-1-class mismatch" before the change; they did not — that norm was already 4.9e-13. The sharp
+instrument on the ghost path is the identity, which did carry it (2.3476e-01).
+
+
+## Gate C — the census is an exact decomposition invariant (tests/test_amr_distributed_seam_mpi)
+
+Σ_ranks numCfCutFaces(), WORLD vs a single-rank SELF build of the same octree:
+
+  np = 1   96   (SELF 96)
+  np = 2   96   (SELF 96)
+  np = 4   96   (SELF 96)
+  np = 8   96   (SELF 96)
+
+The note predicted this mesh (a two-level latitude map ON the cut band) contains the
+configuration. It does. tests/test_amr_distributed_cf_mpi's mesh is a uniformly finest band and
+reports 0 on every rank, as it must.
+
+
+## Device == oracle on the band=0 mesh (tests/test_amr_flow_solver::test_cf_cut_band_parity)
+
+  cfCutFaces dev 672, host 672
+  Usup host 1.329548e+04, dev 1.329548e+04   (rel 1.34e-11)
+  max|dev − host| 1.292e-11 against a 8.751e-01 magnitude
+
+
+## Gate B / B' — the byte gate (python/state_hash.py, np=1 AND mpirun -np 2)
+
+  WO1 (the shared emitter)          all 13 scenario keys IDENTICAL
+  WO2 (the ghost-visible flag)      all 13 scenario keys IDENTICAL
+  WO3 (the per-FACE gate)           amr.flow_sampled ONLY:
+                                      d06ace2cef969226... -> 71188bd9394f1e44...
+                                    the other 12 identical, including amr.flow_ghost and
+                                    amr.distributed_flow.np{1,2} (both refine_to_sdf band=3)
+  WO5 (docs)                        all 13 IDENTICAL against the WO4 recording
+
+amr.flow_sampled is the only byte-gate scenario built with refine_to_sdf_graded (band=2.0), i.e.
+the only one with cut cells at two levels.
+
+
+## Gate O — orders (tests/study/convergence/graded_poiseuille_ladder.py, OMP_NUM_THREADS=4)
+
+BIT-IDENTICAL, every row, both arms (the ladder's meshes keep cut cells uniformly finest):
+
+    n  orientation         cf   leaves  coarse%      max err   ratio           L2   ratio
+   32       normal   standard    11264   27.27%   3.7500e-01     nan   3.2476e-01     nan
+   32       normal  quadratic    11264   27.27%   3.7500e-01     nan   3.2476e-01     nan
+   32   tangential   standard    22016    6.98%   1.3778e+00     nan   6.0309e-01     nan
+   32   tangential  quadratic    22016    6.98%   3.5986e-01     nan   2.4226e-01     nan
+   64       normal   standard    90112   27.27%   9.3750e-02    4.00   8.1190e-02    4.00
+   64       normal  quadratic    90112   27.27%   9.3750e-02    4.00   8.1190e-02    4.00
+   64   tangential   standard   176128    6.98%   1.0394e+00    1.33   4.4737e-01    1.35
+   64   tangential  quadratic   176128    6.98%   1.1840e-01    3.04   7.9752e-02    3.04
+
+ratio 4.00 = order 2.00 (normal, cf=1); ratio 3.04 = order 1.60 (tangential, cf=1).
+
+
+## Gate P — Z&H permeability against a uniform-fine reference
+
+Recipe (the ROADMAP's "byte gate's own graded sphere": state_hash.py's sph, r=0.22 at the centre
+of the unit box, cells=32^3, lmax=1, refine_to_sdf(band=3.0) — a FINEST-BAND mesh; mu=0.1,
+f=1e-3, dt=60, advection off, 400 steps; reference = the same sphere on a uniform 32^3, lmax=0):
+
+  uniform-fine reference          k = 1.0101549502e-01   (32768 leaves)
+  graded band=3.0, cf=0           k = 9.8016614805e-02   rel err 2.968733e-02
+  graded band=3.0, cf=1           k = 1.0147871218e-01   rel err 4.585605e-03
+
+BIT-IDENTICAL, digit for digit, in both arms. NB these absolutes do not reproduce the
+5.15e-02 -> 1.22e-02 pair quoted in ROADMAP §A6 and in the design note's gate P; that measurement's
+exact recipe was never recorded, so this file pins one. What the gate asserts — that a finest-band
+mesh does not move — holds.
+
+
+## Gate S — stability on the 12 throat-graded meshes
+
+tests/study/amr_two_sphere_gap.py's meshes (N=128, gaps 8 and 16 × n 1,2,3,4,6,8), cf=1, dt=60,
+momentum MG on, marched to a 400-step horizon through amr_two_sphere_diverge_probe.probe().
+OMP_NUM_THREADS=4. "finite" = never NaN and never |k| > 1e12.
+
+   g    n        BASE k          AFTER k       outcome (both arms)
+   8    1   6.069155e+02     6.069155e+02      finite
+   8    2   6.079303e+02     6.070154e+02      finite
+   8    3   6.086545e+02     6.072489e+02      finite
+   8    4   6.066957e+02     6.069714e+02      finite
+   8    6   6.059484e+02     6.056336e+02      finite
+   8    8   6.085748e+02     6.088328e+02      finite
+  16    1   8.056925e+02     8.056925e+02      finite
+  16    2   8.056925e+02     8.056925e+02      finite
+  16    3   8.718174e+02     8.718174e+02      finite
+  16    4   8.251627e+02     8.281134e+02      finite
+  16    6   8.040940e+02     8.046161e+02      finite
+  16    8   8.031061e+02     8.031306e+02      finite
+
+All 12 finite in both arms. The g=8 n=3 and n=4 meshes — the two that marched to k ~ 1e12 in the
+2026-08-27 rowFluid configuration and motivated the row gate — survive.
+
+tests/study/amr_two_sphere_diverge_probe.py (g=8, n=3 and 4 × cf × dt ∈ {60, 1e20} × momMG):
+all 16 configurations survive the 400-step horizon in BOTH arms.
+
+  n  cf      dt  momMG      BASE           AFTER
+  3   1      60   True   6.0865e+02     6.0725e+02
+  3   1      60  False   6.0865e+02     6.0725e+02
+  3   1   1e+20   True   6.6284e+02     6.6097e+02
+  3   1   1e+20  False   6.6284e+02     6.6097e+02
+  3   0      60   True   6.0865e+02     6.0725e+02     <- see the caveat below
+  3   0      60  False   6.0865e+02     6.0725e+02
+  3   0   1e+20   True   6.6284e+02     6.6097e+02
+  3   0   1e+20  False   6.6284e+02     6.6097e+02
+  4   1      60   True   6.0670e+02     6.0697e+02
+  4   1      60  False   6.0670e+02     6.0697e+02
+  4   1   1e+20   True   6.6032e+02     6.6064e+02
+  4   1   1e+20  False   6.6032e+02     6.6064e+02
+  4   0      60   True   6.0670e+02     6.0697e+02
+  4   0      60  False   6.0670e+02     6.0697e+02
+  4   0   1e+20   True   6.6032e+02     6.6064e+02
+  4   0   1e+20  False   6.6032e+02     6.6064e+02
+
+CAVEAT — the probe's cf ARM IS DEAD and has been since the default flipped. It reads
+`if cf: fl.set_cf_scheme(cf)`, so cf=0 does not select the standard scheme, it just leaves the
+DEFAULT, which is quadratic since 2026-09-21. That is why the cf=0 and cf=1 rows are identical to
+five digits and why the cf=0 rows moved with this change. Not repaired here: repairing it changes
+what the gate measures, which is a decision, not a transcription. The cf bisection the probe's
+docstring describes needs `fl.set_cf_scheme(cf)` unconditionally.
+
+
+## Gate M — policy error (tests/study/amr_two_sphere_gap.py, N=128, cf=1, tol=1e-7)
+
+d(ctl)% is the permeability error against the uniform-finest-band control on the same mesh family.
+The control itself is BIT-IDENTICAL in both arms (it has no cut-adjacent C/F face), as is k on
+every mesh whose census is zero.
+
+   g    n    BASE d(ctl)%   AFTER d(ctl)%    Δ (percentage points)
+   8  ctl         0.0000          0.0000      0.000   (k 6.590793e+02 both)
+   8    1        +0.2596         +0.2596      0.000
+   8    2        +0.4557         +0.2765     -0.179
+   8    3        +0.5712         +0.2878     -0.283
+   8    4        +0.1959         +0.2456     +0.050
+   8    6        +0.0401         -0.0300     -0.070
+   8    8        +0.5549         +0.6080     +0.053
+  16  ctl         0.0000          0.0000      0.000   (k 9.313106e+02 both)
+  16    1        +0.4842         +0.4842      0.000
+  16    2        +0.4842         +0.4842      0.000
+  16    3       +15.3671        +15.3671      0.000
+  16    4        +3.7956         +4.2979     +0.502   <- outside the ±0.3 pp bar
+  16    6        +0.0602         +0.1523     +0.092
+  16    8        -0.0542         -0.0507      +0.004
+
+Eleven of twelve move by less than the ±0.3 pp bar of the note's gate M, and the g=8 block is
+TIGHTER and more consistent after the change (spread 0.60 pp -> 0.64 pp but the three meshes that
+were furthest out, n=2/3, come in to ~+0.28). The exception is g=16 n=4 at +0.502 pp. Two meshes
+are outside the gate's "≤ 1.5 % absolute" bar — g=16 n=3 (15.37 %) and n=4 (3.80/4.30 %) — but
+they were outside it at the BASE commit too, by essentially the same amount for n=3 (identical) and
+by 3.80 % for n=4. Those are properties of the gap-floor policy on that geometry, not of this
+change; the note's "0.1–1.3 % (M2a)" reference does not describe this configuration.
+
+The census data the note's open question 5 asks for (should option C, sub-face closures, be built?)
+is the pairing of this table with Flow.diagnostics.num_cf_cut_faces on the same meshes. The meshes
+whose k did not move at all (g=8 n=1, g=16 n=1/2/3) are the ones where the gate withholds nothing.

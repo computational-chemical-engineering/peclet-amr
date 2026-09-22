@@ -86,7 +86,10 @@ def make_gap(N, g):
 def build(N, g, n):
     """n is None => the uniform finest band control; else the gap floor with that n."""
     lmax = int(math.log2(N))
-    t = amr.Octree([1, 1, 1], lmax, [0.0, 0.0, 0.0], 1.0)
+    # `cells` is the FINEST grid and lmax/origin/spacing are keyword-only (QUALITY_PLAN D/G.5);
+    # the old positional `Octree([1,1,1], lmax, origin, h0)` passed the ROOT BRICK and has not
+    # been callable since. N/2**lmax == 1 root, i.e. the same octree it always built.
+    t = amr.Octree(cells=[N, N, N], lmax=lmax, origin=[0.0, 0.0, 0.0], spacing=1.0)
     t.refine_to_sdf(lambda x, y, z: 0.0, LFAR, 1e30, False)   # uniform background at LFAR
     sdf = make_sdf(N, g)
     if n is None:
