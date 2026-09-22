@@ -14,6 +14,7 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <utility>
 #include <vector>
 
 #include "peclet/amr/block_octree.hpp"
@@ -35,13 +36,16 @@ constexpr double kPi = 3.14159265358979323846;
 struct Geo {
   BO t;
   AmrPoisson<3, 21> ap;
-  double h;
+  double h;   // the axis-0 spacing (== hv[0])
+  Vec<3> hv;  // the per-axis root spacing (anisotropic meshes use all three)
   Index n;
   std::vector<Vec<3>> cen;
   std::vector<char> cfRow;  // 1 = adjacent to a 2:1 face
 };
 
-Geo buildGeo(long N) {
+// `aspect` scales the root spacing per axis: {1,1,1} is the cubic mesh every order gate below
+// runs on, anything else an ANISOTROPIC octree (section 7).
+Geo buildGeo(long N, Vec<3> aspect = Vec<3>{1.0, 1.0, 1.0}) {
   Geo g;
   unsigned L = 0;
   while ((1L << L) < N)
@@ -59,7 +63,9 @@ Geo buildGeo(long N) {
   });
   g.t.balance2to1();
   g.h = 1.0 / static_cast<double>(N);
-  g.ap.init(g.t, g.h);
+  for (int d = 0; d < 3; ++d)
+    g.hv[d] = g.h * aspect[d];
+  g.ap.init(g.t, g.hv);
   g.n = g.t.numLeaves();
   g.cen.resize(static_cast<std::size_t>(g.n));
   g.cfRow.assign(static_cast<std::size_t>(g.n), 0);
@@ -67,7 +73,7 @@ Geo buildGeo(long N) {
     auto b = g.t.bounds(i);
     double s = static_cast<double>(Index(1) << g.t.level(i));
     for (int d = 0; d < 3; ++d)
-      g.cen[static_cast<std::size_t>(i)][d] = (static_cast<double>(b[0][d]) + 0.5 * s) * g.h;
+      g.cen[static_cast<std::size_t>(i)][d] = (static_cast<double>(b[0][d]) + 0.5 * s) * g.hv[d];
     const unsigned Li = g.t.level(i);
     g.ap.forEachFaceFull(i, [&](Index j, int, int, double, double, double) {
       if (g.t.level(j) != Li)
@@ -118,6 +124,44 @@ void divStd(const Geo& g, const std::array<std::vector<double>, 3>& u, std::vect
     });
     d[static_cast<std::size_t>(i)] = acc / g.ap.cellVolume(i);
   }
+}
+
+// RULE (I) of docs/amr_cf_flux_gate.md §4, measured on the manufactured field with NO solve.
+// The divergence RHS and the advecting face field must carry the SAME per-face value delta, so
+// that D_std(Δuf) ≡ Δ_cfDiv entry by entry — the property that makes uf a conservative flux
+// (D_std uf = rhs − Lφ = the solver residual). Both CSRs come out of the one emitter
+// cfAppendFaceValueDelta, so this is an algebraic identity on ANY mesh and ANY field, and it is
+// the trip-wire for the two builders drifting apart again. Returns {‖D_std(Δuf) − Δ_cfDiv‖₂,
+// ‖Δ_cfDiv‖₂}.
+std::pair<double, double> cfFluxIdentity(const Geo& g,
+                                         const std::array<std::vector<double>, 3>& u) {
+  auto all = [](Index) { return true; };
+  const CfCompCsr dd = buildCfDivDelta(g.ap, g.t, all, all, CfScheme::quadratic);
+  const CfUfDelta ufd = buildCfUfDelta(g.ap, g.t, all, all, CfScheme::quadratic);
+  // Δuf on every forEachFaceFull slot (cell-major, the CSR's own row numbering).
+  const Index nSlots = static_cast<Index>(ufd.vel.start.size()) - 1;
+  std::vector<double> duf(static_cast<std::size_t>(nSlots), 0.0);
+  cfApplyCompHost(ufd.vel, u, duf);
+  // D_std of it: invV · Σ α·A·dir·Δuf, the same sweep in the same order.
+  std::vector<double> dFromUf(static_cast<std::size_t>(g.n), 0.0);
+  Index slot = 0;
+  for (Index i = 0; i < g.n; ++i) {
+    double acc = 0.0;
+    g.ap.forEachFaceFull(i, [&](Index, int, int dir, double area, double, double alpha) {
+      acc += alpha * area * static_cast<double>(dir) * duf[static_cast<std::size_t>(slot)];
+      ++slot;
+    });
+    dFromUf[static_cast<std::size_t>(i)] = acc / g.ap.cellVolume(i);
+  }
+  std::vector<double> dCf(static_cast<std::size_t>(g.n), 0.0);
+  cfApplyCompHost(dd, u, dCf);
+  double e2 = 0.0, r2 = 0.0;
+  for (Index i = 0; i < g.n; ++i) {
+    const double d = dFromUf[static_cast<std::size_t>(i)] - dCf[static_cast<std::size_t>(i)];
+    e2 += d * d;
+    r2 += dCf[static_cast<std::size_t>(i)] * dCf[static_cast<std::size_t>(i)];
+  }
+  return {std::sqrt(e2), std::sqrt(r2)};
 }
 
 // Standard ABC cell gradient (the oracle::AmrFlow::gradOf form, α=1).
@@ -286,9 +330,12 @@ void run() {
       eLs = std::max(eLs, std::fabs(uS[static_cast<std::size_t>(i)] - ex));
       eLq = std::max(eLq, std::fabs(uQ[static_cast<std::size_t>(i)] - ex));
     }
-    // (5) uf face field: value truncation at the 2:1 sub-faces. uf_k = ½(u_i+u_j) − (φ₊−φ₋)/d
-    // samples the face value; standard is normally offset at C/F (O(h)); the scheme's
-    // distance-weighted + coarse*-substituted value is ~2nd order at the sub-face centroid.
+    // (5) uf face field: the face-AVERAGE half at the 2:1 sub-faces. uf_k = ½(u_i+u_j) −
+    // (φ₊−φ₋)/d, and the C/F delta the solver builds and applies is the face-average half ALONE
+    // (the φ half stopped being applied at 1b0d5b5 and has since been deleted). That half is the
+    // steady advecting velocity, and it is what is gated here: ~2nd order at the sub-face
+    // centroid, where the standard ½/½ average — whose sample point is normally offset at a 2:1
+    // face — is not.
     {
       // (regularOk, fluidOk): this mesh has no solid, so `all` is both — and the per-FACE
       // C/F gate (docs/amr_cf_flux_gate.md) is therefore inert here, as it is on every mesh
@@ -297,21 +344,13 @@ void run() {
       Index nSlots = 0;
       for (Index i = 0; i < g.n; ++i)
         g.ap.forEachFaceFull(i, [&](Index, int, int, double, double, double) { ++nSlots; });
-      std::vector<double> ufS(static_cast<std::size_t>(nSlots));
       std::vector<Vec<3>> fc(static_cast<std::size_t>(nSlots));
       std::vector<int8_t> fAxis(static_cast<std::size_t>(nSlots));
       std::vector<char> fCf(static_cast<std::size_t>(nSlots), 0);
       Index slot = 0;
       for (Index i = 0; i < g.n; ++i) {
         const unsigned Li = g.t.level(i);
-        g.ap.forEachFaceFull(i, [&](Index j, int axis, int dir, double, double dist, double) {
-          const double ui = u[static_cast<std::size_t>(axis)][static_cast<std::size_t>(i)];
-          const double uj = u[static_cast<std::size_t>(axis)][static_cast<std::size_t>(j)];
-          const double gphi =
-              (dir > 0)
-                  ? (phi[static_cast<std::size_t>(j)] - phi[static_cast<std::size_t>(i)]) / dist
-                  : (phi[static_cast<std::size_t>(i)] - phi[static_cast<std::size_t>(j)]) / dist;
-          ufS[static_cast<std::size_t>(slot)] = 0.5 * (ui + uj) - gphi;
+        g.ap.forEachFaceFull(i, [&](Index j, int axis, int dir, double, double, double) {
           const unsigned Lj = g.t.level(j);
           fCf[static_cast<std::size_t>(slot)] = (Lj != Li) ? 1 : 0;
           fAxis[static_cast<std::size_t>(slot)] = static_cast<int8_t>(axis);
@@ -324,13 +363,19 @@ void run() {
           ++slot;
         });
       }
-      // The φ-gradient part keeps the P5b flux form (sampled at the 2-point midpoint, an O(h)
-      // normal offset at C/F — conservative, telescoping, and VANISHING at steady state where
-      // φ→0). So the whole uf is O(h) at C/F faces during transients, while the face-AVERAGE
-      // part — the steady advecting velocity — must be ~2nd order. Gate both separately.
-      std::vector<double> ufQ = ufS;
-      cfApplyCompHost(ufd.vel, u, ufQ);
-      cfApplyHost(ufd.phi, phi, ufQ);
+      // WHY THERE IS NO GATE ON THE WHOLE uf (it had one, `oUq >= 0.9`, until 2026-09-22; it
+      // reconstructed a φ overlay the solver no longer applies and asserted a convergence the
+      // scheme never promised). With the φ half gone, the pointwise error of the WHOLE uf at a
+      // C/F sub-face is O(1)·|∇_tφ| BY DESIGN of the standard matrix — not O(h). uf's face
+      // gradient is the compact two-point (φ_C − φ_F)/d, and at a 2:1 face the two centres are
+      // offset TANGENTIALLY by h/2 on each tangential axis over a normal distance 1.5h, so
+      //     (φ_C − φ_F)/d = ∂_nφ ± (1/3)·∂_{t1}φ ± (1/3)·∂_{t2}φ + O(h).
+      // The tangential leak does not shrink with h. Here |∂φ| ≤ 2π, so the error tends to
+      // (2/3)·2π = 4.19 — exactly what the measured whole-uf error converges to: 4.547e+00 →
+      // 4.319e+00 → 4.224e+00 at N = 16/32/64 (order 0.07, 0.03). That is a property of
+      // L = D_std·G_std (the recorded decision "the pressure matrix stays standard"), and φ → 0
+      // at the projection's fixed point, so it never touches the steady answer. The property the
+      // solver DOES have is rule (I) — D_std(Δuf) ≡ Δ_cfDiv — gated in section (7).
       std::vector<double> avS(static_cast<std::size_t>(nSlots), 0.0), avQ;
       {
         Index k = 0;
@@ -343,35 +388,31 @@ void run() {
         avQ = avS;
         cfApplyCompHost(ufd.vel, u, avQ);
       }
-      double eUs = 0, eUq = 0, eAs = 0, eAq = 0;
+      double eAs = 0, eAq = 0;
       for (Index k = 0; k < nSlots; ++k) {
         if (!fCf[static_cast<std::size_t>(k)])
           continue;
         const Vec<3>& c = fc[static_cast<std::size_t>(k)];
         const int a = fAxis[static_cast<std::size_t>(k)];
         const double exA = velMan(c)[a];
-        const double ex = exA - phiManGrad(c)[a];
-        eUs = std::max(eUs, std::fabs(ufS[static_cast<std::size_t>(k)] - ex));
-        eUq = std::max(eUq, std::fabs(ufQ[static_cast<std::size_t>(k)] - ex));
         eAs = std::max(eAs, std::fabs(avS[static_cast<std::size_t>(k)] - exA));
         eAq = std::max(eAq, std::fabs(avQ[static_cast<std::size_t>(k)] - exA));
       }
-      static double pUq = 0, pAq = 0, pAs = 0;
-      static double oUq = 0, oAq = 0, oAs = 0;
-      oUq = pN ? orderOf(pUq, eUq, pN, N) : 0;
+      static double pAq = 0, pAs = 0;
+      static double oAq = 0, oAs = 0;
       oAq = pN ? orderOf(pAq, eAq, pN, N) : 0;
       oAs = pN ? orderOf(pAs, eAs, pN, N) : 0;
+      // Rule (I) on the SAME mesh and field, no solve: the identity must hold to round-off.
+      const auto id = cfFluxIdentity(g, u);
       std::printf(
-          "      | uf: whole std %.3e quad %.3e ord %5.2f | avg std %.3e ord %5.2f "
-          "quad %.3e ord %5.2f\n",
-          eUs, eUq, oUq, eAs, oAs, eAq, oAq);
-      pUq = eUq;
+          "      | uf avg: std %.3e ord %5.2f quad %.3e ord %5.2f | rule (I) %.3e (ref %.3e)\n",
+          eAs, oAs, eAq, oAq, id.first, id.second);
       pAq = eAq;
       pAs = eAs;
+      PECLET_AMR_CHECK(id.first <= 1e-14 * std::max(1.0, id.second));
       if (N == 64) {
         PECLET_AMR_CHECK(oAq >= 1.7);        // steady advecting velocity ~2nd order
         PECLET_AMR_CHECK(oAs <= oAq - 0.5);  // standard average is lower order
-        PECLET_AMR_CHECK(oUq >= 0.9);        // whole uf ≥ O(h) (φ part, transient-only)
       }
     }
     oDs = pN ? orderOf(pDs, eDs, pN, N) : 0;
@@ -468,6 +509,60 @@ void run() {
       pC = eCorner;
       pP = eP5b;
       pNc = N;
+    }
+  }
+
+  // (7) RULE (I) ON AN ANISOTROPIC GRADED OCTREE — the only gate this repo has on the
+  // anisotropic C/F path, and it is a gate on a LIVE BUG that was fixed by the shared emitter
+  // (docs/amr_cf_flux_gate.md §6.2, cf_scheme.hpp::cfAppendFaceValueDelta).
+  //
+  // Until 2026-09-22 buildCfUfDelta took BOTH cell widths on axis 0 (`cellWidth(i)`, the cubic
+  // spelling) and divided them by `forEachFaceFull`'s `dist`, which is on the FACE axis. On
+  // h0 = (1, ½, 2) a y-directed 2:1 sub-face therefore got wF = (½·1·2)/(1.5·½) = 4/3 and
+  // wC = (½·1)/(1.5·½) = 2/3 — wF + wC = 2, i.e. roughly DOUBLE the velocity on every off-axis
+  // C/F sub-face of an anisotropic graded mesh. buildCfDivDelta was dimensionally right (it took
+  // H, h AND d = ½(H+h) all on axis 0, so only their ratios entered), so the two books disagreed
+  // on EVERY C/F sub-face, cut or not — an O(1) violation of rule (I) with no cut cell in sight.
+  // Measured here with the pre-emitter builders of `main` at 2426ef4: rule (I) = 7.447e+02
+  // against a 7.766e+01 reference — O(1), and TEN TIMES the delta it is supposed to equal. The
+  // emitter takes both widths on the face-normal axis, and the identity is exact (4.399e-15).
+  // The cubic arm below is the control: it reads 5.286e-15 with BOTH the old and the new
+  // builders, bit for bit, which is the inertness the byte gate asserts globally.
+  //
+  // Nothing else in the suite covers this: the byte gate's scenarios are all extent=[1,1,1] and
+  // test_amr_drag's dragKAniso is uniformly refined (no 2:1 face at all).
+  {
+    std::printf("  [aniso] rule (I) on anisotropic graded octrees:\n");
+    for (const Vec<3>& aspect : {Vec<3>{1.0, 0.5, 2.0}, Vec<3>{1.0, 1.0, 1.0}}) {
+      Geo ga = buildGeo(32, aspect);
+      std::array<std::vector<double>, 3> ua;
+      for (int c = 0; c < 3; ++c) {
+        ua[static_cast<std::size_t>(c)].resize(static_cast<std::size_t>(ga.n));
+        for (Index i = 0; i < ga.n; ++i)
+          ua[static_cast<std::size_t>(c)][static_cast<std::size_t>(i)] =
+              velMan(ga.cen[static_cast<std::size_t>(i)])[c];
+      }
+      // The mesh must actually carry 2:1 faces on the squashed and stretched axes, or the arm
+      // gates nothing: count the C/F sub-faces per axis.
+      Index cfPerAxis[3] = {0, 0, 0};
+      for (Index i = 0; i < ga.n; ++i) {
+        const unsigned Li = ga.t.level(i);
+        ga.ap.forEachFaceFull(i, [&](Index j, int axis, int, double, double, double) {
+          if (ga.ap.levelOf(j) != Li)
+            ++cfPerAxis[axis];
+        });
+      }
+      const auto id = cfFluxIdentity(ga, ua);
+      std::printf(
+          "  [aniso] h0 = (%.3g, %.3g, %.3g)  C/F sub-face slots per axis %lld/%lld/%lld  "
+          "rule (I) %.3e (ref %.3e)\n",
+          aspect[0], aspect[1], aspect[2], static_cast<long long>(cfPerAxis[0]),
+          static_cast<long long>(cfPerAxis[1]), static_cast<long long>(cfPerAxis[2]), id.first,
+          id.second);
+      for (int a = 0; a < 3; ++a)
+        PECLET_AMR_CHECK(cfPerAxis[a] > 0);
+      PECLET_AMR_CHECK(id.second > 1.0);  // the delta is O(1): the identity below is not trivial
+      PECLET_AMR_CHECK(id.first <= 1e-14 * id.second);
     }
   }
 
