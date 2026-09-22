@@ -433,7 +433,9 @@ class AmrFlow {
     // on the 2:1 sub-faces — the advecting flux matches the (quad) divergence constraint.
     if (cfScheme_ != CfScheme::standard && !cfUf_.vel.start.empty()) {
       cfApplyCompHost(cfUf_.vel, u_, uf_);
-      cfApplyHost(cfUf_.phi, phi_, uf_);
+      // The φ part is deliberately NOT applied — see the long note in flow.hpp::finishProjection.
+      // It puts a quadratic coarse* into uf'''s face gradient that L = D_std·G_std never inverted,
+      // which is the whole of the flux imbalance that stops uf being conservative.
     }
     faceFieldBuilt_ = true;
   }

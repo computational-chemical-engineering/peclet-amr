@@ -1441,11 +1441,32 @@ class AmrFlow {
     syncScalar(phi_);
     buildFaceField(geom_, View<const double>(u_[0]), View<const double>(u_[1]),
                    View<const double>(u_[2]), View<const double>(phi_), uf_);
-    // 2nd-order C/F face values (setCfScheme): distance-weighted average + coarse* substitution
-    // on the 2:1 sub-faces — the advecting flux matches the (quad) divergence constraint.
+    // 2nd-order C/F face values (setCfScheme), VELOCITY part only: the distance-weighted
+    // {u_fine, coarse*} interpolation on the 2:1 sub-faces. Its divergence IS the constraint's
+    // Δ_cfDiv — measured identical to 8.7e-17 — so the projection has already balanced it and uf
+    // stays divergence-free with it in.
     cfApplyComp(cfUfVel_, View<const double>(u_[0]), View<const double>(u_[1]),
                 View<const double>(u_[2]), uf_);
-    cfApply(cfUfPhi_, View<const double>(phi_), uf_);
+    // The φ part is NOT applied, and must not be. It substitutes the quadratic coarse* into uf's
+    // FACE GRADIENT, but the pressure matrix is L = D_std·G_std (a recorded decision: at the fixed
+    // point φ→0, so the matrix's C/F order cannot move the steady solution). A gradient the solve
+    // never inverted cannot be balanced by it, so adding it breaks exactly the property uf exists
+    // to have: Σ_faces α·A·dir·uf = 0, i.e. that advecting a scalar with uf conserves it and
+    // leaves a uniform field uniform.
+    //
+    // Measured on a graded sphere at cf=1 (N=32, lmax=2, band=3, 25 steps), decomposing
+    //     d = (rhs − Lφ) − Δ_cfDiv + D(Δvel) + D(Δφ)      [identity holds to 2.3e-15]
+    //     solve residual ‖rhs − Lφ‖      1.34e-12
+    //     ‖D(Δvel) − Δ_cfDiv‖            8.71e-17   ← velocity part: balanced, keep it
+    //     ‖D(Δφ)‖                        6.675e-03  ← THE ENTIRE flux imbalance
+    // It is proportional to φ (0.240 at step 1, 6.7e-3 at step 25, 3.1e-4 at step 60) so it
+    // vanishes at steady state and never showed up in a steady drag gate — but with advection on
+    // it sat at 4.0e-2, the same order as the cell field's O(h²) divergence, i.e. uf had stopped
+    // being a conservative flux for the whole of the transient.
+    //
+    // If a quadratic face gradient in uf is wanted, the pressure matrix has to invert the same
+    // operator (L = D·G_quad). Mixing them is what this removes. cfUfPhi_ is still BUILT (the
+    // oracle and the study read it); it is simply not added to the advecting flux.
     faceFieldBuilt_ = true;
     grad3(geom_, View<const double>(phi_), gx_[0], gx_[1], gx_[2]);
     for (int a = 0; a < 3; ++a)  // 2nd-order C/F face gradients (level-boundary rows)

@@ -91,24 +91,28 @@ void run_test() {
   PECLET_AMR_CHECK(dFaceG <
                    0.01 * dCellG);  // across 2:1: face field ≥100× cleaner than the cell field
 
-  // ...and the same case on the DEFAULT C/F scheme (quadratic since 2026-09-21), where that
-  // assertion does NOT hold and must not be expected to. This is the second face of the trap arm
-  // (3) gates: divFaceNorm measures the PLAIN area-weighted face divergence, and cf=1 solves a
-  // DIFFERENT constraint -- buildCfUfDelta adds cfUfVel_/cfUfPhi_ to uf precisely so "the
-  // advecting flux matches the (quad) divergence constraint". Measured on this mesh:
+  // ...and the same case on the DEFAULT C/F scheme (quadratic since 2026-09-21), which must hold
+  // it just as well. uf's whole purpose is to be the CONSERVATIVE ADVECTING FLUX: advect a scalar
+  // with it and mass is conserved, a uniform field stays uniform. That is the statement
+  //     sum_faces alpha * A * dir * uf = 0   per cell,
+  // i.e. exactly what divNormFace measures, and it must hold whatever C/F scheme is selected.
   //
-  //     cf=0:  cell 1.3711e-01   face 1.3476e-09     (face IS the residual)
-  //     cf=1:  cell 4.8407e-01   face 6.6780e-03     (face measures a constraint not solved)
-  //
-  // The scheme is not degrading anything -- it is markedly BETTER. On the same geometry as a
-  // graded 14120-leaf mesh against a uniform-fine 32^3 reference, the volume-averaged velocity
-  // (i.e. the permeability) errs by 5.15e-02 at cf=0 and 1.22e-02 at cf=1: the default is 4.2x
-  // more accurate. So assert the RELATION that survives the scheme change -- cf=1 does not make
-  // the face field worse than the cell field -- and pin the cf=0 numbers above as the statement
-  // about the standard scheme they actually are.
+  // It did not, until 2026-09-22: uf was built as avg(u*) + dvel - G_std*phi + dphi, and the
+  // projection makes only the first three divergence-free. dphi substitutes a quadratic coarse*
+  // into uf's FACE GRADIENT while the pressure matrix is L = D_std*G_std, so nothing in the solve
+  // balanced it. Decomposed on this mesh (identity holds to 2.3e-15):
+  //     solve residual ||rhs - L*phi||   1.34e-12
+  //     ||D(dvel) - d_cfDiv||            8.71e-17   <- velocity part: balanced by construction
+  //     ||D(dphi)||                      6.675e-03  <- the ENTIRE imbalance
+  // The phi part is no longer applied (flow.hpp::finishProjection), and the face field is a
+  // conservative flux again: 6.675e-03 -> 1.34e-12 here, 0.240 -> 3.8e-11 at the worst transient,
+  // and 4.0e-02 -> 1.2e-05 with advection on. The steady answer is untouched -- phi -> 0 at the
+  // fixed point, so this only ever corrupted transients, which is why every steady drag gate
+  // passed over it.
   auto [dCellGq, dFaceGq] = run(tg, Rg, Vec<3>{cg, cg, cg}, 30, false, /*cf=*/1);
-  PECLET_AMR_CHECK(dFaceGq < dCellGq);
-  PECLET_AMR_CHECK(dFaceGq > 100.0 * dFaceG);  // the diagnostic, not the solver, is what moved
+  PECLET_AMR_CHECK(dFaceGq < 0.01 * dCellGq);  // the SAME bar cf=0 is held to, above
+  // and within an order of magnitude of it -- not the 5e6x it was before the fix.
+  PECLET_AMR_CHECK(dFaceGq < 100.0 * dFaceG);
 
   // (3) THE SCOPE OF divNormFace, gated so it cannot quietly become a trap again.
   //
