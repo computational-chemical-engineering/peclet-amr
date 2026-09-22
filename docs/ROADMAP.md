@@ -146,7 +146,24 @@ refined mesh, which is the entire point of the package.
   `lmax = 0` (§A), which is how it should be built: match `flow` uniform first, then refine.
 - **B3 — sub-face closures** (`amr_mixed_level_cut_band_plan.md` §8a, risk register). Bounded, not
   retired: 0.20 % of rows at depth 7, 1.57 % at depth 8. An accuracy item with an open design fork,
-  not a stability blocker.
+  not a stability blocker. **It has acquired a second reason to exist** (`amr_cf_flux_gate.md` §5
+  option C): folding the C/F substitution into the ghost closure at cut rows — constraint AND
+  gradient together — is what would restore the quadratic face value on the sub-faces where a level
+  boundary meets the wall, which the per-FACE gate now withholds. Default: **defer**. The decision
+  wants data, and `Flow.diagnostics.num_cf_cut_faces` plus the two-sphere policy-error gate supply
+  it: if the policy error moves by less than the ghost scheme's own 0.2–0.3 % bias, the O(h)-on-a-
+  curve loss is below the noise and C is not worth its cost (a change inside `ghost_projection*.hpp`,
+  a new invisible-subspace analysis, and a re-run of the whole throat ladder).
+
+- **A7 — the C/F face-value delta is gated per FACE** — **DONE 2026-09-22.** `buildCfDivDelta` was
+  gated per CELL (`rowRegular`) and `buildCfUfDelta` per face-pair fluidity, so at a 2:1 sub-face
+  with a cut cell on one side the regular cell booked the C/F correction in its divergence
+  constraint, the cut cell did not, and `uf` carried it for both: a permanent mass source,
+  `‖D(Δvel) − Δ_cfDiv‖ = 2.018e-01` against `‖div(uf)‖ = 2.016e-01`. A face flux is one number
+  shared by two cells, so no per-cell rule can be conservative. The quadratic face value now
+  applies iff BOTH incident cells are regular fluid, and that one predicate drives D, the ABC
+  gradient substitution and `uf` through one emitter. See `amr_cf_flux_gate.md`; the cost is the
+  standard two-point face value on a codimension-2 set, counted by `num_cf_cut_faces`.
 
 ## C. Cost
 

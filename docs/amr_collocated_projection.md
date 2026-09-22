@@ -466,3 +466,51 @@ reversed the 08-19 retirement *calculus* without touching its cost measurement:
   aperture pending the suite-wide flip. Acceptance gate: the C2 dt-battery
   (`tests/study/amr_zh_c2.py` — ghost dt-spread must be ≤1e-5 relative where the aperture
   spread is protocol-limited).
+
+
+## Update (2026-09-22): the C/F face-value delta is gated per FACE, and `uf` is a flux again
+
+Design note: [`amr_cf_flux_gate.md`](amr_cf_flux_gate.md). Two rules now hold by construction.
+
+**Rule (I).** With `F` the face-average operator (standard ½/½ plus the C/F face-value delta), `Gf`
+the compact face gradient and `D_std` the flux-form divergence,
+
+    uf = F(u*) − Gf φ,   rhs = D_std F(u*),   L = D_std Gf   ⇒   D_std uf = rhs − Lφ,
+
+the solver residual. That is what makes `uf` a conservative advecting flux, and it holds **iff**
+every term of `F` appears in both `rhs` and `uf`, and every term of `Gf` appears in `L`. The second
+clause is why `uf` carries no C/F correction to its face GRADIENT while the pressure matrix is the
+standard operator. The first clause is why the gate below is a property of the FACE.
+
+That φ CSR is still *built* (it is simply never applied). Deleting it — the design note's §6.7
+default — is **parked**: `test_amr_cf_vector` section 5 gates the pointwise order of the whole
+`uf` at a C/F sub-face centroid and reconstructs the φ term itself to do so. Measured there on the
+manufactured field at n = 16/32/64: with the φ term 1.074e+00 → 5.384e-01 → 2.641e-01 (order 1.00,
+1.03); without it — which is what the solver actually builds, and has since the φ part stopped
+being applied — 4.547e+00 → 4.319e+00 → 4.224e+00 (order 0.07, 0.03), the standard scheme's own
+behaviour. For an O(1) manufactured φ that norm does not converge; in the solver φ → 0 at the
+fixed point and is O(dt·∂_t p) during a transient, which is the order of the incremental
+projection's own splitting error. Restating that assertion is a design decision, not an
+implementation detail, so the CSR stays until it is taken.
+
+**The gate.** The quadratic face value applies on a 2:1 sub-face **iff both incident cells are
+regular fluid** (`fluid && !cut`), and that one predicate drives the divergence RHS, the ABC
+cell-gradient substitution and the advecting face field through one shared emitter
+(`detail::cfAppendFaceValueDelta`), so `D_std(Δuf) ≡ Δ_cfDiv` entry by entry. A face flux is a
+single number shared by two cells; the previous rule was a property of a CELL (`rowRegular`), so no
+single flux could satisfy both cells' books. On a mesh whose cut band meets the level boundary that
+cost `‖D(Δvel) − Δ_cfDiv‖ = 2.018e-01`, dominating `‖div(uf)‖ = 2.016e-01` — proportional to the
+velocity, not to φ, so it did not decay at steady state. Cut rows are unchanged (a cut row has no
+passing face, so the 2026-08-27 stability fix is retained in full by the same predicate); what
+changed is that the REGULAR row across a cut-adjacent 2:1 face no longer receives the delta either,
+and that face reverts to the standard two-point value. Inert by geometry on any uniform or
+finest-band mesh.
+
+**The census.** `AmrFlow::numCfCutFaces()` / `Flow.diagnostics.num_cf_cut_faces` counts the sub-face
+slots where the quadratic value is withheld, so the cost is measured rather than silent: `0` on
+every uniform or finest-band mesh, and on the production graded meshes (`refine_to_sdf_graded`,
+`refine_to_gap_floor`) the affected set is the intersection of a surface with a shell — a curve, so
+an O(h) local face value contributes O(h²) to the L2 error and does not lower the global order. The
+deferred completion, which would recover the quadratic value there, is folding the C/F substitution
+into the ghost closure at cut rows (option C of the note, §5) — deferred by default until the census
+and the policy-error gate say it costs something measurable.

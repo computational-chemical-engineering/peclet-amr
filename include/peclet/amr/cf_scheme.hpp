@@ -31,11 +31,28 @@
 // it up. A scheme is fully described by the linear stencil it substitutes for the coarse-side
 // value of one directed C/F sub-face.
 //
-// Robustness gating (per tangential axis, falling back to the raw coarse value): the tangential
-// coarse neighbours must exist, be same-level, be FLUID (the caller's predicate — never lean on a
-// decoupled/held solid value), and the tangential faces must be sufficiently open (openness ≥ 0.5,
-// matching applyLaplacianQuad's gate). With the finest-band contract, level boundaries sit in
-// smooth flow and the gates are inert there.
+// GATING — one predicate, per FACE, never per row (docs/amr_cf_flux_gate.md). The quadratic face
+// value applies on a 2:1 sub-face IFF BOTH incident cells are REGULAR FLUID:
+//
+//     cfFace(i, j) := level(j) != level(i) && regular(i) && regular(j),   regular = fluid && !cut
+//
+// and that ONE predicate drives D, the G substitution and uf alike, through the one emitter
+// cfAppendFaceValueDelta, so that D_std(Δuf) ≡ Δ_cfDiv holds entry by entry on every mesh. A face
+// flux is a single number shared by two cells, so a gate that is a property of a CELL cannot be
+// conservative: the old row gate let the regular cell book the correction in its constraint while
+// the cut cell did not and uf carried it for both — a mass source proportional to the velocity,
+// not to φ, so it did not decay at steady state. Withholding reverts the face to the standard
+// two-point value (the cf=0 scheme), which is an O(h) face value on the set where a level
+// boundary meets the wall — a curve, i.e. codimension 2, on the production graded meshes.
+// `AmrFlow::numCfCutFaces()` counts that set, so the cost is measured rather than silent.
+//
+// The per-tangential-axis robustness fallbacks INSIDE the stencil are unchanged and independent
+// of the above: the tangential coarse neighbours must exist, be same-level, be FLUID (the
+// caller's `fluidOk` — never lean on a decoupled/held solid value), and the tangential faces must
+// be sufficiently open (openness ≥ 0.5, matching applyLaplacianQuad's gate); one surviving side
+// gives the linear closure, neither gives the raw coarse value. Reading a CUT cell as a
+// tangential sample is fine — its velocity is a solved fluid value; the instability the row gate
+// was added for is about which ROW owns a constraint, not which cells it reads.
 #ifndef PECLET_AMR_CF_SCHEME_HPP
 #define PECLET_AMR_CF_SCHEME_HPP
 
@@ -439,8 +456,23 @@ inline std::array<CfCsr, 3> buildCfGradDelta(const AmrPoisson<3, Bits>& ap,
 ///   face gradient → coarse* substitution in the compact (φ₊−φ₋)/d (the P5b flux form):
 ///       Δphi = −sideSign·(φ_C* − φ_C)/d,  sideSign = +1 iff the coarse cell is on the + side.
 /// Both incident slots of a shared sub-face produce the identical value (conservative). Emitted
-/// only for faces whose BOTH centers are fluid (the advection gate; closed faces' uf is unused).
-/// The vel/phi parts apply with the standard cfApplyComp / cfApply over uf's slot array.
+/// only on faces the per-FACE gate passes (`cfFace`, above).
+///
+/// THE φ PART MUST NEVER BE APPLIED while the pressure matrix is the standard operator — rule (I)
+/// of docs/amr_cf_flux_gate.md §4: with `uf = F(u*) − Gf φ`, `rhs = D_std F(u*)` and
+/// `L = D_std Gf`, `D_std uf = rhs − Lφ` (the solver residual) holds iff every term of `F` is in
+/// both `rhs` and `uf` AND every term of `Gf` is in `L`. A quadratic coarse* in uf's face gradient
+/// is a term nothing inverts; it was applied until 2026-09-22 and was the whole of uf's flux
+/// imbalance (‖D(Δφ)‖ 6.7e-03 against a 1.3e-12 solve residual on a graded sphere).
+/// `finishProjection` and the oracle's `buildFaceField` therefore skip it. It is STILL BUILT, and
+/// that is a parked decision, not an oversight: §6.7 of the note defaults to deleting it, but
+/// `test_amr_cf_vector` section 5 gates the pointwise order of the WHOLE uf at a C/F sub-face
+/// centroid and reconstructs the φ term itself to do so. Measured there on the manufactured field
+/// (N = 16/32/64): with the φ term 1.074e+00 → 5.384e-01 → 2.641e-01 (order 1.00, 1.03), without
+/// it 4.547e+00 → 4.319e+00 → 4.224e+00 (order 0.07, 0.03) — i.e. what the solver actually builds
+/// is NOT convergent in that norm for an O(1) φ, and has not been since the φ part stopped being
+/// applied. Deleting the CSR means re-stating that assertion, which is a decision for the design
+/// session, not for the implementer.
 struct CfUfDelta {
   CfCompCsr vel;  ///< reads the velocity components, rows = face slots
   CfCsr phi;      ///< reads the projection potential φ, rows = face slots
