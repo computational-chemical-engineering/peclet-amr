@@ -211,6 +211,43 @@ struct CompEnt {
   int8_t comp = 0;
 };
 
+/// THE face-value delta for ONE directed 2:1 sub-face, ×`scale` — the single source of truth
+/// shared by the divergence RHS and the advecting face field, so that
+/// `D_std(Δuf) ≡ Δ_cfDiv` holds entry by entry (docs/amr_cf_flux_gate.md §4, rule (I)).
+/// `buildCfDivDelta` calls it with `scale = invV·α·A·dir` (its row coefficient), so its row is
+/// the divergence coefficient times the slot row `buildCfUfDelta` builds with `scale = 1`.
+///
+///     wF = (H/2)/dist,  wC = (h/2)/dist          (dist = the face's centre-to-centre distance)
+///     Δ = scale·[(wF−½)·u_F + (wC−½)·u_C + wC·(u_C* − u_C)]
+///
+/// with `u_C*` the scheme's tangential substitution (cfAppendStencil). Entries are pushed in the
+/// order fine, coarse, stencil — the order both builders used before they shared this code, so an
+/// inert mesh stays bit-identical.
+///
+/// ANISOTROPIC OCTREES (fixed here as a side effect; docs/amr_cf_flux_gate.md §6.2): the widths
+/// are taken on the FACE NORMAL axis and the distance is `forEachFaceFull`'s `dist`, which is the
+/// same axis. Until 2026-09-22 the divergence builder took both widths on axis 0 and formed
+/// `d = ½(H+h)` itself while the face builder took axis-0 widths against the face-axis `dist`, so
+/// on an anisotropic octree `wF + wC ≠ 1` in `uf` and the two CSRs disagreed on EVERY C/F
+/// sub-face. On an isotropic octree the two spellings are bitwise equal: `cellWidth` scales `h0`
+/// by an exact power of two, and `½·(h0·2^Lc + h0·2^Lf)` and `(½·(2^Lc+2^Lf))·h0` are the same
+/// correctly-rounded value of `1.5·2^Lf·h0` (rounding commutes with an exact factor of 2).
+template <unsigned Bits, class Ent, class FluidFn>
+inline void cfAppendFaceValueDelta(const AmrPoisson<3, Bits>& ap, std::vector<Ent>& out,
+                                   Index coarse, Index fine, int axis, double dist, double scale,
+                                   FluidFn&& fluidOk, CfScheme scheme, const Ent& proto = Ent{}) {
+  const double H = ap.cellWidth(coarse, axis), h = ap.cellWidth(fine, axis);
+  const double wF = (0.5 * H) / dist, wC = (0.5 * h) / dist;
+  Ent eF = proto, eC = proto;
+  eF.cell = fine;
+  eF.w = scale * (wF - 0.5);
+  eC.cell = coarse;
+  eC.w = scale * (wC - 0.5);
+  out.push_back(eF);
+  out.push_back(eC);
+  cfAppendStencil(ap, out, coarse, fine, axis, scale * wC, fluidOk, scheme, proto);
+}
+
 template <class Ent, class Csr>
 inline void compactCsr(const std::vector<std::vector<Ent>>& per, Csr& out, Index n) {
   out.start.assign(static_cast<std::size_t>(n) + 1, 0);
@@ -287,28 +324,19 @@ inline CfCompCsr buildCfDivDelta(const AmrPoisson<3, Bits>& ap, const BlockOctre
         return;
       const unsigned Li = t.level(i);
       const double invV = 1.0 / ap.cellVolume(i);
-      ap.forEachFaceFull(i, [&](Index j, int axis, int dir, double area, double, double alpha) {
-        const unsigned Lj = ap.levelOf(j);  // ghost-safe
-        if (Lj == Li)
-          return;
-        const Index coarse = (Lj > Li) ? j : i;
-        const Index fine = (Lj > Li) ? i : j;
-        const double H = ap.cellWidth(coarse), h = ap.cellWidth(fine);
-        const double d = 0.5 * (H + h);
-        const double wF = (0.5 * H) / d, wC = (0.5 * h) / d;
-        const double scale = invV * alpha * area * static_cast<double>(dir);
-        detail::CompEnt proto;
-        proto.comp = static_cast<int8_t>(axis);
-        auto& row = per[static_cast<std::size_t>(i)];
-        detail::CompEnt eF = proto, eC = proto;
-        eF.cell = fine;
-        eF.w = scale * (wF - 0.5);
-        eC.cell = coarse;
-        eC.w = scale * (wC - 0.5);
-        row.push_back(eF);
-        row.push_back(eC);
-        detail::cfAppendStencil(ap, row, coarse, fine, axis, scale * wC, fluidOk, scheme, proto);
-      });
+      ap.forEachFaceFull(
+          i, [&](Index j, int axis, int dir, double area, double dist, double alpha) {
+            const unsigned Lj = ap.levelOf(j);  // ghost-safe
+            if (Lj == Li)
+              return;
+            const Index coarse = (Lj > Li) ? j : i;
+            const Index fine = (Lj > Li) ? i : j;
+            const double scale = invV * alpha * area * static_cast<double>(dir);
+            detail::CompEnt proto;
+            proto.comp = static_cast<int8_t>(axis);
+            detail::cfAppendFaceValueDelta(ap, per[static_cast<std::size_t>(i)], coarse, fine, axis,
+                                           dist, scale, fluidOk, scheme, proto);
+          });
     });
   }
   CfCompCsr csr;
@@ -456,19 +484,11 @@ inline CfUfDelta buildCfUfDelta(const AmrPoisson<3, Bits>& ap, const BlockOctree
       if (Lj != Li && fluidOk(i) && fluidOk(j)) {
         const Index coarse = (Lj > Li) ? j : i;
         const Index fine = (Lj > Li) ? i : j;
-        const double H = ap.cellWidth(coarse), h = ap.cellWidth(fine);
-        const double wF = (0.5 * H) / dist, wC = (0.5 * h) / dist;
         std::vector<detail::CompEnt> ve;
         detail::CompEnt proto;
         proto.comp = static_cast<int8_t>(axis);
-        detail::CompEnt eF = proto, eC = proto;
-        eF.cell = fine;
-        eF.w = wF - 0.5;
-        eC.cell = coarse;
-        eC.w = wC - 0.5;
-        ve.push_back(eF);
-        ve.push_back(eC);
-        detail::cfAppendStencil(ap, ve, coarse, fine, axis, wC, fluidOk, scheme, proto);
+        detail::cfAppendFaceValueDelta(ap, ve, coarse, fine, axis, dist, 1.0, fluidOk, scheme,
+                                       proto);
         for (const auto& e : ve)
           vrow.push_back(e);
         d.vel.start[static_cast<std::size_t>(slot) + 1] = static_cast<Index>(ve.size());
