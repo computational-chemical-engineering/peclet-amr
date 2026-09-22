@@ -971,14 +971,12 @@ class AmrFlow {
       for (int a = 0; a < 3; ++a)
         countGhost(gd[static_cast<std::size_t>(a)].slot);
       countGhost(ufd.vel.slot);
-      countGhost(ufd.phi.slot);
       cfMom_ = uploadCfCsr(lapD, "cf_mom");
       cfDiv_ = uploadCfCompCsr(divD, "cf_div");
       for (int a = 0; a < 3; ++a)
         cfGrad_[static_cast<std::size_t>(a)] =
             uploadCfCsr(gd[static_cast<std::size_t>(a)], "cf_grad");
       cfUfVel_ = uploadCfCompCsr(ufd.vel, "cf_ufvel");
-      cfUfPhi_ = uploadCfCsr(ufd.phi, "cf_ufphi");
     } else {
       cfGhostCols_ = 0;
       cfMom_ = CfCsrDev{};
@@ -986,7 +984,6 @@ class AmrFlow {
       for (int a = 0; a < 3; ++a)
         cfGrad_[static_cast<std::size_t>(a)] = CfCsrDev{};
       cfUfVel_ = CfCompCsrDev{};
-      cfUfPhi_ = CfCsrDev{};
     }
     profPhase("cf overlays");
     if (ghostProj_) {
@@ -1499,8 +1496,9 @@ class AmrFlow {
     // being a conservative flux for the whole of the transient.
     //
     // If a quadratic face gradient in uf is wanted, the pressure matrix has to invert the same
-    // operator (L = D·G_quad). Mixing them is what this removes. cfUfPhi_ is still BUILT (the
-    // oracle and the study read it); it is simply not added to the advecting flux.
+    // operator (L = D·G_quad). Mixing them is what this removes. The φ CSR is no longer built at
+    // all (docs/amr_cf_flux_gate.md §6.7) — a CSR that must never be applied is a trap; §6.8
+    // records the deferred-correction path that would buy a quadratic uf face gradient legally.
     faceFieldBuilt_ = true;
     grad3(geom_, View<const double>(phi_), gx_[0], gx_[1], gx_[2]);
     for (int a = 0; a < 3; ++a)  // 2nd-order C/F face gradients (level-boundary rows)
@@ -2348,7 +2346,6 @@ class AmrFlow {
   CfCompCsrDev cfDiv_;              // (D_scheme − D_std) divergence overlay
   std::array<CfCsrDev, 3> cfGrad_;  // (G_scheme − G_std) per gradient axis
   CfCompCsrDev cfUfVel_;            // (uf_scheme − uf_std) face-field overlay: velocity part
-  CfCsrDev cfUfPhi_;                //                                          φ part
   Index cfGhostCols_ = 0;           // overlay entries reading a ghost slot (diagnostic)
   Index cfCutFaces_ = 0;            // C/F slots where the face gate withholds the quadratic
   View<double> maskC_;              // 1 = coupled row (Krylov subspace), 0 = pinned

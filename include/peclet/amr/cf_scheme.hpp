@@ -449,33 +449,27 @@ inline std::array<CfCsr, 3> buildCfGradDelta(const AmrPoisson<3, Bits>& ap,
 
 /// (uf_scheme − uf_std) for the div-free FACE field uf_k = ½(u_i+u_j) − (φ₊−φ₋)/d, one delta row
 /// per forEachFaceFull SLOT (cell-major enumeration — the FaceGeom / oracle faceStart CSR order,
-/// identical on both engines). At a 2:1 sub-face:
-///   face average → the distance-weighted {u_fine, u_coarse*} interpolation (as in
-///     buildCfDivDelta, so the advecting flux matches the divergence constraint):
+/// identical on both engines). At a 2:1 sub-face the FACE AVERAGE becomes the distance-weighted
+/// {u_fine, u_coarse*} interpolation — the very entries `buildCfDivDelta` books, from the one
+/// emitter, so the advecting flux matches the divergence constraint:
 ///       Δvel = (wF−½)·u_F + (wC−½)·u_C + wC·(u_C* − u_C)      [face-normal component]
-///   face gradient → coarse* substitution in the compact (φ₊−φ₋)/d (the P5b flux form):
-///       Δphi = −sideSign·(φ_C* − φ_C)/d,  sideSign = +1 iff the coarse cell is on the + side.
 /// Both incident slots of a shared sub-face produce the identical value (conservative). Emitted
 /// only on faces the per-FACE gate passes (`cfFace`, above).
 ///
-/// THE φ PART MUST NEVER BE APPLIED while the pressure matrix is the standard operator — rule (I)
-/// of docs/amr_cf_flux_gate.md §4: with `uf = F(u*) − Gf φ`, `rhs = D_std F(u*)` and
-/// `L = D_std Gf`, `D_std uf = rhs − Lφ` (the solver residual) holds iff every term of `F` is in
-/// both `rhs` and `uf` AND every term of `Gf` is in `L`. A quadratic coarse* in uf's face gradient
-/// is a term nothing inverts; it was applied until 2026-09-22 and was the whole of uf's flux
-/// imbalance (‖D(Δφ)‖ 6.7e-03 against a 1.3e-12 solve residual on a graded sphere).
-/// `finishProjection` and the oracle's `buildFaceField` therefore skip it. It is STILL BUILT, and
-/// that is a parked decision, not an oversight: §6.7 of the note defaults to deleting it, but
-/// `test_amr_cf_vector` section 5 gates the pointwise order of the WHOLE uf at a C/F sub-face
-/// centroid and reconstructs the φ term itself to do so. Measured there on the manufactured field
-/// (N = 16/32/64): with the φ term 1.074e+00 → 5.384e-01 → 2.641e-01 (order 1.00, 1.03), without
-/// it 4.547e+00 → 4.319e+00 → 4.224e+00 (order 0.07, 0.03) — i.e. what the solver actually builds
-/// is NOT convergent in that norm for an O(1) φ, and has not been since the φ part stopped being
-/// applied. Deleting the CSR means re-stating that assertion, which is a decision for the design
-/// session, not for the implementer.
+/// THE FACE GRADIENT GETS NO DELTA, and that is rule (I) of docs/amr_cf_flux_gate.md §4, not an
+/// omission: with `uf = F(u*) − Gf φ`, `rhs = D_std F(u*)` and `L = D_std Gf`, the flux property
+/// `D_std uf = rhs − Lφ` (the solver residual) holds iff every term of `F` is in both `rhs` and
+/// `uf` AND every term of `Gf` is in `L`. A quadratic coarse* substituted into uf's compact
+/// (φ₊−φ₋)/d is a term the standard pressure matrix never inverts. It WAS built and applied
+/// until 1b0d5b5 and was the whole of uf's flux imbalance (‖D(Δφ)‖ 6.7e-03 against a 1.3e-12
+/// solve residual on a graded sphere); it was then left built but unapplied, and the CSR was
+/// deleted outright on 2026-09-22 (§6.7) once its last reader went — a CSR that must never be
+/// applied is a trap for the next session. If a quadratic face gradient in uf is ever wanted,
+/// the pressure matrix has to invert the same operator; §6.8 of the note records the deferred
+/// `L_std φ^{k+1} = rhs − (L_quad − L_std) φ^k` deferred-correction path that would buy it
+/// without giving up MG-PCG.
 struct CfUfDelta {
   CfCompCsr vel;  ///< reads the velocity components, rows = face slots
-  CfCsr phi;      ///< reads the projection potential φ, rows = face slots
 };
 
 template <unsigned Bits, class RegularFn, class FluidFn>
@@ -503,20 +497,17 @@ inline CfUfDelta buildCfUfDelta(const AmrPoisson<3, Bits>& ap, const BlockOctree
   slotBase[static_cast<std::size_t>(n)] = nSlots;
   CfUfDelta d;
   d.vel.start.assign(static_cast<std::size_t>(nSlots) + 1, 0);
-  d.phi.start.assign(static_cast<std::size_t>(nSlots) + 1, 0);
   if (scheme == CfScheme::standard)
     return d;
   // Pass 1 (parallel): each leaf stages its own entries in its own slot order, and writes its
   // slots' ROW WIDTHS into start[slot+1] (disjoint: one leaf owns each slot). The prefix sum is
   // taken serially below, exactly as the single-pass version accumulated it.
   std::vector<std::vector<detail::CompEnt>> velPer(static_cast<std::size_t>(n));
-  std::vector<std::vector<detail::ScalarEnt>> phiPer(static_cast<std::size_t>(n));
   hostParFor(n, [&](Index i) {
     const unsigned Li = t.level(i);
     Index slot = slotBase[static_cast<std::size_t>(i)];
     auto& vrow = velPer[static_cast<std::size_t>(i)];
-    auto& prow = phiPer[static_cast<std::size_t>(i)];
-    ap.forEachFaceFull(i, [&](Index j, int axis, int dir, double, double dist, double) {
+    ap.forEachFaceFull(i, [&](Index j, int axis, int, double, double dist, double) {
       const unsigned Lj = ap.levelOf(j);               // ghost-safe
       if (Lj != Li && regularOk(i) && regularOk(j)) {  // cfFace(i, j); regular ⇒ fluid
         const Index coarse = (Lj > Li) ? j : i;
@@ -529,39 +520,23 @@ inline CfUfDelta buildCfUfDelta(const AmrPoisson<3, Bits>& ap, const BlockOctree
         for (const auto& e : ve)
           vrow.push_back(e);
         d.vel.start[static_cast<std::size_t>(slot) + 1] = static_cast<Index>(ve.size());
-        // φ part: uf −= (φ₊−φ₋)/d; the coarse cell's φ is substituted with coarse*.
-        const double sideSign = ((dir > 0) == (coarse == j)) ? 1.0 : -1.0;
-        std::vector<detail::ScalarEnt> pe;
-        detail::cfAppendStencil(ap, pe, coarse, fine, axis, -sideSign / dist, fluidOk, scheme);
-        for (const auto& e : pe)
-          prow.push_back(e);
-        d.phi.start[static_cast<std::size_t>(slot) + 1] = static_cast<Index>(pe.size());
       }
       ++slot;
     });
   });
   // Pass 2 (serial, order-preserving): widths → offsets, then concatenate leaf-major. Identical to
   // the single pass's append order (leaf-major, slot-major within a leaf, entry order within slot).
-  for (Index s = 0; s < nSlots; ++s) {
+  for (Index s = 0; s < nSlots; ++s)
     d.vel.start[static_cast<std::size_t>(s) + 1] += d.vel.start[static_cast<std::size_t>(s)];
-    d.phi.start[static_cast<std::size_t>(s) + 1] += d.phi.start[static_cast<std::size_t>(s)];
-  }
   d.vel.slot.reserve(static_cast<std::size_t>(d.vel.start[static_cast<std::size_t>(nSlots)]));
   d.vel.coef.reserve(static_cast<std::size_t>(d.vel.start[static_cast<std::size_t>(nSlots)]));
   d.vel.comp.reserve(static_cast<std::size_t>(d.vel.start[static_cast<std::size_t>(nSlots)]));
-  d.phi.slot.reserve(static_cast<std::size_t>(d.phi.start[static_cast<std::size_t>(nSlots)]));
-  d.phi.coef.reserve(static_cast<std::size_t>(d.phi.start[static_cast<std::size_t>(nSlots)]));
-  for (Index i = 0; i < n; ++i) {
+  for (Index i = 0; i < n; ++i)
     for (const auto& e : velPer[static_cast<std::size_t>(i)]) {
       d.vel.slot.push_back(e.cell);
       d.vel.coef.push_back(e.w);
       d.vel.comp.push_back(e.comp);
     }
-    for (const auto& e : phiPer[static_cast<std::size_t>(i)]) {
-      d.phi.slot.push_back(e.cell);
-      d.phi.coef.push_back(e.w);
-    }
-  }
   return d;
 }
 
