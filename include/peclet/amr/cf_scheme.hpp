@@ -241,14 +241,30 @@ struct CompEnt {
 /// order fine, coarse, stencil — the order both builders used before they shared this code, so an
 /// inert mesh stays bit-identical.
 ///
-/// ANISOTROPIC OCTREES (fixed here as a side effect; docs/amr_cf_flux_gate.md §6.2): the widths
-/// are taken on the FACE NORMAL axis and the distance is `forEachFaceFull`'s `dist`, which is the
-/// same axis. Until 2026-09-22 the divergence builder took both widths on axis 0 and formed
-/// `d = ½(H+h)` itself while the face builder took axis-0 widths against the face-axis `dist`, so
-/// on an anisotropic octree `wF + wC ≠ 1` in `uf` and the two CSRs disagreed on EVERY C/F
-/// sub-face. On an isotropic octree the two spellings are bitwise equal: `cellWidth` scales `h0`
-/// by an exact power of two, and `½·(h0·2^Lc + h0·2^Lf)` and `(½·(2^Lc+2^Lf))·h0` are the same
-/// correctly-rounded value of `1.5·2^Lf·h0` (rounding commutes with an exact factor of 2).
+/// ANISOTROPIC OCTREES (a live bug fixed here as a side effect; docs/amr_cf_flux_gate.md §6.2):
+/// the widths are taken on the FACE NORMAL axis and the distance is `forEachFaceFull`'s `dist`,
+/// which is that same axis.
+///
+/// THE CULPRIT WAS THE FACE BUILDER. Until 2026-09-22 `buildCfUfDelta` took both widths on axis 0
+/// (`cellWidth(i)`, the cubic spelling) and divided them by the face-axis `dist`, mixing two
+/// axes: on `h0 = (1, ½, 2)` a y-directed 2:1 sub-face got `wF = 4/3`, `wC = 2/3`, i.e.
+/// `wF + wC = 2` — roughly DOUBLE the velocity on every off-axis C/F sub-face of an anisotropic
+/// graded mesh. `buildCfDivDelta` was dimensionally right: it took `H`, `h` AND `d = ½(H+h)` all
+/// on axis 0, so only their (axis-free) ratios entered and its weights were correct on any mesh.
+/// The two books therefore disagreed on EVERY C/F sub-face of an anisotropic octree, cut or not
+/// — an O(1) violation of rule (I) with no cut cell in sight. Gated since 2026-09-22 by
+/// `test_amr_cf_vector` section 7, which reads 7.447e+02 (ref 7.766e+01) with the old builders
+/// and 4.399e-15 with this one.
+///
+/// BIT-IDENTITY OF THE REFACTOR IS AN ISOTROPIC STATEMENT. On an isotropic octree the two
+/// spellings of `d` are bitwise equal: `cellWidth` scales `h0` by an exact power of two, and
+/// `½·(h0·2^Lc + h0·2^Lf)` and `(½·(2^Lc+2^Lf))·h0` are the same correctly-rounded value of
+/// `1.5·2^Lf·h0` (rounding commutes with an exact factor of 2). On an ANISOTROPIC octree
+/// `Δ_cfDiv` moves at ULP level wherever `h0[axis]/h0[0]` is not itself a power of two —
+/// `fl(½·h0_a·2^Lc) / fl(1.5·h0_a·2^Lf)` against the axis-0 quotient: measured, `wF` and `wC`
+/// differ in the last bit at aspect 0.3 and 0.7 and are bitwise equal at 0.5, 2 and 1/3. So the
+/// byte gate's "no hash moves" acceptance covers the isotropic case, which is every scenario it
+/// runs (all `extent=[1,1,1]`); an anisotropic recording would have moved in the last digits.
 template <unsigned Bits, class Ent, class FluidFn>
 inline void cfAppendFaceValueDelta(const AmrPoisson<3, Bits>& ap, std::vector<Ent>& out,
                                    Index coarse, Index fine, int axis, double dist, double scale,
