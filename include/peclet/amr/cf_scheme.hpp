@@ -313,21 +313,22 @@ inline CfCsr buildCfLapDelta(const AmrPoisson<3, Bits>& ap, const BlockOctree<3,
 /// value (conservative telescoping). Delta emitted per C/F sub-face:
 ///     Δ = scale·[(wF−½)·u_F + (wC−½)·u_C + wC·(u_C* − u_C)],  scale = invV·α·A·dir.
 /// Component-tagged: the substituted value is the face-normal velocity component.
-template <unsigned Bits, class RowFn, class FluidFn>
+template <unsigned Bits, class RegularFn, class FluidFn>
 inline CfCompCsr buildCfDivDelta(const AmrPoisson<3, Bits>& ap, const BlockOctree<3, Bits>& t,
-                                 RowFn&& rowOk, FluidFn&& fluidOk, CfScheme scheme) {
+                                 RegularFn&& regularOk, FluidFn&& fluidOk, CfScheme scheme) {
   const Index n = t.numLeaves();
   std::vector<std::vector<detail::CompEnt>> per(static_cast<std::size_t>(n));
   if (scheme != CfScheme::standard) {
     hostParFor(n, [&](Index i) {  // per[i]-disjoint (rung 1)
-      if (!rowOk(i))
+      if (!regularOk(i))
         return;
       const unsigned Li = t.level(i);
       const double invV = 1.0 / ap.cellVolume(i);
       ap.forEachFaceFull(
           i, [&](Index j, int axis, int dir, double area, double dist, double alpha) {
             const unsigned Lj = ap.levelOf(j);  // ghost-safe
-            if (Lj == Li)
+            // cfFace(i, j): regularOk(i) holds by the early-out above.
+            if (Lj == Li || !regularOk(j))
               return;
             const Index coarse = (Lj > Li) ? j : i;
             const Index fine = (Lj > Li) ? i : j;
@@ -359,9 +360,9 @@ inline CfCompCsr buildCfDivDelta(const AmrPoisson<3, Bits>& ap, const BlockOctre
 ///     w⁺ = dist⁻/(dist⁺+dist⁻),  w⁻ = dist⁺/(dist⁺+dist⁻)   (½/½ when both sides same-level).
 /// Delta per row/axis = Σ_side (w±−½)·[std side average] + Σ_side w±/n±·[C/F substitutions].
 /// One scalar CSR per output axis, over rows adjacent to a level boundary.
-template <unsigned Bits, class RowFn, class FluidFn>
+template <unsigned Bits, class RegularFn, class FluidFn>
 inline std::array<CfCsr, 3> buildCfGradDelta(const AmrPoisson<3, Bits>& ap,
-                                             const BlockOctree<3, Bits>& t, RowFn&& rowOk,
+                                             const BlockOctree<3, Bits>& t, RegularFn&& regularOk,
                                              FluidFn&& fluidOk, CfScheme scheme) {
   const Index n = t.numLeaves();
   std::array<std::vector<std::vector<detail::ScalarEnt>>, 3> per;
@@ -369,7 +370,7 @@ inline std::array<CfCsr, 3> buildCfGradDelta(const AmrPoisson<3, Bits>& ap,
     per[static_cast<std::size_t>(a)].resize(static_cast<std::size_t>(n));
   if (scheme != CfScheme::standard) {
     hostParFor(n, [&](Index i) {  // per[axis][i]-disjoint (rung 1)
-      if (!rowOk(i))
+      if (!regularOk(i))
         return;
       const unsigned Li = t.level(i);
       // Per axis/side: open-face count, the side's (uniform) center-to-center distance, and
@@ -383,7 +384,11 @@ inline std::array<CfCsr, 3> buildCfGradDelta(const AmrPoisson<3, Bits>& ap,
         const int s = (dir > 0) ? 0 : 1;
         ++cnt[axis][s];
         sdist[axis][s] = dist;
-        if (ap.levelOf(j) != Li)  // ghost-safe
+        // D and G must be paired FACE BY FACE (docs/amr_cf_flux_gate.md §6.3, §8 point 3): a
+        // face whose value D takes as standard must be one whose gradient G takes as standard, or
+        // the constraint gains a component the gradient cannot see. So the side reweighting is
+        // triggered by a PASSING C/F face, not by any level mismatch.
+        if (ap.levelOf(j) != Li && regularOk(j))  // cfFace(i, j); regularOk(i) by the early-out
           cf[axis][s] = true;
       });
       for (int a = 0; a < 3; ++a) {
@@ -409,7 +414,7 @@ inline std::array<CfCsr, 3> buildCfGradDelta(const AmrPoisson<3, Bits>& ap,
           }
           // (b) coarse* substitution inside the C/F face gradients, at the NEW side weight.
           const unsigned Lj = ap.levelOf(j);  // ghost-safe
-          if (Lj == Li)
+          if (Lj == Li || !regularOk(j))      // cfFace(i, j)
             return;
           const Index coarse = (Lj > Li) ? j : i;
           const Index fine = (Lj > Li) ? i : j;
@@ -441,9 +446,9 @@ struct CfUfDelta {
   CfCsr phi;      ///< reads the projection potential φ, rows = face slots
 };
 
-template <unsigned Bits, class FluidFn>
+template <unsigned Bits, class RegularFn, class FluidFn>
 inline CfUfDelta buildCfUfDelta(const AmrPoisson<3, Bits>& ap, const BlockOctree<3, Bits>& t,
-                                FluidFn&& fluidOk, CfScheme scheme) {
+                                RegularFn&& regularOk, FluidFn&& fluidOk, CfScheme scheme) {
   const Index n = t.numLeaves();
   // Rung 1, two-pass. forEachFaceFull is CELL-MAJOR, so leaf i owns the contiguous slot range
   // [slotBase[i], slotBase[i+1]): count the slots per leaf in parallel, then an INTEGER exclusive
@@ -480,8 +485,8 @@ inline CfUfDelta buildCfUfDelta(const AmrPoisson<3, Bits>& ap, const BlockOctree
     auto& vrow = velPer[static_cast<std::size_t>(i)];
     auto& prow = phiPer[static_cast<std::size_t>(i)];
     ap.forEachFaceFull(i, [&](Index j, int axis, int dir, double, double dist, double) {
-      const unsigned Lj = ap.levelOf(j);  // ghost-safe
-      if (Lj != Li && fluidOk(i) && fluidOk(j)) {
+      const unsigned Lj = ap.levelOf(j);               // ghost-safe
+      if (Lj != Li && regularOk(i) && regularOk(j)) {  // cfFace(i, j); regular ⇒ fluid
         const Index coarse = (Lj > Li) ? j : i;
         const Index fine = (Lj > Li) ? i : j;
         std::vector<detail::CompEnt> ve;

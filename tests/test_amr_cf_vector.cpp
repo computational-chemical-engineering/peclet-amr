@@ -290,7 +290,10 @@ void run() {
     // samples the face value; standard is normally offset at C/F (O(h)); the scheme's
     // distance-weighted + coarse*-substituted value is ~2nd order at the sub-face centroid.
     {
-      CfUfDelta ufd = buildCfUfDelta(g.ap, g.t, all, CfScheme::quadratic);
+      // (regularOk, fluidOk): this mesh has no solid, so `all` is both — and the per-FACE
+      // C/F gate (docs/amr_cf_flux_gate.md) is therefore inert here, as it is on every mesh
+      // whose cut cells are not at a level boundary.
+      CfUfDelta ufd = buildCfUfDelta(g.ap, g.t, all, all, CfScheme::quadratic);
       Index nSlots = 0;
       for (Index i = 0; i < g.n; ++i)
         g.ap.forEachFaceFull(i, [&](Index, int, int, double, double, double) { ++nSlots; });

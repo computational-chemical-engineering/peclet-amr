@@ -940,17 +940,23 @@ class AmrFlow {
       auto fluidOk = [&](Index i) { return mom_.isFluid(i); };
       auto rowRegular = [&](Index i) { return mom_.isFluid(i) && !mom_.isCut(i); };
       auto lapD = buildCfLapDelta(mom_.lap(), *t_, mu_, rowRegular, fluidOk, cfScheme_);
-      // cfDiv/cfGrad rows: REGULAR fluid only — cut rows belong to the ghost closure family
-      // (the overlay owns their divergence and gradients; adding the smooth-field C/F
-      // substitution on top gives the constraint velocity reads the row's gradient never sees —
-      // a support-consistency violation). Measured (two-sphere throat, P3a follow-up
-      // 2026-08-27): with cut rows included, 2 of 12 throat-graded meshes march to k~1e12 by
-      // step ~100; the cfDiv delta alone carries it (momentum/gradient/uf deltas exonerated by
-      // bisection), and this row gate alone restores stability. On finest-band meshes cut rows
-      // have no C/F faces, so the gate is inert there — bit-identity by geometry.
-      auto divD = buildCfDivDelta(pres_, *t_, rowRegular, fluidOk, cfScheme_);
-      auto gd = buildCfGradDelta(pres_, *t_, rowRegular, fluidOk, cfScheme_);
-      auto ufd = buildCfUfDelta(pres_, *t_, fluidOk, cfScheme_);
+      // The projection family (D, the ABC gradient substitution, and the advecting face field)
+      // is gated PER FACE, never per row: `cfFace(i, j) = level mismatch && regular(i) &&
+      // regular(j)`, one predicate through one emitter (docs/amr_cf_flux_gate.md). A face flux is
+      // ONE number shared by two cells, so a gate that is a property of a cell cannot be
+      // conservative — under the old row gate the regular cell booked the C/F correction in its
+      // constraint, the cut cell did not, and uf carried it for both: a permanent mass source at
+      // the cut cell, ‖D(Δvel) − Δ_cfDiv‖ = 2.018e-01 against ‖div(uf)‖ = 2.016e-01 on a mesh
+      // whose cut band meets the level boundary. Cut rows still receive no delta (the 2026-08-27
+      // stability fix — 2 of 12 throat-graded meshes marched to k~1e12 with cut rows in cfDiv —
+      // is retained in full by the same predicate, since a cut row has no passing face); what
+      // changed is that the REGULAR row across a cut-adjacent 2:1 face no longer receives it
+      // either, and that face reverts to the standard two-point value. Inert by geometry on any
+      // uniform or finest-band mesh (cut cells there have no C/F face); `numCfCutFaces()` counts
+      // the sub-faces where it is not.
+      auto divD = buildCfDivDelta(pres_, *t_, regularOk, fluidOk, cfScheme_);
+      auto gd = buildCfGradDelta(pres_, *t_, regularOk, fluidOk, cfScheme_);
+      auto ufd = buildCfUfDelta(pres_, *t_, regularOk, fluidOk, cfScheme_);
       // Distributed diagnostic (numCfGhostColumns): how many overlay entries read a GHOST slot.
       // It is the observable that says the seam is actually exercised — a build that silently
       // fell back to the raw coarse value at every block boundary reports zero.

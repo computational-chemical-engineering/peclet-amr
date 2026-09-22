@@ -544,6 +544,77 @@ void test_graded_cf_quadratic() {
   PECLET_AMR_CHECK(std::fabs(dsum - d0sum) / std::fabs(d0sum) > 1e-4);  // the scheme acts
 }
 
+// The C/F cut band ON the level boundary (docs/amr_cf_flux_gate.md): device vs host-oracle parity
+// on refineToSdf(band=0), where the finest level exists only where the surface actually cuts, so
+// 2:1 sub-faces have a CUT cell on one side and a REGULAR one on the other. That is the
+// configuration the per-FACE gate (`regular(i) && regular(j)`) exists for, and the one the per-ROW
+// gate could not make conservative. Both engines build the SAME host CSRs, so what this adds over
+// the sibling case above is that the gate and its ghost-visible `regular` flag reach the device
+// unchanged -- at the sibling's tolerances. The ghost closure here must be the SAMPLED one: the
+// classic overlay's +-2 reach would cross a 2:1 boundary and setGhostProjection would throw.
+void test_cf_cut_band_parity() {
+  const long N = 32;
+  const double phi = 0.125;
+  const double R = std::pow(phi * 3.0 / (4.0 * M_PI), 1.0 / 3.0) * static_cast<double>(N);
+  const double c = N / 2.0;
+  auto sdf = [&](const Vec<3>& p) {
+    double dx = p[0] - c, dy = p[1] - c, dz = p[2] - c;
+    return std::sqrt(dx * dx + dy * dy + dz * dz) - R;
+  };
+  BO t(IVec<3>{8, 8, 8}, 2);  // 8^3 roots, lmax 2 -> 32^3 fine
+  AmrGeometry<3> geo;
+  geo.setIsotropic(1.0);
+  refineToSdf(t, geo, sdf, /*target*/ 0, /*band*/ 0.0, /*balance*/ true);
+  PECLET_AMR_CHECK(t.isBalanced());
+
+  auto configure = [&](auto& f) {
+    f.setViscosity(0.1);
+    f.setDt(60.0);
+    f.setBodyForce(1e-3, 0, 0);
+    f.setGhostProjection(true, 2, 2);
+    f.setGhostSampled(true);
+    f.setCfScheme(1);
+    f.setSolid(sdf);
+  };
+  AmrFlow<21> fl;
+  fl.init(t, 1.0, Vec<3>{0, 0, 0});
+  configure(fl);
+  for (int s = 0; s < 40; ++s)
+    fl.step(100, 60);
+  const auto dux = fl.velocity(0);
+
+  oracle::AmrFlow<21> hfl;
+  hfl.init(t, 1.0, Vec<3>{0, 0, 0});
+  configure(hfl);
+  for (int s = 0; s < 40; ++s)
+    hfl.step(/*momSweeps=*/250, /*presIters=*/12, /*presSweeps=*/2);
+  const auto& hux = hfl.velocity(0);
+
+  const Index n = t.numLeaves();
+  double hsum = 0, dsum = 0, dmax = 0, hmax = 0;
+  for (Index i = 0; i < n; ++i)
+    if (hfl.isFluid(i)) {
+      const double w = static_cast<double>(1L << t.level(i));
+      const double w3 = w * w * w;
+      hsum += hux[(std::size_t)i] * w3;
+      dsum += dux[(std::size_t)i] * w3;
+      dmax = std::max(dmax, std::fabs(dux[(std::size_t)i] - hux[(std::size_t)i]));
+      hmax = std::max(hmax, std::fabs(hux[(std::size_t)i]));
+    }
+  std::printf(
+      "[flow] cf cut-band parity (band=0): cfCutFaces dev %lld host %lld; Usup host %.6e dev %.6e "
+      "(rel %.2e), max|dev-host| %.3e (mag %.3e)\n",
+      static_cast<long long>(fl.numCfCutFaces()), static_cast<long long>(hfl.numCfCutFaces()), hsum,
+      dsum, std::fabs(dsum - hsum) / std::fabs(hsum), dmax, hmax);
+  // The configuration must be present, and the census must agree between the two engines (they
+  // compute it from the same flag through the same sweep).
+  PECLET_AMR_CHECK(fl.numCfCutFaces() > 0);
+  PECLET_AMR_CHECK_EQ(fl.numCfCutFaces(), hfl.numCfCutFaces());
+  PECLET_AMR_CHECK(std::isfinite(dsum) && dsum > 0.0);
+  PECLET_AMR_CHECK(std::fabs(dsum - hsum) / std::fabs(hsum) < 2e-3);  // device == oracle
+  PECLET_AMR_CHECK(dmax < 5e-3 * hmax);
+}
+
 // NAVIER–STOKES with the ghost projection (ladder step 4): the immersed sphere at finite Re
 // (the aperture advection test's setup) with setGhostProjection on BOTH engines. Checks:
 // oracle==device parity, the ghost NS steady state is close to the aperture NS steady state
@@ -1226,6 +1297,7 @@ int main(int argc, char** argv) {
   test_graded_ghostproj();
   test_seam_sampled();
   test_graded_cf_quadratic();
+  test_cf_cut_band_parity();
   test_sphere_ghostproj_adv();
   test_adapt_midrun();
   test_pocket_guard();

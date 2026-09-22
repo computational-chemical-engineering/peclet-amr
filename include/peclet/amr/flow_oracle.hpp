@@ -37,6 +37,7 @@
 #include <cstdio>
 #include <memory>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 #include "peclet/amr/adapt.hpp"         // transferField (conservative remap for finishAdapt)
@@ -210,12 +211,11 @@ class AmrFlow {
       presMG_.setOpenness([&](const Vec<3>& fc, int axis) { return faceFrac(sdfFn, fc, axis); });
     }
     // C/F interface scheme overlays (cf_scheme.hpp), built from the SAME host CSR builders the
-    // device uses (parity by construction). Rows: REGULAR fluid only, all three deltas — cut
-    // rows belong to the ghost closure family (on mixed-level bands the overlay owns their
-    // divergence/gradients, and the smooth-field C/F substitution on top destabilizes: the
-    // two-sphere throat marched to k~1e12 with cut rows in cfDiv — see flow.hpp's cf section
-    // and the P3a record). On finest-band meshes cut rows have no C/F faces: gate inert,
-    // bit-identical.
+    // device uses (parity by construction). The projection family is gated PER FACE —
+    // `cfFace(i, j) = level mismatch && regular(i) && regular(j)` — through one emitter, so the
+    // divergence RHS, the ABC gradient substitution and the advecting face field carry the same
+    // correction on the same faces and `D_std(Δuf) ≡ Δ_cfDiv` holds identically. See flow.hpp's
+    // cf section and docs/amr_cf_flux_gate.md.
     // The per-FACE C/F gate's predicate (docs/amr_cf_flux_gate.md §6.1). The oracle is
     // single-rank, so there is no ghost tail to exchange (§6.4): `regular` is the local flag.
     {
@@ -234,9 +234,9 @@ class AmrFlow {
       auto fluidOk = [&](Index j) { return mom_.isFluid(j); };
       auto rowRegular = [&](Index i) { return mom_.isFluid(i) && !mom_.isCut(i); };
       cfMom_ = buildCfLapDelta(mom_.lap(), *t_, mu_, rowRegular, fluidOk, cfScheme_);
-      cfDiv_ = buildCfDivDelta(pres_, *t_, rowRegular, fluidOk, cfScheme_);
-      cfGrad_ = buildCfGradDelta(pres_, *t_, rowRegular, fluidOk, cfScheme_);
-      cfUf_ = buildCfUfDelta(pres_, *t_, fluidOk, cfScheme_);
+      cfDiv_ = buildCfDivDelta(pres_, *t_, regularOk, fluidOk, cfScheme_);
+      cfGrad_ = buildCfGradDelta(pres_, *t_, regularOk, fluidOk, cfScheme_);
+      cfUf_ = buildCfUfDelta(pres_, *t_, regularOk, fluidOk, cfScheme_);
     } else {
       cfMom_ = CfCsr{};
       cfDiv_ = CfCompCsr{};
@@ -422,6 +422,80 @@ class AmrFlow {
         s += d * d;
       }
     return std::sqrt(s);
+  }
+
+  /// divNormL2 restricted to REGULAR fluid rows (fluid and not cut) — the companion of
+  /// divNormFaceRegular below; the two are compared on the band=0 mesh.
+  double divNormL2Regular(const std::array<std::vector<double>, 3>& vel) const {
+    double s = 0.0;
+    const Index n = t_->numLeaves();
+    for (Index i = 0; i < n; ++i)
+      if (mom_.isFluid(i) && !mom_.isCut(i)) {
+        const double d = divergence(vel, i);
+        s += d * d;
+      }
+    return std::sqrt(s);
+  }
+
+  /// ‖D_std(uf)‖₂ over REGULAR fluid rows only. Cut rows are excluded ON PURPOSE: under the ghost
+  /// scheme the constraint actually solved at a cut row is this divergence PLUS the closure
+  /// overlay's delta, which is a functional of the CELL velocities and so cannot appear in any
+  /// norm of uf — `D_std(uf) ≠ 0` there BY DESIGN (see divNormFace, and docs/amr_cf_flux_gate.md
+  /// §2 "out of scope"). On the REGULAR rows it is the solve residual, and it is exactly where the
+  /// per-ROW C/F gate used to leave a non-decaying O(1) mass source: the regular cell across a
+  /// cut-adjacent 2:1 face booked a C/F correction in its constraint that the cut cell did not,
+  /// while uf carried it for both.
+  double divNormFaceRegular() const {
+    double tot = 0.0;
+    const Index n = t_->numLeaves();
+    for (Index i = 0; i < n; ++i) {
+      Index s = faceStart_[static_cast<std::size_t>(i)];
+      if (!mom_.isFluid(i) || mom_.isCut(i)) {
+        pres_.forEachFaceFull(i, [&](Index, int, int, double, double, double) { ++s; });
+        continue;
+      }
+      double d = 0.0;
+      pres_.forEachFaceFull(i, [&](Index, int, int dir, double area, double, double alpha) {
+        d += alpha * area * dir * uf_[static_cast<std::size_t>(s++)];
+      });
+      d /= pres_.cellVolume(i);
+      tot += d * d;
+    }
+    return std::sqrt(tot);
+  }
+
+  /// Rule (I) of docs/amr_cf_flux_gate.md §4, measured (§6.6): the advecting face field's C/F
+  /// delta and the divergence constraint's C/F delta must be THE SAME correction, so that
+  ///     D_std(Δuf) ≡ Δ_cfDiv
+  /// entry by entry — which is what makes uf a conservative flux in the presence of the quadratic
+  /// C/F scheme (L = D_std·Gf inverts only what rhs = D_std·F(u*) put in). Returns
+  /// {‖D_std(Δuf) − Δ_cfDiv‖₂, ‖Δ_cfDiv‖₂} evaluated on the CURRENT cell velocity. The first
+  /// component is a permanent mass source when it is non-zero: it is proportional to the velocity,
+  /// not to φ, so it does not decay at steady state. Measured 2.018e-01 on the band=0 mesh under
+  /// the per-ROW gate, 8.7e-17 on a finest band (where no cut cell has a C/F face at all).
+  std::pair<double, double> cfFluxIdentity() const {
+    const Index n = t_->numLeaves();
+    std::vector<double> dcell(static_cast<std::size_t>(n), 0.0);
+    cfApplyCompHost(cfDiv_, u_, dcell);  // Δ_cfDiv
+    const std::size_t nSlots =
+        cfUf_.vel.start.empty() ? 0u : cfUf_.vel.start.size() - 1;  // == faceStart_[n]
+    std::vector<double> duf(nSlots, 0.0);
+    cfApplyCompHost(cfUf_.vel, u_, duf);  // Δuf on the face slots
+    double err = 0.0, ref = 0.0;
+    for (Index i = 0; i < n; ++i) {
+      double d = 0.0;
+      Index s = faceStart_[static_cast<std::size_t>(i)];
+      pres_.forEachFaceFull(i, [&](Index, int, int dir, double area, double, double alpha) {
+        if (static_cast<std::size_t>(s) < nSlots)
+          d += alpha * area * dir * duf[static_cast<std::size_t>(s)];
+        ++s;
+      });
+      d /= pres_.cellVolume(i);  // D_std(Δuf) at row i
+      const double r = d - dcell[static_cast<std::size_t>(i)];
+      err += r * r;
+      ref += dcell[static_cast<std::size_t>(i)] * dcell[static_cast<std::size_t>(i)];
+    }
+    return {std::sqrt(err), std::sqrt(ref)};
   }
 
   std::array<std::vector<double>, 3>& velocityRef() { return u_; }
