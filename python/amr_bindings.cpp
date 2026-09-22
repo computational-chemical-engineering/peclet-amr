@@ -802,6 +802,19 @@ class FlowDiagnostics {
   double divergence_norm_face() { return f_.engine().divNormFace(); }
   // The C/F census (docs/amr_cf_flux_gate.md §6.5): a count, so a property (NAMING.md §1.2/§1.3).
   peclet::core::Index num_cf_cut_faces() const { return f_.engine().numCfCutFaces(); }
+  // The face CSR topology `Flow.face_field()` is indexed by -> dict of four arrays: `start`
+  // (num_leaves+1 row offsets), `nbr`, `axis`, `dir`. A 2:1 sub-face is a slot whose two incident
+  // leaves have different `Octree.levels()`; its centroid is the FINER leaf's face centre.
+  // Read-only and host-copied on every call — a diagnostic, not a step-loop read-out.
+  nb::dict face_topology() const {
+    const auto t = f_.engine().faceTopology();
+    nb::dict d;
+    d["start"] = vec1<std::int64_t>(std::vector<std::int64_t>(t.start.begin(), t.start.end()));
+    d["nbr"] = vec1<std::int64_t>(std::vector<std::int64_t>(t.nbr.begin(), t.nbr.end()));
+    d["axis"] = vec1<std::int32_t>(std::vector<std::int32_t>(t.axis.begin(), t.axis.end()));
+    d["dir"] = vec1<std::int32_t>(std::vector<std::int32_t>(t.dir.begin(), t.dir.end()));
+    return d;
+  }
   // Solver-internals and ablation switches (the production path needs none of them).
   void set_momentum_mg(bool on) { f_.engine().setMomentumMG(on); }
   void set_momentum_gs(bool on) { f_.engine().setMomentumGS(on); }
@@ -1184,6 +1197,14 @@ NB_MODULE(_amr, m) {
                    "of the set that runs at the standard scheme's local order. Each sub-face "
                    "contributes two slots (one per incident cell) and the sum over ranks equals "
                    "the single-rank count.")
+      .def("face_topology", &FlowDiagnostics::face_topology,
+           "The face CSR topology face_field() is indexed by, as a dict of four arrays: 'start' "
+           "(num_leaves+1 row offsets, int64), 'nbr' (neighbour leaf per (sub)face, int64), "
+           "'axis' (0/1/2, int32) and 'dir' (+1/-1 from the owning cell toward the neighbour, "
+           "int32). A 2:1 sub-face is a slot whose two incident leaves have different "
+           "Octree.levels(); its centroid is the FINER leaf's face centre. Host-copied on every "
+           "call -- a diagnostic, not a step-loop read-out. Under MPI a neighbour index >= "
+           "num_leaves is a ghost slot of this rank's registry.")
       .def("set_momentum_mg", &FlowDiagnostics::set_momentum_mg, nb::arg("on"),
            "Use the Galerkin velocity multigrid as the momentum solve preconditioner (default on; "
            "makes the momentum solve scale with resolution). Call before set_solid.")

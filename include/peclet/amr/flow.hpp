@@ -1746,6 +1746,19 @@ class AmrFlow {
   /// Copy the divergence-free face field to host (one value per CSR (sub)face, forEachFaceFull
   /// order).
   std::vector<double> faceField() const { return peclet::core::toVector(uf_); }
+  /// The face CSR topology `faceField()` is indexed by, copied to host: `start` the per-cell row
+  /// offsets (size n+1), then per (sub)face the neighbour leaf, the face axis (0/1/2) and the
+  /// direction (+1/-1, pointing from the owning cell to the neighbour). A 2:1 sub-face is one
+  /// whose two incident leaves sit at different octree levels, which the caller reads off the
+  /// octree's own `levels()`. Under MPI a neighbour index >= numLeaves() is a ghost slot.
+  struct FaceTopologyHost {
+    std::vector<Index> start, nbr;
+    std::vector<int> axis, dir;
+  };
+  FaceTopologyHost faceTopology() const {
+    return {peclet::core::toVector(geom_.start), peclet::core::toVector(geom_.nbr),
+            peclet::core::toVector(geom_.axis), peclet::core::toVector(geom_.dir)};
+  }
   Index numLeaves() const { return n_; }
   /// Distributed: number of ghost slots in the ±2 registry (0 single-rank).
   Index numGhostCells() const { return nExt_ - n_; }

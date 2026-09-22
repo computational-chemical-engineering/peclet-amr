@@ -207,5 +207,15 @@ if(PECLET_AMR_BUILD_TESTS)
                      "${CMAKE_CURRENT_SOURCE_DIR}/tests/study/flow_parity/parity_gate.py")
     set_tests_properties(python_flow_parity PROPERTIES LABELS "python" SKIP_RETURN_CODE 77
       ENVIRONMENT "PECLET_AMR_PYTHONPATH=${CMAKE_CURRENT_BINARY_DIR};PECLET_AMR_FLOW_PYTHONPATH=${PECLET_AMR_FLOW_PYTHONPATH}")
+    # The graded time-accurate gate (docs/amr_tg_graded.md): decaying Taylor-Green on a graded
+    # octree with advection on, against the exact solution. Three facts, ~20 s: the advecting face
+    # field is still a conservative flux there, a 2:1 sub-face is not a worse place for it than an
+    # ordinary face, and the graded solver is second order in h. `bench` because it is a solve, not
+    # a unit test -- it runs with the studies, not in the default battery.
+    add_test(NAME python_amr_tg_graded
+             COMMAND "${Python_EXECUTABLE}"
+                     "${CMAKE_CURRENT_SOURCE_DIR}/tests/study/amr_tg_graded.py" --gate)
+    set_tests_properties(python_amr_tg_graded PROPERTIES LABELS "python;bench" SKIP_RETURN_CODE 77
+      ENVIRONMENT "${_py_env}")
   endif()
 endif()
