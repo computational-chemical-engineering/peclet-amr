@@ -489,3 +489,34 @@ Byte-identity of everything that existed: `maxBlockCells = 0` and `align = 1` ar
 behaviours, so every existing MPI ctest in core, flow and amr must pass unchanged before either
 default moves; moving a default (flow's `rebalanceByWeights` to the aligned init; amr's rebalance)
 is its own commit with the G-A4 / G-B5 numbers in the message.
+
+### 11.7 S2a as built and measured (2026-09-24)
+
+Core `06ff364` (aligned weighted `init` + `chooseAlignedWeighted` + `weightImbalance`), merged.
+G-A1 (1500 cases, bitwise at `align = 1`), G-A2 (4500 aligned partitions nest for `a` in-place
+lifts under both predicates) and G-A3 (1500 cases, chooser replicated and honouring the 1.05
+budget) pass. **G-A4**, the flow probe's heap case through the aligned init (throwaway flow branch,
+quiet host, pinned ranks, median of 15 steps): `a = 2`, weight imbalance 1.036, the telescope moves
+from **L0 to L2**, iterations 8 → 8.
+
+| np = 8 | projection | momentum | projection ÷ momentum |
+|---|---|---|---|
+| unweighted | 0.061 s | 0.060 s | 1.02 |
+| weighted, plain (today) | 0.168 | 0.099 | **1.70** — the collapse |
+| weighted, aligned | 0.087 | 0.083 | 1.05 |
+
+At np = 4 the aligned projection is 0.94× unweighted. At np = 8 it is 1.42× unweighted, which
+**misses the 1.15× gate as written — and the gate was wrong, not the code.** The collapse's
+signature is the pressure solve pulling away from the rest of the fluid work on the SAME partition
+(ratio 1.70), and alignment removes it (1.05, against 1.02 unweighted). What remains is the
+balancer's intended cell imbalance: a flow-only probe with particle weights puts 1.86× the mean
+cell count on the heaviest rank, which in a coupled run the particle work on the other ranks would
+offset. §11.6 already exempts momentum from that effect ("the cell imbalance is the balancer's")
+and did not extend the same exemption to the projection. **Corrected G-A4 / G-B3 / G-B4: projection
+÷ momentum on the weighted partition within 10 % of the unweighted ratio**, not projection against
+the unweighted projection. Under that gate S2a passes at np = 4 and 8.
+
+Built as flagged by the implementer: `aMax` defaults to no cap beyond the geometric ones; weighted
+ORBs that return an empty block are rejected by the chooser; the coarse ORB takes `cellExtent =
+align`; sums are x-fastest within each box; "after j ≤ a halvings" was read as j < a (level `a`
+itself is not guaranteed even, and the probe telescopes exactly there).
