@@ -181,11 +181,24 @@ Setup: flow + dem share one `BlockDecomposer` (settled). `coupling.rebalance()` 
 (`flow_ibm_mpi.hpp:149`), `redistribute(newDec)`, `initMpi(newDec)` → `CutcellMG::initMpi(...,
 dec0 = weighted)`.
 
-**Today.** Level 0 is the weighted partition; `evenOn` fails on some axis → `blocked`; the
-`agglomerated(d)` search finds no liftable `d > 0` on a weighted tree → `d = 0` → one rank
-receives the whole level-0 residual each V-cycle and runs the rest of the hierarchy alone (or,
-per the code comment, the user sets `nLevels = 1` / GraphAMG). At 384³ that is 56M cells to one
-rank — the pressure solve is either serial or a smoother.
+**Today — measured 2026-09-24** (`flow/tests/study/weighted_dec0_telescope_probe.py`, flow
+`0ae29d6`; table in `docs/SCALING_ISSUES.md` #2 TRAP). Level 0 is the weighted partition; `evenOn`
+fails on some axis → `blocked`, and the `agglomerated(d)` search walks down the ORB tree and lands
+at **the shallowest depth whose splits are all even** — which is `d = 0` (the whole level on one
+rank) whenever the root split falls on an odd plane, and 2^d ranks or a collapse one level lower
+otherwise. 96³ at np = 8 with a particle-heap weight: the telescope fires at level 0 with `d = 0`,
+L1–L5 run on one rank, the projection is 2.25–2.6× slower and **iterations are unchanged** (8 → 8):
+it is the same hierarchy on one rank, a cost in time, not in convergence. **The two escapes the
+source comment recommends do not escape**: the GraphAMG bottom leaves the level-0 telescope
+untouched (projection 0.085 → 0.218 s), `nLevels = 1` with the `auto` bottom runs a redundant
+GraphAMG on the whole grid (~55× slower, before and after), and `nLevels = 1` with the smoother
+bottom is slower than the collapsed telescope it replaces. S5 must correct the comment at
+`mac_cutcell_mg.hpp:513–517`.
+
+**What the measurement changes in the plan below:** the search is not "no liftable `d > 0`" in
+general — it lifts until the shallowest odd split. So **aligning the weighted ORB (S2) directly
+deepens where the telescope lands**, level for level, before any repartition stage is needed. That
+raises S2's leverage relative to the repartition kind, and the order below stands.
 
 **With §4.** Two pieces, in this order of leverage:
 
@@ -246,11 +259,11 @@ delete-and-include, not a rewrite.
 
 ## 9. Open questions, each with a default
 
-1. **Is flow's CFD-DEM telescoping really collapsing to one rank after a rebalance? (fact.)** The
-   code says so; nothing has measured it. *Default:* before S5, run the coupling MPI test with
-   telescoping on, read `predict_hierarchy` / the ladder print after `rebalance()`, and record it
-   in `SCALING_ISSUES.md`. If the answer is "it selects `d = 0`", S5 is the fix; if flow already
-   guards it some other way, S5 shrinks to the aligned `init`.
+1. **Is flow's CFD-DEM telescoping really collapsing to one rank after a rebalance? — ANSWERED
+   2026-09-24: yes.** Measured at np = 4 and 8 (§6); flow has no other guard, and the collapse lands
+   at the shallowest odd split of the weighted tree (`d = 0` when the root split is odd). S5
+   remains the fix and its priority stands. Not yet measured: np ≥ 16, GPU, a coupled `CfdDem` run
+   (the flow-only path is the same call).
 2. **Alignment depth for flow's weighted ORB (fact).** *Default:* let the existing 1.05 budget
    choose; log `a` in `check_decomposition.py --predict`.
 3. **Device-resident plan buffers (fact).** *Default:* host-staged; measure at 384 GPUs before
