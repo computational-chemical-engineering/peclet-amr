@@ -30,6 +30,7 @@
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/tuple.h>
 #include <nanobind/stl/variant.h>
+#include <nanobind/stl/vector.h>
 
 #include <array>
 #include <cstdint>
@@ -48,6 +49,7 @@
 #include "peclet/amr/flow_oracle.hpp"  // oracle::AmrFlow (dev-only reference; not exposed)
 #include "peclet/amr/indicators.hpp"
 #include "peclet/amr/leaf_field.hpp"
+#include "peclet/amr/mg_predict.hpp"  // predictPressureLadder (docs/amr_mg_depth.md §6.7)
 #include "peclet/amr/poisson.hpp"
 #include "peclet/amr/refine.hpp"
 #include "peclet/amr/vtu_io.hpp"
@@ -836,6 +838,15 @@ class FlowDiagnostics {
     d["cell_center"] = vec2<double>(std::vector<double>(t.center), 3);
     return d;
   }
+  // The pressure multigrid's ladder AS BUILT on this rank: per-level leaf counts, level 0 first
+  // (docs/amr_mg_depth.md §6.7). Levels below the root brick are lifted levels. Read it against
+  // `peclet.amr.predict_pressure_hierarchy`, never against a literal.
+  std::vector<peclet::core::Index> pressure_mg_levels() const {
+    return f_.engine().pressureMgLevels();
+  }
+  // What actually solves the coarsest pressure level: "jacobi" | "amg" (+ "+tail"). Today the only
+  // bottom that exists is the 60-sweep damped Jacobi one, so this reports "jacobi" everywhere.
+  std::string pressure_mg_bottom() const { return f_.engine().pressureMgBottom(); }
   // The seam-reconstruction census (docs/amr_cf_convective.md §5.2), this rank's.
   peclet::core::Index num_seam_sample_records() const { return f_.engine().numSeamSampleRecords(); }
   peclet::core::Index num_seam_layer_records() const { return f_.engine().numSeamLayerRecords(); }
@@ -930,6 +941,49 @@ NB_MODULE(_amr, m) {
       "Build a graded octree, refine to an SDF surface, read leaf geometry + per-leaf fields as "
       "numpy, "
       "load-rebalance, gather face neighbours, export VTU, and run the flow step on device.";
+
+  m.def(
+      "predict_pressure_hierarchy",
+      [](std::array<long, 3> cells, unsigned lmax, int num_ranks, long bottom_extent) {
+        const auto root = rootCellsOf(cells, lmax, "predict_pressure_hierarchy");
+        if (num_ranks < 1)
+          throw std::runtime_error("predict_pressure_hierarchy: num_ranks must be >= 1");
+        if (bottom_extent < 1)
+          throw std::runtime_error("predict_pressure_hierarchy: bottom_extent must be >= 1");
+        const peclet::core::IVec<3> G{root[0], root[1], root[2]};
+        const auto p = peclet::amr::predictPressureLadder<3>(G, lmax, num_ranks, bottom_extent);
+        nb::list cellsL, kindL, extentL;
+        for (const auto& lv : p.levels) {
+          cellsL.append(lv.cells);
+          kindL.append(peclet::amr::toString(lv.kind));
+          extentL.append(nb::make_tuple(lv.extent[0], lv.extent[1], lv.extent[2]));
+        }
+        nb::dict d;
+        d["cells"] = cellsL;
+        d["extent"] = extentL;
+        d["kind"] = kindL;
+        d["num_levels"] = (long)p.levels.size();
+        d["num_in_place"] = (long)p.numInPlace();
+        d["tail"] = p.tail;
+        d["bottom"] = p.bottomName();
+        return d;
+      },
+      nb::arg("cells"), nb::arg("lmax") = 0u, nb::arg("num_ranks") = 1,
+      nb::arg("bottom_extent") = 4,
+      "The pressure-multigrid ladder the solver will build on `cells` FINEST cells per axis at "
+      "tree depth `lmax` over `num_ranks` ranks (docs/amr_mg_depth.md §6.7). A pure function — it "
+      "builds no mesh and needs no MPI; it re-runs the §6.2 ladder rule on the ORB the "
+      "DistributedOctree would produce. Returns a dict: `cells` and `extent` per level (finest "
+      "first), `kind` per level ('octree' above the root brick, 'lifted' below it, 'tail' on the "
+      "gathered coarsest level), `num_levels`, `num_in_place`, `tail`, and `bottom` ('jacobi' or "
+      "'amg', suffixed '+tail').\n\n"
+      "`lmax` is the number of octree coarsenings THE MESH supports, i.e. the tree's lmax for a "
+      "mesh refined to level 0 somewhere. An UNREFINED Octree(cells, lmax=k>0) is the same mesh "
+      "as Octree(cells/2**k, lmax=0) — all its leaves are root cells — and must be predicted that "
+      "way. In general pass depth = tree.lmax - levels().min() and cells = root * 2**depth.\n\n"
+      "The redundant tail and the agglomerated bottom are DESCRIBED here before they are built "
+      "(work orders WO4 / WO5): this is the ladder of the finished design, which is what makes it "
+      "the specification `Flow.diagnostics.pressure_mg_levels` is checked against.");
 
   m.def(
       "spacing_from_extent",
@@ -1243,6 +1297,19 @@ NB_MODULE(_amr, m) {
            "'d1_i' / 'd1_j' (half width along the face axis), and the record CSR 'rec_start', "
            "'rec_cell', 'rec_w', 'rec_dist' (the probe distance, used only where a record is an "
            "UPSTREAM probe). All empty with set_cf_scheme(0 = standard), which builds no tables.")
+      .def_prop_ro("pressure_mg_levels", &FlowDiagnostics::pressure_mg_levels,
+                   "Leaf count of every pressure-multigrid level this rank built, level 0 first "
+                   "(docs/amr_mg_depth.md §6.7). Levels below the root brick are LIFTED levels — "
+                   "the same octree with its root halved — so a uniform mesh now has a real "
+                   "hierarchy instead of a single level. Check it against "
+                   "`peclet.amr.predict_pressure_hierarchy`, not against a literal.")
+      .def_prop_ro("pressure_mg_bottom", &FlowDiagnostics::pressure_mg_bottom,
+                   "What solves the coarsest pressure level: 'jacobi' (60 damped-Jacobi sweeps, "
+                   "exact at extent <= 4) or 'amg' (the agglomerated GraphAMG-PCG solve), with the "
+                   "suffix '+tail' when the coarsest in-place level is gathered. Only the Jacobi "
+                   "bottom is implemented today, so this reports 'jacobi' on every path; "
+                   "`predict_pressure_hierarchy` reports the FINISHED design's bottom and may "
+                   "therefore say 'amg' where this says 'jacobi'.")
       .def_prop_ro("num_seam_sample_records", &FlowDiagnostics::num_seam_sample_records,
                    "How many tangential-sample records the seam reconstruction built on THIS RANK "
                    "-- one per 2:1 sub-face pair that passes the C/F face gate (both cells regular "

@@ -18,6 +18,15 @@ execution_space: str = 'OpenMP'
 
 build_toolchain: str = 'GNU 14.2.0 Release x86_64 Kokkos 5.1.1'
 
+def predict_pressure_hierarchy(cells: Sequence[int], lmax: int = 0, num_ranks: int = 1, bottom_extent: int = 4) -> dict:
+    """
+    The pressure-multigrid ladder the solver will build on `cells` FINEST cells per axis at tree depth `lmax` over `num_ranks` ranks (docs/amr_mg_depth.md §6.7). A pure function — it builds no mesh and needs no MPI; it re-runs the §6.2 ladder rule on the ORB the DistributedOctree would produce. Returns a dict: `cells` and `extent` per level (finest first), `kind` per level ('octree' above the root brick, 'lifted' below it, 'tail' on the gathered coarsest level), `num_levels`, `num_in_place`, `tail`, and `bottom` ('jacobi' or 'amg', suffixed '+tail').
+
+    `lmax` is the number of octree coarsenings THE MESH supports, i.e. the tree's lmax for a mesh refined to level 0 somewhere. An UNREFINED Octree(cells, lmax=k>0) is the same mesh as Octree(cells/2**k, lmax=0) — all its leaves are root cells — and must be predicted that way. In general pass depth = tree.lmax - levels().min() and cells = root * 2**depth.
+
+    The redundant tail and the agglomerated bottom are DESCRIBED here before they are built (work orders WO4 / WO5): this is the ladder of the finished design, which is what makes it the specification `Flow.diagnostics.pressure_mg_levels` is checked against.
+    """
+
 def spacing_from_extent(extent: Sequence[float], root_cells: Sequence[int], lmax: int) -> float:
     """
     The finest cell width h0 = extent / (root_cells * 2**lmax) of a PHYSICAL domain — the one place an AMR spacing is computed, so no caller writes one (see suite/docs/PHYSICAL_UNITS_PLAN.md). Returns ONE number, so it raises when the extent does not give cubic cells — use `spacings_from_extent` for a box mesh.
@@ -347,6 +356,18 @@ class FlowDiagnostics:
     def face_topology(self) -> dict:
         """
         The face CSR topology face_field() is indexed by, as a dict of four arrays: 'start' (num_leaves+1 row offsets, int64), 'nbr' (neighbour leaf per (sub)face, int64), 'axis' (0/1/2, int32), 'dir' (+1/-1 from the owning cell toward the neighbour, int32), 'raw_area' (the area the ADVECTIVE flux uses -- the FINE area at a 2:1 sub-face, so a coarse face's four sub-faces sum to the coarse area), 'dist' (centre distance, 1.5*h_fine at a 2:1 sub-face), 'alpha' (openness) and 'upup_i' / 'upup_j' (the second upwind probes the SOU/Koren reconstruction samples, -1 where none). A 2:1 sub-face is a slot whose two incident leaves have different Octree.levels(); its centroid is the FINER leaf's face centre. Host-copied on every call -- a diagnostic, not a step-loop read-out. Under MPI a neighbour index >= num_leaves is a ghost slot of this rank's registry, whose world centre (like every slot's) is row `slot` of 'cell_center', an (num_leaves + num_ghost_cells, 3) array. The SEAM RECONSTRUCTION tables of docs/amr_cf_convective.md come with it: 'seam' (one descriptor id per face slot, -1 = a plain slot that takes the ordinary SOU/Koren line), the per-descriptor 'samp_i' / 'samp_j' (the tangential-sample record when i / j is the COARSE cell of a 2:1 sub-face, else -1), 'uu_rec_i' / 'uu_rec_j' (the upstream probe's record when the second upwind cell of i / j crosses a level, else -1) and 'd1_i' / 'd1_j' (half width along the face axis), and the record CSR 'rec_start', 'rec_cell', 'rec_w', 'rec_dist' (the probe distance, used only where a record is an UPSTREAM probe). All empty with set_cf_scheme(0 = standard), which builds no tables.
+        """
+
+    @property
+    def pressure_mg_levels(self) -> list[int]:
+        """
+        Leaf count of every pressure-multigrid level this rank built, level 0 first (docs/amr_mg_depth.md §6.7). Levels below the root brick are LIFTED levels — the same octree with its root halved — so a uniform mesh now has a real hierarchy instead of a single level. Check it against `peclet.amr.predict_pressure_hierarchy`, not against a literal.
+        """
+
+    @property
+    def pressure_mg_bottom(self) -> str:
+        """
+        What solves the coarsest pressure level: 'jacobi' (60 damped-Jacobi sweeps, exact at extent <= 4) or 'amg' (the agglomerated GraphAMG-PCG solve), with the suffix '+tail' when the coarsest in-place level is gathered. Only the Jacobi bottom is implemented today, so this reports 'jacobi' on every path; `predict_pressure_hierarchy` reports the FINISHED design's bottom and may therefore say 'amg' where this says 'jacobi'.
         """
 
     @property

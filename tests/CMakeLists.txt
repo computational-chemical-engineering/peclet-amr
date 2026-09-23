@@ -27,9 +27,10 @@ endfunction()
 # amr_barnes_hut     Barnes-Hut particle-tree mode over the octree
 # amr_transport      explicit FV scalar transport (advection-diffusion) on the octree
 # amr_cf_vector      C/F interface schemes (cf_scheme.hpp): Martin–Cartwright quadratic deltas
+# amr_mg_predict     the predicted pressure-MG ladder (docs/amr_mg_depth.md §6.7) vs the built one
 foreach(t IN ITEMS block_octree amr_vtu amr_sdf amr_poisson amr_transfer amr_adapt amr_adapt_transport
                    amr_cf_quadratic amr_openness amr_cut_cell amr_flow amr_drag amr_face_field
-                   amr_barnes_hut amr_transport amr_cf_vector)
+                   amr_barnes_hut amr_transport amr_cf_vector amr_mg_predict)
   _amr_test_exe(test_${t})
   peclet_amr_add_test(${t} test_${t})
 endforeach()

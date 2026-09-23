@@ -26,6 +26,7 @@
 #include <cstdlib>
 #include <memory>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 #include "peclet/amr/adapt.hpp"         // transferField (conservative remap for finishAdapt)
@@ -1223,7 +1224,7 @@ class AmrFlow {
       for (std::size_t L = 0; L < nl; ++L)
         std::fprintf(stderr, " %lld",
                      (long long)(dist_ ? presMGD_.numLeaves(L) : presMG_.numLeaves(L)));
-      std::fprintf(stderr, "\n");
+      std::fprintf(stderr, " | bottom %s\n", pressureMgBottom().c_str());
       spHeader_ = true;
     }
     if (spSteps_ < spWindow_)
@@ -1812,6 +1813,26 @@ class AmrFlow {
     const double l = divFaceNorm(geom_, View<const double>(uf_));
     return std::sqrt(allSum(l * l));
   }
+  /// The pressure multigrid's ladder as BUILT on this rank: per-level leaf counts, level 0 first
+  /// (docs/amr_mg_depth.md §6.7). Levels below the root brick are lifted levels; tail levels are
+  /// appended when the redundant tail engages (WO4). Compare against
+  /// `peclet.amr.predict_pressure_hierarchy` rather than against a literal.
+  std::vector<Index> pressureMgLevels() const {
+    const std::size_t nl = dist_ ? presMGD_.numLevels() : presMG_.numLevels();
+    std::vector<Index> out;
+    out.reserve(nl);
+    for (std::size_t L = 0; L < nl; ++L)
+      out.push_back(dist_ ? presMGD_.numLeaves(L) : presMG_.numLeaves(L));
+    return out;
+  }
+  /// What actually solves the coarsest pressure level (docs/amr_mg_depth.md §6.6/§6.7):
+  /// `"jacobi"` | `"amg"`, with the suffix `"+tail"` when the coarsest in-place level is gathered.
+  /// Today the only bottom that EXISTS is the 60-sweep damped-Jacobi one — the agglomerated
+  /// GraphAMG bottom is WO5 and the redundant tail is WO4 — so this reports `"jacobi"` on every
+  /// path. `predict_pressure_hierarchy` reports the bottom of the FINISHED design and so may say
+  /// `"amg"` where this says `"jacobi"`: that gap is exactly the work those two orders do.
+  std::string pressureMgBottom() const { return "jacobi"; }
+
   /// Copy the divergence-free face field to host (one value per CSR (sub)face, forEachFaceFull
   /// order).
   std::vector<double> faceField() const { return peclet::core::toVector(uf_); }
