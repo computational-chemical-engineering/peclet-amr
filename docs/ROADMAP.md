@@ -3,17 +3,21 @@
 One page, live items only. Everything here is open; everything closed lives in the campaign notes
 and in `docs/archive/`. Rewritten in place, not appended.
 
-**Where the code stands (2026-09-21).** The octree, the distributed octree with leaf/field
+**Where the code stands (2026-09-23).** The octree, the distributed octree with leaf/field
 rebalance, solution-adaptive refinement, the collocated cut-cell Navier–Stokes solver (ghost
 projection default, aperture fallback, mixed-level sampled cut band), the AMR multigrid / MG-PCG /
-BiCGStab stack and the parallel `setSolid` builders are all **built, distributed and gated**: 92
-C++ ctests at np = 1, 2, 4, 8 plus 4 Python, a SHA-256 byte gate over every public entry path, and
-— new — a uniform-grid parity gate against `peclet.flow`. The package is 0.x: the API may still
-move (the D9 exception to the suite's clean-break 1.0.0).
+BiCGStab stack and the parallel `setSolid` builders are all **built, distributed and gated**: 96
+C++ ctests at np = 1, 2, 4, 8 plus 5 Python, a SHA-256 byte gate over every public entry path, a
+uniform-grid parity gate against `peclet.flow`, and a graded time-accurate gate against an exact
+unsteady solution. The package is 0.x: the API may still move (the D9 exception to the suite's
+clean-break 1.0.0).
 
-What is NOT yet done is the layer above: no published validation page, no convergence study of the
-*graded* solver against an analytic solution, no at-scale multi-GPU numbers, and the advective
-path costs 4–7× what `flow` costs for the same step.
+**The graded solver is now validated against analytic solutions, steady and unsteady**: order 2.00
+on the steady Poiseuille ladder (`amr_graded_convergence.md`) and **2.07 on a decaying Taylor–Green
+vortex with advection on** (`amr_tg_graded.md`), with the advecting face field conservative to
+4e-12 throughout. What is NOT yet done is the layer above: no published validation page (the gate
+on it is lifted — §E1), no at-scale multi-GPU numbers, and the advective path costs 4–7× what
+`flow` costs for the same step.
 
 ---
 
