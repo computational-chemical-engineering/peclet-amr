@@ -228,13 +228,56 @@ refined mesh, which is the entire point of the package.
 
 ## C. Cost
 
-- **C1 — the advective step costs 4–7× `flow`.** Measured on the same 32³ cut-cell sphere, same
-  host, same threads: Stokes 303 ms vs `flow`'s 313 ms (parity), but with advection on, 277 ms vs
-  41 ms. The Stokes number says the operator and the pressure solve are competitive; the advective
-  number says the cost is in the momentum path (deferred-correction assembly + the momentum
-  iterations it drives). Profile it — `PECLET_AMR_PROFILE_STEP=1` and `bench_amr_flow` exist for
-  exactly this — before any at-scale work. This subsumes the older "profile the momentum solve at
-  128³" item.
+- **C1 — the step cost is the PRESSURE multigrid, and its hierarchy stops at the root brick.**
+  Profiled 2026-09-23 (`tests/study/amr_pressure_depth.py`, `PECLET_AMR_PROFILE_STEP=1`); the old
+  entry blamed the momentum path and **that was wrong**. On the 32³ cut-cell sphere with advection
+  on, the step splits **92.3 % pressure solve** (90.5 % of it the MG preconditioner), 6.9 % momentum
+  solve, 0.5 % advection build.
+
+  The cause is structural. `AmrMultigrid::build` (`poisson.hpp`) coarsens by merging octree
+  siblings, and a leaf that is already a ROOT cell has no siblings — so
+
+      levels = lmax + 1,   coarsest grid = the root brick = (cells / 2**lmax)³
+
+  and on a **uniform mesh, at any lmax, the hierarchy is ONE level**: the "MG preconditioner" is a
+  smoother with no coarse-grid correction at all. Measured (host-openmp, 4 threads, ghost
+  projection, advection on):
+
+  | N | lmax | mesh | leaves | root brick | MG levels | ms/step | pres it |
+  |---|---|---|---|---|---|---|---|
+  | 32 | 0 | uniform | 32 768 | 32³ | **1** | 148.7 | 13 |
+  | 32 | 1 | graded | 17 928 | 16³ | 2 | 30.8 | 9 |
+  | 32 | 2 | graded | 17 200 | 8³ | 3 | 19.9 | 10 |
+  | 64 | 0 | uniform | 262 144 | 64³ | **1** | 1947.0 | 23 |
+  | 64 | 1 | graded | 83 672 | 32³ | 2 | 210.7 | 14 |
+  | 64 | 2 | graded | 65 360 | 16³ | 3 | 71.9 | 12 |
+  | 64 | 3 | graded | 64 240 | 8³ | 4 | 58.8 | 12 |
+
+  **The cost tracks the root brick, not the cell count.** The last three rows are the same problem
+  size (65 k leaves) and differ 3.6× purely by how small the root brick is.
+
+  **What this does to the 4–7× against `flow`.** Same case, same host, same threads: Stokes
+  **amr 163 ms vs flow 180 ms** (amr *faster*); with advection **amr 148 ms vs flow 27.5 ms**
+  (5.4×). Both codes' momentum cost collapses when the implicit FOU is switched on (amr 25.6 → 5.7
+  iterations); flow's pressure solve is cheap in both cases, amr's is ~110–136 ms in both and
+  simply dominates once momentum gets out of the way. Per leaf on a properly graded mesh
+  (N = 64, lmax = 3) amr costs **0.92 µs/leaf against flow's 0.84 µs/cell** on the same kind of
+  case — within ~10 %. **So the 4–7× is the uniform-mesh artefact, not a per-cell deficit**, and it
+  bites exactly where the parity harness lives.
+
+  **The fix is the suite's own, already recorded.** `../docs/DECOMPOSITION_AND_MULTIGRID.md` §2.7:
+  a V-cycle is domain-independent only if its coarsest level is effectively solved, the criterion is
+  the coarsest grid's largest **extent** (flow's threshold: 4 cells on any axis, not its cell
+  count), and an exact agglomerated bottom is *depth-independent* and beats full geometric depth —
+  `flow` ships it as `set_pressure_bottom("auto"|"smoother"|"agglomerated")`, decomposition-
+  independent by construction and measured np=6 vs np=1 to 4.5e-16. `amr` has none of it. Two
+  pieces are needed and only the second is flow's verbatim: **(a)** continue the hierarchy below the
+  octree's root brick — the root brick *is* a structured grid, so this is flow's own geometric
+  coarsening, but the coarse levels stop being octrees and the ORB decomposition has to follow;
+  **(b)** an exact agglomerated bottom once the coarsest extent is small. (a) is a design question
+  for the AMR data structures; (b) is a port. **Do (a) first** — without it (b) has a 64³ bottom to
+  gather, which is not a bottom.
+
 - **C2 — the setup cost at bed scale.** `set_solid` with a Python SDF callable is the measured
   bottleneck (>1h43m of numpy on an 11.35M-leaf bed); `set_solid_spheres` exists as the escape
   hatch. Whether the general callable path needs a device/batched form is an open question with a
