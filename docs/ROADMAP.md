@@ -228,55 +228,65 @@ refined mesh, which is the entire point of the package.
 
 ## C. Cost
 
-- **C1 — the step cost is the PRESSURE multigrid, and its hierarchy stops at the root brick.**
-  Profiled 2026-09-23 (`tests/study/amr_pressure_depth.py`, `PECLET_AMR_PROFILE_STEP=1`); the old
-  entry blamed the momentum path and **that was wrong**. On the 32³ cut-cell sphere with advection
-  on, the step splits **92.3 % pressure solve** (90.5 % of it the MG preconditioner), 6.9 % momentum
-  solve, 0.5 % advection build.
+- **C1 — CLOSED 2026-09-23. The step cost was the PRESSURE multigrid, whose hierarchy stopped at
+  the root brick; it now continues below it.** Design `docs/amr_mg_depth.md`; work orders WO1–WO6.
 
-  The cause is structural. `AmrMultigrid::build` (`poisson.hpp`) coarsens by merging octree
-  siblings, and a leaf that is already a ROOT cell has no siblings — so
-
-      levels = lmax + 1,   coarsest grid = the root brick = (cells / 2**lmax)³
-
-  and on a **uniform mesh, at any lmax, the hierarchy is ONE level**: the "MG preconditioner" is a
-  smoother with no coarse-grid correction at all. Measured (host-openmp, 4 threads, ghost
-  projection, advection on):
+  The cause was structural: `AmrMultigrid::build` coarsens by merging octree siblings, and a leaf
+  that is already a ROOT cell has no siblings — so `levels = lmax + 1`, and on a **uniform mesh, at
+  any lmax, the hierarchy was ONE level**, i.e. a smoother with no coarse-grid correction at all.
+  The fix is that a level below the root brick is **the same octree with its root LIFTED** (brick
+  halved, `lmax` incremented, leaf codes untouched), so `coarsenIf` simply keeps merging and every
+  builder downstream — `AmrPoisson::init`, the openness ladder, the covering-leaf `c2p`, the device
+  face-CSR assembly, the per-level `LeafHalo` — works verbatim. Measured (host-openmp, 4 threads,
+  ghost projection, advection on; `tests/study/amr_pressure_depth.py`):
 
   | N | lmax | mesh | leaves | root brick | MG levels | ms/step | pres it |
   |---|---|---|---|---|---|---|---|
-  | 32 | 0 | uniform | 32 768 | 32³ | **1** | 148.7 | 13 |
-  | 32 | 1 | graded | 17 928 | 16³ | 2 | 30.8 | 9 |
-  | 32 | 2 | graded | 17 200 | 8³ | 3 | 19.9 | 10 |
-  | 64 | 0 | uniform | 262 144 | 64³ | **1** | 1947.0 | 23 |
-  | 64 | 1 | graded | 83 672 | 32³ | 2 | 210.7 | 14 |
-  | 64 | 2 | graded | 65 360 | 16³ | 3 | 71.9 | 12 |
-  | 64 | 3 | graded | 64 240 | 8³ | 4 | 58.8 | 12 |
+  | 32 | 0 | uniform | 32 768 | 32³ | 1 → **4** | 144.7 → **33.0** | 13 → 11 |
+  | 32 | 1 | uniform | 4 096 | 16³ | 1 → 3 | 18.0 → 9.5 | 8 → 9 |
+  | 32 | 1 | graded | 17 928 | 16³ | 2 → 4 | 34.8 → 20.1 | 9 → 9 |
+  | 32 | 2 | graded | 17 200 | 8³ | 3 → 4 | 20.5 → 18.1 | 10 → 9 |
+  | 64 | 0 | uniform | 262 144 | 64³ | 1 → **5** | 1941.8 → **~300** | 23 → 13 |
+  | 64 | 1 | graded | 83 672 | 32³ | 2 → 5 | 204.9 → 85.6 | 14 → 12 |
+  | 64 | 2 | graded | 65 360 | 16³ | 3 → 5 | 71.9 → 59.6 | 12 → 12 |
+  | 64 | 3 | graded | 64 240 | 8³ | 4 → 5 | 58.0 → 56.3 | 12 → 12 |
 
-  **The cost tracks the root brick, not the cell count.** The last three rows are the same problem
-  size (65 k leaves) and differ 3.6× purely by how small the root brick is.
+  **Every configuration is faster and none is slower**; the uniform 64³ case is 6.4× and its
+  pressure iterations fall 23 → 13. The per-cell comparison that motivated the work now reads:
+  on a properly graded mesh (N = 64, lmax = 3) amr costs ~0.88 µs/leaf against `flow`'s 0.84
+  µs/cell, and the uniform 64³ case — the one the parity harness lives on — is no longer an
+  artefact of the hierarchy stopping at the root. **The 4–7× against `flow` was the uniform-mesh
+  artefact, and it is gone.**
 
-  **What this does to the 4–7× against `flow`.** Same case, same host, same threads: Stokes
-  **amr 163 ms vs flow 180 ms** (amr *faster*); with advection **amr 148 ms vs flow 27.5 ms**
-  (5.4×). Both codes' momentum cost collapses when the implicit FOU is switched on (amr 25.6 → 5.7
-  iterations); flow's pressure solve is cheap in both cases, amr's is ~110–136 ms in both and
-  simply dominates once momentum gets out of the way. Per leaf on a properly graded mesh
-  (N = 64, lmax = 3) amr costs **0.92 µs/leaf against flow's 0.84 µs/cell** on the same kind of
-  case — within ~10 %. **So the 4–7× is the uniform-mesh artefact, not a per-cell deficit**, and it
-  bites exactly where the parity harness lives.
+  What landed, in order: **WO1** `BlockOctree::liftRoot` + the single-rank ladder, with the
+  everywhere-refined deeper tree as a bitwise oracle; **WO2** `predictPressureLadder` + the
+  `pressure_mg_levels` / `pressure_mg_bottom` read-outs, so tests assert against the rule rather
+  than a literal; **WO3** the distributed lockstep lift (depth Allreduced before any level is built,
+  the ORB carried by `BlockDecomposer::coarsened`); **WO4** the `MgStage` abstraction with its
+  replicated instantiation — below the nested ladder a level MOVES onto a new decomposition of its
+  own grid and the ladder continues there, the movement behind the stage and never in `vcycle`
+  (`docs/amr_mg_core_boundary.md`; sibling-merge and repartition stages are WO4b); **WO5** the
+  exact agglomerated `GraphAMG`-PCG bottom for ladders that run out above the bottom extent, with
+  `set_pressure_bottom`. Six new ctests at np = 1, 2, 4, 8 where distributed.
 
-  **The fix is the suite's own, already recorded.** `../docs/DECOMPOSITION_AND_MULTIGRID.md` §2.7:
-  a V-cycle is domain-independent only if its coarsest level is effectively solved, the criterion is
-  the coarsest grid's largest **extent** (flow's threshold: 4 cells on any axis, not its cell
-  count), and an exact agglomerated bottom is *depth-independent* and beats full geometric depth —
-  `flow` ships it as `set_pressure_bottom("auto"|"smoother"|"agglomerated")`, decomposition-
-  independent by construction and measured np=6 vs np=1 to 4.5e-16. `amr` has none of it. Two
-  pieces are needed and only the second is flow's verbatim: **(a)** continue the hierarchy below the
-  octree's root brick — the root brick *is* a structured grid, so this is flow's own geometric
-  coarsening, but the coarse levels stop being octrees and the ORB decomposition has to follow;
-  **(b)** an exact agglomerated bottom once the coarsest extent is small. (a) is a design question
-  for the AMR data structures; (b) is a port. **Do (a) first** — without it (b) has a 64³ bottom to
-  gather, which is not a bottom.
+  Left open, each with its evidence recorded rather than its question re-openable:
+  - **the pressure iteration count still grows mildly with N** (11/13/15 at N = 32/64/128 on the
+    cut-cell sphere). `amr_mg_depth.md` §11.9's discriminator has been RUN: the same growth appears
+    on the openness-free periodic Poisson (14/16/17, rough rhs), so it is **the ladder's transfer
+    pair**, not the level-0 cut-cell operator, and the transfer pair is where a future session
+    should look. Its own item.
+    - *(sub-observation, not worth acting on — §11.12.)* The deepest level is **exactly free**
+      without a solid (5 iterations, flat) and costs ~1 iteration plus visible variance (11–15
+      against 11–13) with one, even though it is the same 64-cell grid with the same coarsened
+      geometry in the uniform and graded ladders. Different phenomenon from the N-growth above;
+      recorded with its evidence in case it ever looks like it matters.
+  - **the bottom extent stays 4** — measured and resolved, §11.4: the dependence is ~1 iteration
+    and 3–5 % of the step on one case in three, zero on graded meshes and zero without a solid.
+  - **the exact bottom's host/device threshold** (§11.11): the host CG is ~16 % *faster* than 60
+    Jacobi sweeps at a 64-cell bottom and ~28 % *slower* at 4096 rows, so §5.5's 10⁴-row threshold
+    is about an order of magnitude too high. Numbers waiting for whoever builds the device path.
+  - **WO4b** (sibling-merge and repartition stages, sub-communicators), **WO7** (ORB coarse-first
+    alignment, now optional), **WO8** (the velocity multigrid, `liftRoot = false` until then).
 
 - **C2 — the setup cost at bed scale.** `set_solid` with a Python SDF callable is the measured
   bottleneck (>1h43m of numpy on an 11.35M-leaf bed); `set_solid_spheres` exists as the escape

@@ -189,7 +189,8 @@ of two (`512×512×4` → `256×256×2` = 131 k cells, ~50 ms serial per V-cycle
 absorbed by WO5 and `predict`:
 
 - the exact bottom runs on the host for `n_b ≤ 10⁴` and on core's existing `GraphAMGDevice`
-  (`graph_amg_device.hpp`) above that;
+  (`graph_amg_device.hpp`) above that — **but 10⁴ is now measured to be about an order of magnitude
+  too high, see §11.11**;
 - design rule (joins §3 rule 1 of `DECOMPOSITION_AND_MULTIGRID.md`): choose brick counts for their
   factors of two on every axis, keep the short axis at ≥ 8 bricks, and read `n_b` off `predict`.
 
@@ -386,6 +387,18 @@ overwrite: under a weighted partition the stage can fire at level 0, where the i
 discarded; below level 0 the incoming iterate is zero so the two coincide (as built in WO4). Every
 rank computes the identical tail, so the scatter is a local pick with no communication. The
 movement itself is core machinery — see `amr_mg_core_boundary.md`.
+
+*What the correction scheme costs in exactness, measured (WO4/WO5).* Where the stage fires BELOW
+level 0 the incoming iterate is zero, residual == rhs, add == overwrite, and the whole distributed
+V-cycle stays **bitwise** equal to the single-rank one — 0.0 at np = 2, 4, 8 on the 12³-root case
+of `tests/test_amr_mg_tail_mpi.cpp`. Where it fires AT level 0 (nothing lifted in place, which is
+the weighted-partition case) the cycle becomes `x += V(0, b − Lx)` against the single-rank
+`V(x, b)`. Those are the same linear map — a V-cycle IS `x + M⁻¹(b − Lx)`, which is why it may
+precondition a Krylov method at all — but a different ORDER of the same floating-point operations,
+so from the second V-cycle on they differ by rounding: 1.4e-15 relative on the 10³-root case of
+`tests/test_amr_mg_bottom_dist_mpi.cpp`, against §9's 1e-12 acceptance, with the MG-PCG iteration
+count identical at every rank count. Bitwise remains the contract at np = 1 and wherever the stage
+sits below level 0; do not tighten it to bitwise where the stage sits at level 0.
 
 **Why redundant, not rank-0.** No serialization point, no broadcast, the same pattern flow's bottom
 uses; decomposition-independent because the tail is keyed by global id.
@@ -608,12 +621,43 @@ gates: `flow_parity` Stokes cases, `amr_two_sphere_gap.py` at cf = 1, momentum i
    root grid every V-cycle — correct but slow at bed scale. *Default:* WO7 lands in the same
    package; until then `pressure_mg_bottom` reports `"+tail"` with the gathered size so it is
    visible, and the study logs it.
-4. **`bottomExtent` 4 vs 8, and 60 bottom sweeps on CUDA (needs a fact).** The amplification table
-   says 8 is adequate; the brief's data say a 16³ bottom already saturated PCG on a cube; flow's 4
-   came from a 2048-long channel. On CUDA the 60 bottom launches and the 4 extra tiny levels cost
-   launch latency (~3–8 ms/step estimated). *Default:* keep 4 and 60 (follow the reference; isolate
-   the structural change); a one-afternoon CUDA sweep over `bottomExtent ∈ {4, 8}` × `bottom ∈
-   {30, 60}` after WO1 decides, as its own commit.
+4. **`bottomExtent` 4 vs 8 — RESOLVED 2026-09-23: measured, left at 4.** Do not re-run this; read
+   the table. `tests/study/amr_pressure_depth.py --sweep`, host-openmp 4 threads, quiet box,
+   minimum of three timed windows per cell:
+
+   | case | bottom | bE 4 | bE 8 | bE 16 |
+   |---|---|---|---|---|
+   | 64³ lmax 0 uniform | `smoother` | 307.9 ms / 15 it / 5 lv | 284.8 / 11 / 4 | 306.4 / 12 / 3 |
+   | 64³ lmax 0 uniform | `agglomerated` | 298.7 / 15 / 5 | 290.0 / 11 / 4 | 392.3 / 12 / 3 |
+   | 64³ lmax 2 graded | `smoother` | 64.6 / 12 / 5 | 62.1 / 13 / 4 | 71.9 / 13 / 3 |
+   | 64³ lmax 2 graded | `agglomerated` | 54.5 / 12 / 5 | 63.2 / 13 / 4 | 145.8 / 13 / 3 |
+   | 64³ lmax 3 graded | `smoother` | 57.1 / 12 / 5 | 59.3 / 13 / 4 | 58.7 / 13 / 4 |
+   | 64³ lmax 3 graded | `agglomerated` | 55.1 / 12 / 5 | 59.4 / 13 / 4 | 61.3 / 13 / 4 |
+
+   Three things this settles.
+
+   **(a) The bottom KIND is not a variable anywhere.** All nine `smoother`/`agglomerated` pairs have
+   identical iteration counts — including at extent 16, where 60 sweeps damp the slowest mode by
+   only 0.30 on a 4096-cell grid. At extent 4 that is the first direct confirmation of §6.6's own
+   claim that 60 sweeps are exact there: the exact solve buys literally nothing. A one-dimensional
+   sweep over the extent alone would have confounded ladder depth with bottom quality, because
+   `auto` switches the bottom at the same place it stops the ladder; this arm is why the table has
+   two rows per case.
+
+   **(b) The extent dependence is about ONE iteration and 3–5 % of the step, on one case in three.**
+   The single-sample `pres it` column above overstates it: a 33-step trace of the uniform 64³ case
+   gives **median 13 (range 11–15) at bE 4 against median 12 (range 11–13) at bE 8**, so the
+   apparent 15-vs-11 was the last sample catching the top of one distribution and the bottom of the
+   other. Both graded cases show no difference outside the noise. See §11.10 for the noise floor.
+
+   **(c) Therefore the default stays 4.** A ~1-iteration, 3–5 % dependence on one configuration does
+   not buy what moving it would cost: `bottomExtent` is an implicit parameter of seven tests
+   (`amr_mg_lift`, `amr_mg_predict`, `amr_mg_lift_dist`, `amr_mg_tail`, `amr_mg_bottom`,
+   `amr_mg_bottom_dist`, `amr_distributed_flow_mg`), four of which stop exercising the lift, the
+   stage or the exact bottom at all at extent 8, plus a second byte-gate re-record. Revisit only
+   with a case where the dependence is large, and pin the extent explicitly in the tests if you do.
+
+   The 60-sweep half of the original question is *not* answered here and remains open under §11.11.
 5. **Slab-like root bricks (preference).** Isotropic lifting leaves a long axis for the exact bottom
    (64×64×4 → 32×32×2, 2048 cells: fine; 512×512×4 → 256×256×2 = 131 k cells: a serial bottom of
    ~50 ms per V-cycle). *Default:* accept; revisit semi-coarsening only if a production slab
@@ -637,8 +681,63 @@ gates: `flow_parity` Stokes cases, `amr_two_sphere_gap.py` at cf = 1, momentum i
    growth. *Discriminator before anyone opens a hypothesis:* the same N-ladder on the
    openness-free periodic `Poisson` with a smooth rhs. Growth there → the ladder (then try
    `cyclesPerPrec = 2`, ω = 6/7, or a Galerkin-scaled coarse operator); flat there → the operator.
-   *Default:* open as its own ROADMAP item; C1 closes on the depth prize.
-10. **Elongated brick meshes with a short axis of few factors of two (fact).** `n_b` from §5.5 can
+
+   **The discriminator was run (WO5, `tests/test_amr_mg_bottom.cpp`) and it says THE LADDER.** On
+   the openness-free periodic `Poisson` with an exact bottom the counts are **14 / 16 / 17** at
+   N = 32 / 64 / 128 with a rough rhs (12 / 14 / 16 with a smooth one). The growth is there with no
+   openness at all, so the level-0 cut-cell / ghost-projection operator — the standing suspicion —
+   is exonerated and the transfer pair is where to look. Note this is the OPPOSITE conclusion from
+   §11.12's much smaller effect, which needs a solid to appear; they are different phenomena and
+   should not be merged. Do not re-run the discriminator; the test prints the table.
+   *Default unchanged:* its own ROADMAP item; C1 closes on the depth prize.
+
+10. **How to read the depth study's columns (method, learned the hard way).** The `ms/step` column
+   carries a ~3 % noise floor on this host, evidenced without modelling: the lmax 3 `bE 8` and
+   `bE 16` rows of §11.4's table build an IDENTICAL 4-level 512-cell hierarchy and read 59.3 vs
+   58.7 and 59.4 vs 61.3 ms. Only two ms/step claims in this note exceed that floor, both in §11.11.
+   The `pres it` column looks exact and is not: it is `last_pres_iters()` from ONE step, and it is
+   a Krylov count against a moving right-hand side that wanders by ±2 between consecutive steps of
+   the same run. A single sample of it drove four rounds of investigation into an effect that a
+   33-step trace then sized at one iteration rather than four (§11.4 b). **Trace, do not sample**,
+   before any conclusion rests on an iteration difference smaller than about three.
+11. **The bottom's cost, and the 10⁴-row host/device threshold (fact, from §11.4's sweep).** Two
+   measurements nobody had, both from the `smoother`/`agglomerated` pairs above. At a **64-cell**
+   bottom the exact solve is ~16 % FASTER than the smoother (graded lmax 2, bE 4: 54.5 vs 64.6 ms
+   at the same 12 iterations) — 60 damped-Jacobi sweeps is 120 tiny kernel launches per V-cycle and
+   the GraphAMG-CG beats that on launch count alone, which also bears on the unanswered "60 sweeps
+   on CUDA" question, where launch latency is worse. At a **4096-cell** bottom it is ~28 % SLOWER
+   (uniform, bE 16: 392.3 vs 306.4 ms) for zero iteration benefit. So §5.5's `kHostMax = 10⁴` is
+   about an order of magnitude too high: the host CG is already a quarter of the step at 4·10³ rows.
+   *Default:* leave it; whoever measures the device bottom path should start from these two numbers
+   rather than re-deriving them.
+
+12. **The deepest level is free without a solid and not free with one (observation; NOT currently
+   worth acting on).** Recorded because it is cheap to re-find and expensive to re-derive, not
+   because anything should be done about it. On the uniform 64³ sphere the fifth level costs about
+   one iteration of median and widens the spread (11–15 against 11–13 at four levels, identical
+   physics). Remove the solid — same mesh, same ladder, same exact bottom, a Taylor–Green initial
+   field so the projection has real work — and it is **exactly free: 5 iterations, flat over 13
+   steps, zero scatter, identical at bE 4 and bE 8**. So it is not the transfer pair (which would
+   hurt there too, and which is §11.9's separate and still-open item); it needs geometry to coarsen
+   away.
+
+   What makes it a genuine puzzle rather than a known effect is the ladder structure, measured:
+
+       uniform lmax 0 :  262144  32768  4096  512  64
+       graded  lmax 2 :   65360  12440  4096  512  64
+       graded  lmax 3 :   64240  10760  1912  512  64
+
+   Levels 2–4 are the SAME GRIDS in the uniform and graded-lmax 2 cases and levels 3–4 in all three,
+   with near-identical coarsened openness (away from the sphere the area average gives α = 1 either
+   way; near it the graded mesh is refined to the same finest level). So the deepest level is the
+   same 64-cell grid carrying the same geometry in every ladder, and a guard keyed on
+   coarsest-cell-width against feature size — the obvious analogue of `VelocityMG`'s `minCoarse`
+   cap — cannot be what distinguishes them. The variance half is the more interesting one for
+   whoever picks this up. *Default:* leave it. At one iteration it does not justify a design pass;
+   if it ever looks like it matters, the evidence is §11.4's table plus
+   `tests/study/amr_pressure_depth.py --sweep` and a no-solid control.
+
+13. **Elongated brick meshes with a short axis of few factors of two (fact).** `n_b` from §5.5 can
    reach 10⁵; *default:* the device bottom (WO5) and the brick-count design rule; a structured
    semi-coarsening tail level only if a production slab measures badly.
 

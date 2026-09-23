@@ -101,9 +101,20 @@ def sweep(ghost):
 
     This is the 2-D form: extent x bottom kind, with `agglomerated` forcing the exact solve at
     EVERY extent so that depth is the only variable on that arm. `smoother` is the other arm --
-    always the sweeps -- so the pair also measures what the exact bottom is worth per extent. The
-    iteration count is the deterministic column and the one to weigh; ms/step carries the host's
-    ~3 % noise, hence the minimum of `reps` timed windows.
+    always the sweeps -- so the pair also measures what the exact bottom is worth per extent.
+
+    READ THE COLUMNS WITH CARE -- this is the trap that cost the C1 investigation four rounds.
+    `ms/step` carries a ~3 % noise floor on this host, hence the minimum of `reps` timed windows
+    (the floor is evidenced without modelling by the lmax 3 bE 8 / bE 16 rows, which build an
+    IDENTICAL 4-level hierarchy and read within 1-3 % of each other). `pres it` LOOKS deterministic
+    and is not: it is `last_pres_iters()` from ONE step, and it is a Krylov count against a moving
+    right-hand side that wanders by +/-2 between consecutive steps of the same run. A single sample
+    of it once read 15 against 11 where a 33-step trace of those same two configurations gives
+    median 13 (range 11-15) against median 12 (range 11-13) -- the sample had caught the top of one
+    distribution and the bottom of the other, and a one-iteration effect was investigated as a
+    four-iteration one. Treat the column as an order of magnitude, and TRACE PER STEP before
+    resting any conclusion on a difference smaller than about three iterations
+    (docs/amr_mg_depth.md §11.10).
     """
     cfgs = [(64, 0, False), (64, 2, True), (64, 3, True)]
     print(f"{'N':>4} {'lmax':>5} {'mesh':>8} {'bottom':>13} {'bE':>4} {'ms/step':>9} "

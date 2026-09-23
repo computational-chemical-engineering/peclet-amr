@@ -52,12 +52,15 @@ PYTHONPATH=$PWD/build_q OMP_NUM_THREADS=1 python python/state_hash.py --check py
 export PATH=/usr/local/cuda-13.2/bin:$PATH                 # for the nvidia-cuda prefix
 ```
 
-**Counts** (host-openmp): **96** C++ ctests (28 single-rank + 17 distributed binaries × np = 1, 2,
-4, 8) + 5 `bench` (four `study_amr_*` + `bench_amr_flow`) + 5 `python` (`python_amr`,
-`python_amr_np2`, `python_state_hash`, `python_flow_parity`, `python_amr_tg_graded` — the last
-also carries the `bench` label, so `-LE bench` runs 4 of them) = 106. (92 / 101 until 2026-09-21,
+**Counts** (host-openmp): **111** C++ ctests (31 single-rank + 20 distributed binaries × np = 1, 2,
+4, 8) + 5 `bench` (four `study_amr_*` + `bench_amr_flow`) + 8 `python` (`python_amr`,
+`python_amr_np2`, `python_amr_seam_records` ×3 at np = 1, 2, 4, `python_state_hash`,
+`python_flow_parity`, `python_amr_tg_graded` — the last also carries the `bench` label) = **124**;
+`-LE 'bench|np8'` runs 98 of them and `-L np8` the remaining 20. (92 / 101 until 2026-09-21,
 when `amr_distributed_cf` — the distributed C/F quadratic scheme — added a 17th distributed
-binary.) The battery was 92 + 2 Python ctests in core's `build_rel_k` / `build_rel_py` before the
+binary; 96 / 106 until 2026-09-23, when ROADMAP C1 added `amr_mg_lift`, `amr_mg_predict` and
+`amr_mg_bottom` single-rank and `amr_mg_lift_dist`, `amr_mg_tail` and `amr_mg_bottom_dist`
+distributed.) The battery was 92 + 2 Python ctests in core's `build_rel_k` / `build_rel_py` before the
 move and reproduces here test for test.
 
 **ctest protocol** (`cmake/PecletAmrTest.cmake`, the ONE place every test is registered through;
@@ -140,6 +143,17 @@ Header-only under `include/peclet/amr/` (namespace `peclet::amr`; `common.hpp` c
   distributed multigrid live in `pcg.hpp`, `multigrid.hpp`, `velocity_mg.hpp`, `momentum.hpp`
   (the Galerkin `MomentumMG`; the operator, colouring and BiCGStab it drives are
   `peclet::core::solver`, aliased back into this namespace) and the `distributed_*.hpp` set.
+  **The pressure multigrid continues BELOW the root brick** (ROADMAP C1, `docs/amr_mg_depth.md`):
+  a coarser level is the same `BlockOctree` with its root *lifted* — brick halved, `lmax`
+  incremented, leaf codes untouched — so `coarsenIf` keeps merging and every builder downstream
+  works verbatim, and a uniform mesh has a real hierarchy instead of the single level it used to
+  have (64³: 1 → 5 levels, 1941.8 → ~300 ms/step). Distributed, the lift is lockstep (the depth is
+  Allreduced before any level is built) and the ORB follows by `BlockDecomposer::coarsened`; where
+  the blocks turn odd a `MgStage` (`mg_stage.hpp`) moves the level onto a new decomposition of its
+  own grid — only the replicated instantiation exists today — and where the ladder runs out above
+  `bottomExtent` the bottom is an agglomerated `GraphAMG`-PCG solve (`amg_bottom.hpp`,
+  `Flow.diagnostics.set_pressure_bottom`). The momentum path is NOT lifted (`liftRoot = false`,
+  guarded by `minCoarse`) until that work order lands.
   Cut-cell openness is `cut_cell.hpp` (host oracle assembly) with `assembly.hpp`,
   `momentum_assembly.hpp`, `facegeom_assembly.hpp` / `face_geom.hpp` the device builders;
   `cf_scheme.hpp` the quadratic coarse/fine schemes; `scalar_transport.hpp` + `advect_recon.hpp`
@@ -187,6 +201,10 @@ Header-only under `include/peclet/amr/` (namespace `peclet::amr`; `common.hpp` c
 - Design notes (`docs/`): `ROADMAP.md` (the one page of live items — **start here**),
   `amr_flow_uniform_parity.md` (what this solver shares with `peclet.flow`'s collocated solver at
   `lmax = 0`, measured cell by cell, and the two places it does not),
+  `amr_mg_depth.md` (ROADMAP C1: what a multigrid level below the root brick IS, the lockstep lift,
+  the telescoping stages and the exact bottom — with §11 carrying the measured open questions, and
+  §11.10 the warning that the depth study's iteration column is a sample, not a constant),
+  `amr_mg_core_boundary.md` (which half of the stage machinery belongs in `core`),
   `amr_collocated_projection.md` (the collocated projection + `uf`
   advection), `amr_tg_graded.md` (the graded time-accurate benchmark: second order in an unsteady
   flow, and why the C/F pressure-increment leak does not need fixing) with its design/verdict note
