@@ -25,9 +25,15 @@
 //            read them (numCfGhostColumns) - without the second, a fallback-everywhere build
 //            would pass the first.
 //
-// Advection is OFF on purpose: that is the configuration in which nothing else refreshes u's
-// ghost tail between the projection and the next predictor, so it also gates the syncVel that the
-// momentum C/F delta (cfMom_, which reads u at the coarse cell's tangential neighbours) needs.
+// TWO ARMS on that one mesh.
+//   (1) Advection OFF, and on purpose: that is the configuration in which nothing else refreshes
+//       u's ghost tail between the projection and the next predictor, so it also gates the
+//       syncVel that the momentum C/F delta (cfMom_, which reads u at the coarse cell's
+//       tangential neighbours) needs.
+//   (2) Advection ON (WO4 / gate G4 of docs/amr_cf_convective.md): the seam reconstruction of the
+//       advected value, whose records the two advective kernels gather THROUGH GHOST SLOTS. See
+//       the block above advectionArm() below for why only a distributed advective march can see a
+//       wrong ghost reach, and for the constants that keep the march non-vacuous.
 #include <mpi.h>
 
 #include <array>
@@ -156,6 +162,194 @@ void configure(AmrFlow<kBits>& f) {
   f.setSolid(sphereSdf);
 }
 
+// ---- WO4 / gate G4 (docs/amr_cf_convective.md §8, §9): the ADVECTIVE arm ----------------------
+//
+// The seam reconstruction of the ADVECTED value (§5) is the one piece of this family that reaches
+// through ghost slots from the kernel's own gather: a SAMPLE record is the coarse cell plus
+// cfAppendStencil's tangential entries, a LAYER record the four fine cells behind a coarse cell's
+// face, and at a block seam either can live on another rank. §5.4 is explicit that the J-side of
+// a descriptor needs a reach the face sweep does not already register — the four face-layer
+// corners BEYOND a ghost neighbour and the tangential reach of a ghost's own coarser upstream —
+// and that is what probeSeamLayer() exists for. A reach that is one probe short is INVISIBLE
+// single-rank (every coordinate is a local leaf, so the record is simply built) and wrong on 2+
+// ranks: the record is withheld and the slot silently falls back to today's O(h) arithmetic, or
+// resolves to an unrelated leaf. Neither of this repo's distributed flow tests enabled advection
+// on a graded mesh, so nothing saw it.
+//
+// The arm therefore marches the SAME graded ladder with advection ON. Its constants are chosen so
+// that the advective term is a material part of the answer rather than a rounding-level addition:
+// an amplitude-1 Taylor-Green initial velocity (analytically divergence free, and a pure function
+// of the cell centre so WORLD and SELF start from bitwise the same field) crossing every 2:1
+// shell from the first step, nu = 0.02 (cell Reynolds |u| h / nu = 1.6 on the finest cell) and
+// dt = 0.01 (CFL 0.32 there). The NON-VACUITY control measures that directly: the same SELF march
+// with setSeamReconstruction(false) must differ from the seam-on march by MORE than the
+// decomposition tolerance the WORLD/SELF comparison is judged at, or the comparison could not see
+// a broken ghost reach at all. The seam census is asserted positive per rank for the same reason.
+//
+// Measured (host-openmp, OMP_NUM_THREADS=2, this mesh, 3 steps): WORLD vs SELF rel 0 (bitwise) at
+// np = 1, 6.322e-09 at np = 2, 4.701e-09 at np = 4, 7.782e-09 at np = 8 — a decade under the
+// ~3e-7 class the advection-off arm above sits in, because dt = 0.01 needs far fewer Krylov
+// iterations than the dt = 1e6 steady arm for its reductions to reorder in. Seam census: 3064
+// sample + 766 layer records single-rank, rising to Σ 3264 / 872 at np = 8 (a seam pair that
+// straddles a block boundary is built on BOTH of its ranks — Σ_ranks is NOT the single-rank count,
+// which is why only the multiset, gated in Python, can be compared across np). Record entries
+// reading a ghost slot: 0 at np = 1, Σ 3264 / 5000 / 5816 at np = 2 / 4 / 8. Non-vacuity margin
+// (seam ON vs OFF): 8.335e-02 = 10.1 % of the velocity scale, 2.0e4 times the tolerance.
+constexpr double kAdvNu = 0.02;
+constexpr double kAdvDt = 0.01;
+
+void configureAdvect(AmrFlow<kBits>& f, bool seamRecon) {
+  f.setDensity(1.0);
+  f.setViscosity(kAdvNu);
+  f.setBodyForce(0.0, 0.0, 0.0);  // the initial vortex is the drive
+  f.setDt(kAdvDt);
+  f.setGhostProjection(true, 2, 2);
+  f.setCfScheme(static_cast<int>(CfScheme::quadratic));  // the scheme the seam tables ride
+  f.setAdvection(true);
+  f.setAdvectionScheme(0);  // SOU (the default); the seam branch is scheme-independent
+  f.setSeamReconstruction(seamRecon);
+  f.setSolid(sphereSdf);
+}
+
+/// u = (sin 2πx cos 2πy cos 2πz, −½ cos sin cos, −½ cos cos sin) — divergence free analytically,
+/// and a pure function of the cell CENTRE, which is what keeps the np = 1 contract bitwise: the
+/// two builds compute the same expression on the same world coordinate.
+void seedTaylorGreen(AmrFlow<kBits>& f) {
+  const std::vector<double> c = f.slotCenters();
+  const Index n = f.numLeaves();
+  const double k = 2.0 * M_PI;
+  std::array<std::vector<double>, 3> u;
+  for (int a = 0; a < 3; ++a)
+    u[(std::size_t)a].resize((std::size_t)n);
+  for (Index i = 0; i < n; ++i) {
+    const double x = c[(std::size_t)i * 3 + 0], y = c[(std::size_t)i * 3 + 1],
+                 z = c[(std::size_t)i * 3 + 2];
+    u[0][(std::size_t)i] = std::sin(k * x) * std::cos(k * y) * std::cos(k * z);
+    u[1][(std::size_t)i] = -0.5 * std::cos(k * x) * std::sin(k * y) * std::cos(k * z);
+    u[2][(std::size_t)i] = -0.5 * std::cos(k * x) * std::cos(k * y) * std::sin(k * z);
+  }
+  for (int a = 0; a < 3; ++a)
+    f.setVelocity(a, u[(std::size_t)a]);
+}
+
+/// Seam-record entries that read a GHOST slot — the seam tables' analogue of numCfGhostColumns,
+/// read off faceTopology() so no production accessor has to exist for it. Zero at np = 1 (there
+/// are no ghosts); zero at np > 1 would mean every seam record was built from local leaves only,
+/// i.e. the seams of this rank's blocks are not actually crossed by the tables.
+long seamGhostEntries(const AmrFlow<kBits>& f) {
+  const auto top = f.faceTopology();
+  const Index n = f.numLeaves();
+  long g = 0;
+  for (const Index c : top.recCell)
+    if (c >= n)
+      ++g;
+  return g;
+}
+
+/// max |WORLD − SELF| over this rank's leaves, mapped through the global Morton code.
+double worldSelfDiff(const Fields& w, const Fields& s, const DO& world, DO& self, Index n) {
+  double d = 0.0;
+  for (Index i = 0; i < n; ++i) {
+    const Index si = self.local().find(world.globalCode(i));
+    PECLET_AMR_CHECK(si >= 0);
+    for (int c = 0; c < 3; ++c)
+      d = std::max(
+          d, std::fabs(w.u[(std::size_t)c][(std::size_t)i] - s.u[(std::size_t)c][(std::size_t)si]));
+    d = std::max(d, std::fabs(w.p[(std::size_t)i] - s.p[(std::size_t)si]));
+  }
+  return d;
+}
+
+void advectionArm(DO& world, DO& self, Index n, int rank, int size) {
+  const int kSteps = std::getenv("CF_ASTEPS") ? std::atoi(std::getenv("CF_ASTEPS")) : 3;
+
+  AmrFlow<kBits> fw;
+  fw.initMpi(world);
+  configureAdvect(fw, true);
+  seedTaylorGreen(fw);
+  {
+    // The census. Sample and layer records are LOCAL counts (a seam pair straddling a block
+    // boundary is built on BOTH ranks, each from its own side, so Σ_ranks exceeds the single-rank
+    // count by design — the record MULTISET equality across np is gated in Python by
+    // python_amr_seam_records, WO1c, not here). What this asserts is only that the mesh is not
+    // vacuous: every rank owns seam faces of both kinds, and at np > 1 its tables really do read
+    // across the block boundary.
+    const long sr = (long)fw.numSeamSampleRecords(), lr = (long)fw.numSeamLayerRecords();
+    const long ge = seamGhostEntries(fw);
+    PECLET_AMR_CHECK(sr > 0);
+    PECLET_AMR_CHECK(lr > 0);
+    if (size > 1)
+      PECLET_AMR_CHECK(ge > 0);
+    else
+      PECLET_AMR_CHECK_EQ(ge, 0L);
+    long srT = 0, lrT = 0, geT = 0, srMin = 0, lrMin = 0, geMin = 0;
+    MPI_Allreduce(&sr, &srT, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(&lr, &lrT, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(&ge, &geT, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(&sr, &srMin, 1, MPI_LONG, MPI_MIN, MPI_COMM_WORLD);
+    MPI_Allreduce(&lr, &lrMin, 1, MPI_LONG, MPI_MIN, MPI_COMM_WORLD);
+    MPI_Allreduce(&ge, &geMin, 1, MPI_LONG, MPI_MIN, MPI_COMM_WORLD);
+    if (rank == 0)
+      std::printf(
+          "[cf-mpi] advective arm np=%d seam census: sample records Σ %ld (min/rank %ld), layer "
+          "records Σ %ld (min/rank %ld), record entries reading a ghost slot Σ %ld (min/rank "
+          "%ld)\n",
+          size, srT, srMin, lrT, lrMin, geT, geMin);
+  }
+  const Fields w = runSteps(fw, kSteps);
+
+  AmrFlow<kBits> fs;
+  fs.init(self.local(), kH0, Vec<3>{0.0, 0.0, 0.0});
+  configureAdvect(fs, true);
+  seedTaylorGreen(fs);
+  const Fields s = runSteps(fs, kSteps);
+
+  double scale = 0.0;
+  const Index nSelf = fs.numLeaves();
+  for (Index i = 0; i < nSelf; ++i)
+    for (int c = 0; c < 3; ++c)
+      scale = std::max(scale, std::fabs(s.u[(std::size_t)c][(std::size_t)i]));
+  const double dmax = worldSelfDiff(w, s, world, self, n);
+  double gdmax = 0.0;
+  MPI_Allreduce(&dmax, &gdmax, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+  if (rank == 0)
+    std::printf(
+        "[cf-mpi] np=%d seam reconstruction, advection ON, WORLD vs SELF: |d|max %.3e (scale "
+        "%.3e, rel %.3e)\n",
+        size, gdmax, scale, gdmax / (scale + 1e-300));
+
+  {
+    // NON-VACUITY. The same SELF march with the seam reconstruction switched off: if turning the
+    // feature off moved the answer by less than the tolerance the WORLD/SELF comparison is judged
+    // at, that comparison could not detect a seam path broken at the block boundaries, and this
+    // arm would gate nothing. It is a property of the CASE (mesh, dt, viscosity, step count), so
+    // it belongs in the test, not in a study.
+    AmrFlow<kBits> fo;
+    fo.init(self.local(), kH0, Vec<3>{0.0, 0.0, 0.0});
+    configureAdvect(fo, false);
+    seedTaylorGreen(fo);
+    const Fields o = runSteps(fo, kSteps);
+    double doff = 0.0;
+    for (Index i = 0; i < nSelf; ++i) {
+      for (int c = 0; c < 3; ++c)
+        doff = std::max(doff, std::fabs(s.u[(std::size_t)c][(std::size_t)i] -
+                                        o.u[(std::size_t)c][(std::size_t)i]));
+      doff = std::max(doff, std::fabs(s.p[(std::size_t)i] - o.p[(std::size_t)i]));
+    }
+    if (rank == 0)
+      std::printf(
+          "[cf-mpi] np=%d non-vacuity: seam ON vs OFF on the SAME march |d|max %.3e (rel %.3e, "
+          "tolerance 5.000e-06)\n",
+          size, doff, doff / (scale + 1e-300));
+    PECLET_AMR_CHECK(doff > 5e-6 * scale);
+  }
+
+  if (size == 1)
+    PECLET_AMR_CHECK(gdmax == 0.0);  // BITWISE, the np=1 contract
+  else
+    PECLET_AMR_CHECK(gdmax <= 5e-6 * scale);  // decomposition independence (G4)
+}
+
 void run() {
   AmrGeometry<3> geo;
   geo.setIsotropic(kH0);
@@ -240,6 +434,8 @@ void run() {
     PECLET_AMR_CHECK(gdmax == 0.0);  // BITWISE, the np=1 contract
   else
     PECLET_AMR_CHECK(gdmax <= 5e-6 * gscale);  // decomposition independence
+
+  advectionArm(world, self, n, rank, size);  // arm (2): WO4 / G4
 }
 
 }  // namespace
