@@ -178,9 +178,12 @@ Header-only under `include/peclet/amr/` (namespace `peclet::amr`; `common.hpp` c
   `last_pres_iters`, `last_outer_iters`, `divergence_norm_face`, and the solver-internals /
   ablation switches `set_momentum_mg`, `set_momentum_gs`, `set_velocity_mg_staircase`,
   `set_momentum_mg_solver`, `set_ghost_gradient`, `set_aperture_order`, `set_uf_advection`, `set_seam_reconstruction`) is what
-  a developer uses to inspect or ablate. Scheme selectors take an INT, not a string:
-  `set_cf_scheme(0 = standard | 1 = quadratic)` — **before `set_solid`**, which is where the C/F
-  overlays are built — and `set_advection_scheme(0 = SOU | 1 = Koren)`.
+  a developer uses to inspect or ablate. Two of the scheme selectors take an INT —
+  `set_cf_scheme(0 = standard | 1 = quadratic)`, **before `set_solid`**, which is where the C/F
+  overlays are built, and `set_advection_scheme(0 = SOU | 1 = Koren)`. That is a **divergence from
+  `flow`, not a convention to copy**: `../docs/NAMING.md` wants one spelling per concept and `flow`
+  spells these as strings. New selectors take a STRING — `set_pressure_bottom("auto" | "smoother" |
+  "agglomerated")` is `flow`'s spelling, verbatim. The two int ones are a NAMING item.
 - Design notes (`docs/`): `ROADMAP.md` (the one page of live items — **start here**),
   `amr_flow_uniform_parity.md` (what this solver shares with `peclet.flow`'s collocated solver at
   `lmax = 0`, measured cell by cell, and the two places it does not),
