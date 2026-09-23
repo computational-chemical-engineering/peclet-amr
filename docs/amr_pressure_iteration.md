@@ -570,3 +570,195 @@ Each with a default so work proceeds unattended.
   measured `Re λ < 0`).
 - **§7's ≈ 1 expectation for the §5 order test under (B)** is right, and for the stated reason
   (the O(h) normal offset of `G_q`); recorded in §5.4 so nobody chases order 2 there.
+
+## 14. Verdict on WO0 (2026-09-23): (B) parked, gate W re-spelled, and the (G)−(C) gap is neither suspect
+
+> Review of branch `wo0-tg-graded` (`fef867e`, base `43de409`) against this note, by its author.
+> Inputs: `docs/briefs/tg_graded_gate_w.md`, `docs/amr_tg_graded.md`, `docs/data/amr_tg_graded.json`,
+> the ladder logs, and three scratch probes run for this section (`tg_leak.py`, `tg_horizon`,
+> `tg_advvar.py` / `tg_noadv.py` in the session scratchpad; every number below is from them or from
+> the committed JSON). Nothing was re-run to reproduce the note's tables.
+
+### 14.1 Verdict: park (B). The implementer is right, and the case is stronger than the brief makes it.
+
+Gate W as I wrote it in §9/§10 fires (`m5 = m1/m3 = 1.46`), and it fires for a reason that has
+nothing to do with the leak: **m1 is the total face-normal velocity error at the C/F sub-faces, and
+on this mesh that total is the solver's spatial error** — at N = 32 the amplitude error alone is
+10 % of a 0.78 amplitude, i.e. 0.08 of the 0.09 that m1 reads, and the regular faces read the same
+(m2r = 0.108). Dividing one spatial-error-dominated max by a spatial-error-dominated L2 gives O(1)
+at every dt, which is what was measured (1.43–1.46 across a 16× range). My §9 prediction
+"`m5 < 0.1` at CFL ≤ 2" was therefore structurally impossible as stated; what I meant, and what
+(S) actually predicts, is the *leak* against the solver's other errors. That quantity was not in
+§9's metric list. It is now measured directly (§14.2): at the largest time-accurate dt of the ladder
+the leak is **0.4 % of the face error the solver makes anyway** at N = 32 and **0.2 %** at N = 64 —
+seventy-five to a hundred and thirty times below the 0.3 threshold. Independently, the ablation of
+§14.4 replaces the projected `uf` by the *un-projected* cell-to-face average as the advecting
+velocity — a change at every face, orders of magnitude larger than any C/F leak — and moves the
+graded velocity error by 1.6 % (m3 6.198e-2 → 6.297e-2). A correction to the advecting velocity at
+the C/F faces alone, `∝ dt²`, cannot buy anything in this regime. (B) stays a designed-but-unbuilt
+option, as §1's default said; its trigger is a consumer at `dt ≫` CFL with an evolving pressure
+(§12 risk 2), not this benchmark. The brief's worry that the 2 % dt-flatness of m1 could hide a
+cancelling leak is answered by the direct instrument, which has no cancellation in it.
+
+### 14.2 What m5 measured, and the instrument that measures the leak
+
+The leak is `(Δ_G φ)_k = σ_k(φ_C* − φ_C)/d_k` (§5.1), which for a smooth `φ` is the tangential
+offset of the fine centre from the coarse centre, dotted with `∇φ` at the coarse cell, over
+`d = 1.5h`. With `φ = (dt/ρ)(pⁿ⁺¹ − pⁿ)` taken from `Flow.pressure()` before and after the last
+step and `∇φ` from a least-squares fit over the coarse cell's face neighbours:
+
+| N | CFL | steps | `ε_cf` = max `|Δ_G φ|` (solver φ) | same on exact φ | dt-order | `ε_cf/m1` | `ε_cf/m2r` | `ε_cf/m3` |
+|---|---|---|---|---|---|---|---|---|
+| 32 | 0.25 | 256 | 2.50e-5 | 1.74e-5 | — | 2.7e-4 | 2.3e-4 | 4.0e-4 |
+| 32 | 0.5 | 128 | 1.00e-4 | 6.96e-5 | 2.00 | 1.1e-3 | 9.3e-4 | 1.6e-3 |
+| 32 | **1** | 64 | **4.19e-4** | 2.79e-4 | 2.07 | 4.6e-3 | **4.0e-3** | 6.8e-3 |
+| 32 | 2 | 32 | 1.40e-3 | 1.12e-3 | 1.74 | 1.4e-2 | 1.2e-2 | 2.0e-2 |
+| 32 | 4 | 16 | 3.54e-3 | 4.52e-3 | 1.34 | 2.5e-2 | 2.1e-2 | 3.4e-2 |
+| 32 | 8 | 8 | 8.23e-3 | 1.84e-2 | 1.22 | 3.2e-2 | 2.9e-2 | 4.3e-2 |
+| 64 | 0.5 | 256 | 1.72e-5 | 1.20e-5 | — | 5.1e-4 | 5.4e-4 | 1.2e-3 |
+| 64 | **1** | 128 | **6.96e-5** | 4.81e-5 | 2.02 | 2.1e-3 | **2.2e-3** | 4.4e-3 |
+
+Reading: the leak is `dt²` at fixed h up to CFL 1 (2.00, 2.07 — gate S, measured at last), and it
+tracks the exact solution's own `φ` within 1.45× at every CFL ≤ 2 (the solver's `max|Δp|` is 1.32×
+the exact at CFL 0.25–1, consistent with its 20 % pressure-amplitude error). Above CFL 2 the
+order drops (1.74, 1.34, 1.22) because the solver's pressure increment stops tracking the exact one
+(`max|Δp|` solver/exact = 1.13, 0.78, 0.47 at CFL 2/4/8) — the regime where the whole transient is
+unresolved, as §1 said. At fixed CFL the leak falls 5.8× from N = 32 to 64 (order 2.54); the exact
+`φ` of this case falls 6.3× in cell units (`k³` × the slower decay at larger N), so this is the
+solution's scaling, not a solver property. §1's worked estimate `ε_cf ≈ 1.3e-4` at N = 32, CFL 0.5
+is confirmed (1.0e-4 measured). The results note's sentence (3) "m1 falls with refinement, which
+disposes of an error that does not shrink under refinement" is a non-sequitur — m1 is not the
+leak — but the conclusion holds on the leak itself: at fixed CFL it is `O(h²)` or better.
+
+### 14.3 Gate W and gate S, corrected (replacement rows for §10)
+
+| gate | what | configuration | criterion |
+|---|---|---|---|
+| **W** worth it | the leak `ε_cf := max_{C/F sub-faces} |Δ_G φ|` from the solver's own last-step `φ = (dt/ρ)(pⁿ⁺¹ − pⁿ)` (§14.2), against `m2r`, the same max over the regular faces of the same mesh — NOT `m1/m3`, which compares two totals dominated by the solver's spatial error at every dt | (G), N = 32/64, CFL ladder | `ε_cf/m2r ≥ 0.3` at the largest time-accurate dt (the largest CFL at which (U)'s m3 is within 2× of its CFL-0.5 value — CFL 1 at both N) ⇒ build (B); else park. **Measured 2026-09-23: 4.0e-3 (N = 32), 2.2e-3 (N = 64) ⇒ park.** |
+| **S** scaling | `ε_cf` on (G), same instrument | fixed h, dt halving; fixed CFL, h halving | order 2 in dt at CFL ≤ 1 (**measured 2.00 / 2.07 at N = 32, 2.02 at N = 64**); in h at fixed CFL, within 1.5× of the same instrument applied to the exact `φ` (**measured 1.44× / 1.43×**). A measured dt-order of 1 would have meant the leak is `∝ dt` and §1 fails — it did not. |
+
+And the §9 prediction reads, corrected: *at CFL ≤ 2, `ε_cf/m3 < 0.1` on (G)* — measured 0.020 at
+CFL 2, 0.0068 at CFL 1. The "m1 reaches m3 only at CFL ≳ 8" clause was wrong in both directions:
+the leak never reaches m3 in this flow (4 % at CFL 8), because the Taylor–Green pressure evolves at
+the viscous rate `4νk²` while the solver's own time error above CFL 2 is the splitting error of the
+convective term, which is far larger than the `dt·|∂_t u|` I quoted in §1. The §1 conclusion is
+unchanged; the estimate of the competitor was too small, which only widens the margin.
+
+**What to keep of m5.** Nothing as a gate. The driver's `m5`/`m5inf` columns can stay as the
+max-over-L2 shape statistics they actually are, but the ctest gate should carry the corrected W as
+a regression bound on the leak: `ε_cf/m2r ≤ 0.05` on (G) at N = 32, CFL 1 (today 4.0e-3; a 12×
+margin, so it trips only on a real change to the C/F pressure gradient). That needs `pressure()`
+before and after the final step in `run()` and the LS-gradient evaluation of §14.2 in `metrics()`
+— `tg_leak.py` has both, ~40 lines.
+
+### 14.4 The (G)−(C) gap (`amr_tg_graded.md` §6): neither the normal-offset term nor an initial transient
+
+Two facts rule out both candidates the brief puts forward, and a third narrows what remains.
+
+**(a) It is dt-flat, so it is not `∝ φ`.** The gap in m3 at N = 32 is 6.233 / 6.198 / 6.204e-2
+against C at CFL 0.25 / 0.5 / 1 — flat to 0.5 % while `φ` moves 16×. The §5.4 normal-offset term
+is `∝ φ ∝ dt²` — my own risk 7 says so — and §14.2 has now measured *everything* `∝ φ` at the C/F
+faces at 4e-4 at CFL 1, sixty times below the 2.5e-2 shape excess. §5.4 is also about what (B)
+would *leave behind* in `G_q`; `G_q` is not in today's `uf` at all. The standing suspect is wrong,
+and `amr_tg_graded.md` §6 should stop naming it.
+
+**(b) It grows over the first convective time, so it is not the t = 0 projection.** Horizon ladder,
+N = 32, CFL 0.5, the G-only shape excess taken in quadrature over C:
+
+| horizon | steps | G shape | C shape | **G-only excess** | G 1−amp | C 1−amp |
+|---|---|---|---|---|---|---|
+| 1 step | 1 | 8.15e-3 | 7.17e-3 | 3.9e-3 | 5.25e-3 | 5.24e-3 |
+| N/16 | 4 | 8.45e-3 | 2.41e-3 | 8.1e-3 | 8.84e-3 | 8.86e-3 |
+| N/4 | 16 | 1.69e-2 | 4.53e-3 | 1.63e-2 | 1.96e-2 | 1.89e-2 |
+| N/2 | 32 | 2.31e-2 | 6.04e-3 | 2.23e-2 | 3.34e-2 | 3.14e-2 |
+| N | 64 | 2.73e-2 | 7.11e-3 | 2.63e-2 | 5.90e-2 | 5.40e-2 |
+| 2N | 128 | 2.60e-2 | 6.66e-3 | 2.51e-2 | 1.02e-1 | 9.23e-2 |
+| 4N | 256 | 2.34e-2 | 4.61e-3 | 2.29e-2 | 1.66e-1 | 1.49e-1 |
+
+The first step puts ~7–8e-3 of shape error on *both* meshes — that is the driver's missing
+`set_pressure` (§9 asked for it): step 1 runs the predictor without `−G pⁿ` and the projection has
+to manufacture the whole pressure; C cleans it up within four steps (7.2e-3 → 2.4e-3). What is
+G-specific after one step is 3.9e-3, and it then grows at a decreasing rate (1.4e-3, 0.7e-3,
+0.4e-3, 0.1e-3 per step over steps 2–4, 5–16, 17–32, 33–64) to a plateau of 2.5–2.6e-2 at one
+convective time. That is a **persistent per-step source balanced by decay**; the initial transient
+is at most 15 % of it.
+
+**(c) It lives in the convective term and is insensitive to the advecting velocity.** N = 32,
+CFL 0.5, T = 2N; the G-only shape excess in quadrature, and the extra amplitude loss G − C:
+
+| variant | G shape | C shape | **G-only excess** | (1−amp)_G − (1−amp)_C | m3 G/C |
+|---|---|---|---|---|---|
+| shipped (SOU, implicit, `uf`, cf = quadratic) | 2.595e-2 | 6.664e-3 | 2.51e-2 | 9.7e-3 | 1.21 |
+| Koren limiter | 2.269e-2 | 7.377e-3 | 2.15e-2 | 3.7e-3 | 1.15 |
+| explicit advection | 2.567e-2 | 6.954e-3 | 2.47e-2 | 9.6e-3 | 1.20 |
+| advecting velocity = un-projected ½(u_i+u_j) (`set_uf_advection(False)`) | 2.654e-2 | 6.605e-3 | 2.57e-2 | 1.1e-2 | 1.23 |
+| cf = standard | 2.601e-2 | 6.664e-3 | 2.51e-2 | 2.6e-2 | 1.37 |
+| **advection off** (Stokes TG, p ≡ 0) | 2.646e-3 | 2.5e-16 | 2.65e-3 | 1.0e-3 | 1.58 |
+
+Two different things are in the §6 gap. The **amplitude** excess (extra dissipation) is the C/F
+fluxes' numerical viscosity and responds to every knob that touches it: the quadratic scheme
+halves it against standard (2.6e-2 → 9.7e-3), Koren halves it again (3.7e-3). The **shape** excess
+is structural: 2.15–2.57e-2 whatever the limiter, the time treatment, the advecting face velocity
+or the C/F interpolation order, and 2.65e-3 — ten times less — without the convective term (where
+C keeps the Taylor–Green mode an exact eigenmode of the discrete Laplacian, shape 2.5e-16, and the
+interface alone breaks it). In the 2-D Taylor–Green `(u·∇)u = −∇p` pointwise, so what survives at
+the interface is the part of the discrete convective-flux divergence at the interface cells that
+the discrete pressure gradient there does not cancel and the projection does not remove — the
+classical result that a locally second-order flux whose error does not telescope across a 2:1
+face is a first-order source on a codimension-1 set, `O(h²)` globally (shape order 1.84 on 32 → 64;
+the 16 → 32 rung, 1.07, is pre-asymptotic at a four-cell shell radius). Its constant is what §6
+found: ~3× the coarse bulk's own shape error at N = 32 and 64 (3.8×, 3.0×), on a flow with no
+feature in the shell, so nothing is bought back.
+
+**The ROADMAP item** (replacing the §6 attribution): *"2:1 interface truncation constant. On a
+smooth flow the graded solver's shape error is ~3× the unrefined coarse mesh's, dt-independent,
+order ≈ 2, present only with the convective term, insensitive to the advecting face velocity
+(projected or not), the limiter, implicit/explicit advection and the C/F interpolation order
+(`amr_pressure_iteration.md` §14.4). Not the pressure-increment leak (measured 60× smaller), not
+the initial projection (≤ 15 %). Candidate terms: the advected-value reconstruction at the 2:1
+sub-face and the momentum C/F delta's convective part, versus the interface cells' gradient of the
+full pressure; the ablations do not separate these two because in Taylor–Green they are the same
+field. Next step: an a-priori truncation test on the attractor (load the exact fields, take ~4
+steps at CFL 0.5 so the first-step transient is gone, then one step with `set_pressure(exact)` and
+advection on / off, and read `(u¹ − u⁰)/dt − ∂_t u_exact` on the interface layer against the bulk
+for each) to name the term before any scheme is designed. Priority: low–medium — a constant, not
+an order; in a bed the refined band sits on cut cells, where resolution is bought, and the
+interface error competes with the cut-cell error rather than with nothing."* The Stokes residual
+(2.65e-3 shape from the viscous/projection interface alone, 1.4× C's total error there) belongs in
+the same item as its floor.
+
+If only one discriminating run is to be spent, it is the **one-step probe with `set_pressure`,
+advection on vs off, after four warm-up steps** described above — sub-second at N = 32, and it is
+the one experiment in this list that can split the convective flux from the pressure gradient. The
+horizon ladder and the five ablations are already done and need not be repeated.
+
+### 14.5 Corrections owed to `amr_tg_graded.md` and the driver (none blocks the verdict)
+
+1. **§5 (gate W)**: replace the "flat in dt" argument by the direct measurement of §14.2 and the
+   corrected row of §14.3. The argument as written is an upper bound (≤ 2 % of m1 over CFL ≤ 1) and
+   is correct; the measurement is 0.4 %, with the dt-order that gate S wanted.
+2. **§4 (3)**: "m1 falls with refinement … disposes of" — m1 is the total; say instead that the leak
+   itself falls 5.8× per doubling at fixed CFL (§14.2).
+3. **§6**: drop the normal-offset attribution and the "belongs on the ROADMAP as its own item"
+   sentence in favour of the item in §14.4.
+4. **Driver**: add `set_pressure(exact p₀)` as §9 specified — the horizon ladder shows step 1 is an
+   impulsive pressure start on both arms (7–8e-3 of shape error, cleaned up by step 4 on C). It does
+   not touch the T = 2N rows measurably, but the gate rows are cleaner with it, and the one-step
+   probe of §14.4 needs it. Add the leak instrument as m7 with the ctest bound of §14.3.
+5. **§3 table caption "time-converged"** is right for what it claims (0.7 % / 2.7 % on halving dt);
+   note that the *time-accurate* dt by §9's own rule is CFL 1, not 0.5 — U's m3 is 1.43× (N = 32)
+   and 1.96× (N = 64) its CFL-0.5 value there — which is where gate W is evaluated.
+
+The two deliberate deviations from §9 (horizon 2N; the third arm C) are both improvements: the
+first makes every CFL divide the horizon at every N, the second is what made §6 and §14.4 possible.
+`refine_to_sphere` giving two C/F surfaces (a shell) rather than one (a ball) doubles the interface
+and is harmless for every conclusion here.
+
+### 14.6 Not examined
+
+The `face_topology()` binding, the ctest registration and argument parsing (per the brief); the
+(B) design of §6–§8 (unchanged by anything here); the N = 64 rows beyond the two leak measurements
+above; `peclet.flow` and the cut-cell items. The `m1`/`m2r`/`m3`/shape/amplitude computations in
+`tests/study/amr_tg_graded.py` were read and match their definitions (the sub-face sample point is
+the finer cell's face centre; the amplitude is the volume-weighted least-squares fit; the shape is
+the residual of that fit).

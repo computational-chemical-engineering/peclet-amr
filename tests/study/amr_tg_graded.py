@@ -63,6 +63,13 @@ def exact(c, t, N):
             np.zeros_like(x))
 
 
+def pexact(c, t, N):
+    """Exact pressure at world points `c` and time `t` (rho = 1, so p is in velocity-squared)."""
+    k = 2.0 * np.pi / N
+    return (RHO * U0 ** 2 / 4.0) * (np.cos(2 * k * c[..., 0]) + np.cos(2 * k * c[..., 1])) \
+        * np.exp(-4.0 * (MU / RHO) * k * k * t)
+
+
 def build(arm, N, dt, cf_scheme):
     """Octree + Flow for one arm, initialised to the t = 0 Taylor-Green field."""
     lmax = 0 if arm == "U" else 1
@@ -82,11 +89,45 @@ def build(arm, N, dt, cf_scheme):
     f.set_velocity(0, u)
     f.set_velocity(1, v)
     f.set_velocity(2, w)
+    # Without this the first step is an impulsive pressure start on every arm: the predictor runs
+    # without -G p^n and the projection has to manufacture the whole pressure in one go
+    # (docs/amr_pressure_iteration.md §14.4(b) measures 7-8e-3 of shape error from it).
+    f.set_pressure(pexact(c, 0.0, N))
     return o, f
 
 
-def metrics(o, f, t, N):
-    """m1..m5 of §9 at time `t`."""
+def leak(o, f, phi, N):
+    """eps_cf: the pressure-increment leak at the 2:1 sub-faces, max |Delta_G phi| over them.
+
+    The face gradient in uf is the compact two-point (phi_C - phi_F)/d; at a 2:1 face the two
+    centres are offset TANGENTIALLY as well, so the face value carries
+    Delta_G phi = (tangential offset) . grad phi / d.  grad phi is a least-squares fit over the
+    coarse cell's own face neighbours; d = 1.5 h_fine.  This is the quantity gate W of
+    docs/amr_pressure_iteration.md §14.3 is stated on -- not m1, which is the TOTAL face error.
+    """
+    c, lev, wid = o.centers(), o.levels(), o.sizes(0)
+    top = f.diagnostics.face_topology()
+    start, nbr, axis = top["start"], top["nbr"], top["axis"]
+    own = np.repeat(np.arange(o.num_leaves), np.diff(start))
+    cf = lev[own] != lev[nbr]
+    if not cf.any():
+        return 0.0
+    coarse = np.where(lev[nbr] > lev[own], nbr, own)[cf]
+    fine = np.where(lev[nbr] > lev[own], own, nbr)[cf]
+    ax = axis[cf]
+    off = (c[fine] - c[coarse] + N / 2.0) % N - N / 2.0     # periodic minimum image
+    off[np.arange(len(ax)), ax] = 0.0                       # tangential part only
+    uc, ci = np.unique(coarse, return_inverse=True)
+    g = np.zeros((len(uc), 3))
+    for n, i in enumerate(uc):
+        js = nbr[start[i]:start[i + 1]]
+        dx = (c[js] - c[i] + N / 2.0) % N - N / 2.0
+        g[n] = np.linalg.lstsq(dx, phi[js] - phi[i], rcond=None)[0]
+    return float(np.abs((off * g[ci]).sum(axis=1) / (1.5 * wid[fine])).max())
+
+
+def metrics(o, f, t, N, phi=None):
+    """m1..m7 of §9 / §14.3 at time `t`."""
     c = o.centers()
     lev = o.levels()
     wid = o.sizes(0)
@@ -126,12 +167,13 @@ def metrics(o, f, t, N):
     m2 = float(d.max())
     m2r = float(d[~cf].max())
     m4 = float(f.diagnostics.divergence_norm_face())
+    m7 = leak(o, f, phi, N) if phi is not None else 0.0
     # Where the cell error lives: cells with a 2:1 face of their own vs the rest.
     touch = np.zeros(o.num_leaves, bool)
     touch[own[cf]] = True
     m3cf, m3bulk = l2(touch), l2(~touch)
     return dict(m1=m1, m2=m2, m2r=m2r, m3=m3, m3cf=m3cf, m3bulk=m3bulk,
-                amp=amp, m3shape=m3shape,
+                amp=amp, m3shape=m3shape, m7=m7, m7r=m7 / m2r if m2r else float("nan"),
                 cf_cells=int(touch.sum()), m3inf=m3inf, m4=m4,
                 m6=m1 / m2r if m2r else float("nan"),
                 m5=m1 / m3 if m3 else float("nan"),
@@ -148,10 +190,13 @@ def run(arm, N, cfl, turnovers, cf_scheme, pres_tol):
     if pres_tol:
         f.set_pressure_tolerance(pres_tol)
     t0 = time.perf_counter()
-    for _ in range(nsteps):
+    for _ in range(nsteps - 1):
         f.step()
+    p0 = np.array(f.pressure())
+    f.step()                                  # phi of the LAST step drives the leak instrument
+    phi = (dt / RHO) * (np.array(f.pressure()) - p0)
     wall = time.perf_counter() - t0
-    r = metrics(o, f, T, N)
+    r = metrics(o, f, T, N, phi)
     r.update(arm=arm, N=N, cfl=cfl, dt=dt, T=T, steps=nsteps, cf_scheme=cf_scheme,
              wall=wall, pres_iters=int(f.diagnostics.last_pres_iters()))
     return r
@@ -159,20 +204,20 @@ def run(arm, N, cfl, turnovers, cf_scheme, pres_tol):
 
 HDR = (f"{'arm':>4} {'N':>4} {'CFL':>6} {'steps':>6} {'leaves':>8} "
        f"{'m1 (C/F uf)':>12} {'m2r (reg uf)':>12} {'m3 (L2 cell)':>12} "
-       f"{'m3 @C/F':>10} {'m3 shape':>10} {'1-amp':>9} {'m4 div(uf)':>11} {'m5':>7} {'m5inf':>7} {'m6':>6} {'wall s':>7}")
+       f"{'m3 @C/F':>10} {'m3 shape':>10} {'1-amp':>9} {'m4 div(uf)':>11} {'m5':>7} {'m6':>6} {'eps_cf':>10} {'eps/m2r':>9} {'wall s':>7}")
 
 
 def line(r):
     return (f"{r['arm']:>4} {r['N']:>4} {r['cfl']:>6g} {r['steps']:>6} {r['leaves']:>8} "
             f"{r['m1']:>12.4e} {r['m2r']:>12.4e} {r['m3']:>12.4e} {r['m3cf']:>10.3e} {r['m3shape']:>10.3e} {1 - r['amp']:>9.2e} "
-            f"{r['m4']:>11.3e} {r['m5']:>7.3f} {r['m5inf']:>7.3f} {r['m6']:>6.3f} {r['wall']:>7.1f}")
+            f"{r['m4']:>11.3e} {r['m5']:>7.3f} {r['m6']:>6.3f} {r['m7']:>10.3e} {r['m7r']:>9.2e} {r['wall']:>7.1f}")
 
 
 def gate():
     """The regression gate (ctest `python_amr_tg_graded`, label `bench`): the three facts of
     docs/amr_tg_graded.md that a change to the graded solver must not break.  ~20 s."""
     rows = [run("G", N, cfl, 2.0, "quadratic", 0.0)
-            for N in (16, 32) for cfl in (0.5, 2.0)]
+            for N in (16, 32) for cfl in (0.5, 1.0, 2.0)]
     rows += [run("U", 32, 0.5, 2.0, "quadratic", 0.0)]
     print(HDR)
     for r in rows:
@@ -187,14 +232,32 @@ def gate():
     for r in rows:
         if r["arm"] == "G" and r["m6"] > 1.1:
             bad.append(f"m1/m2r = {r['m6']:.3f} > 1.1 at N={r['N']} CFL={r['cfl']:g}")
-    # (3) The graded solver is second order in h against the exact unsteady solution.
+    # (3) Gate W of docs/amr_pressure_iteration.md §14.3: the pressure-increment leak at the 2:1
+    # sub-faces, against the worst face error the solver makes at an ORDINARY face of the same mesh,
+    # at the largest time-accurate dt (CFL 1). 4.0e-3 when this was written; the bound is 12x that,
+    # so it trips only on a real change to the C/F pressure gradient, never on solver noise.
+    for r in rows:
+        if r["arm"] == "G" and r["cfl"] == 1.0 and r["m7r"] > 0.05:
+            bad.append(f"eps_cf/m2r = {r['m7r']:.3e} > 0.05 at N={r['N']} CFL=1")
+    # (4) The graded solver still converges, and to the same answer. Second order is a 32 -> 64
+    # statement (measured 2.07, docs/amr_tg_graded.md §3); the 16 -> 32 rung the gate can afford is
+    # PRE-ASYMPTOTIC -- the shell is four cells across there -- and reads ~1.05, so the gate floors
+    # it at 0.9 and pins the levels themselves instead.
     for cfl in (0.5, 2.0):
         a = next(r for r in rows if r["arm"] == "G" and r["N"] == 16 and r["cfl"] == cfl)
         b = next(r for r in rows if r["arm"] == "G" and r["N"] == 32 and r["cfl"] == cfl)
         o = np.log2(a["m3"] / b["m3"])
-        print(f"# graded m3 order 16->32 at CFL {cfl:g}: {o:.2f}")
-        if o < 1.8:
-            bad.append(f"graded m3 order {o:.2f} < 1.8 at CFL {cfl:g}")
+        print(f"# graded m3 order 16->32 at CFL {cfl:g}: {o:.2f} (pre-asymptotic; 2.07 at 32->64)")
+        if o < 0.9:
+            bad.append(f"graded m3 order {o:.2f} < 0.9 at CFL {cfl:g}")
+    # (5) The error levels themselves, +-5 % of what docs/amr_tg_graded.md §3 records. Wide enough
+    # for a compiler or thread-count change, narrow enough that a numerics change has to say so.
+    for arm, N, cfl, ref in (("G", 16, 0.5, 1.2900e-01), ("G", 32, 0.5, 6.0236e-02),
+                             ("G", 32, 1.0, 5.5160e-02), ("U", 32, 0.5, 5.7998e-03)):
+        r = next(x for x in rows if x["arm"] == arm and x["N"] == N and x["cfl"] == cfl)
+        if abs(r["m3"] / ref - 1.0) > 0.05:
+            bad.append(f"m3 = {r['m3']:.4e} is {100 * (r['m3'] / ref - 1):+.1f} % off the recorded "
+                       f"{ref:.4e} at arm {arm} N={N} CFL={cfl:g}")
     for b in bad:
         print(f"FAIL: {b}")
     return 1 if bad else 0

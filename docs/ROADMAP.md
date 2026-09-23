@@ -142,15 +142,19 @@ refined mesh, which is the entire point of the package.
   C/F treatment alone: max error 0.375 → 0.09375 across a 32 → 64 refinement, exactly ÷4, with the
   fine region (walls included) exact and the whole error in the coarse cells. Open rungs, in order:
   the **tangential** interface orientation (where `set_cf_scheme('quadratic')` can actually act —
-  it is inert by construction on the normal orientation, and correctly so); a smooth **NS** ladder
-  on a graded mesh, since Poiseuille's projection is a no-op and so covers neither advection nor
-  the projection; and a genuinely **mixed-level** cut band via `refine_to_sdf_graded` +
-  `set_ghost_sampled`, whose accuracy is unmeasured since the A5 fix.
-- **B2 — an unsteady NS test.** Carried open in `amr_collocated_projection.md` since 2026-07-22:
-  every steady case in the tree is `uf`-invariant by construction, so nothing currently exercises
-  the conservation benefit that motivated the `uf` advection. A decaying Taylor–Green or a shedding
-  case, checking tracer/energy conservation. The parity harness now gives this a free oracle at
-  `lmax = 0` (§A), which is how it should be built: match `flow` uniform first, then refine.
+  it is inert by construction on the normal orientation, and correctly so); and a genuinely
+  **mixed-level** cut band via `refine_to_sdf_graded` + `set_ghost_sampled`, whose accuracy is
+  unmeasured since the A5 fix. The **smooth NS rung is DONE 2026-09-23** — see B2.
+- **B2 — an unsteady NS test on a graded mesh** — **DONE 2026-09-23**
+  (`docs/amr_tg_graded.md`, driver `tests/study/amr_tg_graded.py`, gate ctest
+  `python_amr_tg_graded`). Open in `amr_collocated_projection.md` since 2026-07-22. A decaying
+  Taylor–Green vortex with advection on, against its exact solution, on three meshes: uniform fine
+  (U), uniform coarse (C), and the graded mesh (G) that IS C with a spherical shell refined — so
+  G − C prices the 2:1 interface by itself. **The graded solver is second order in an unsteady
+  flow: 2.07 in the volume velocity error on the 32 → 64 rung**, 1.82 in the interface-generated
+  part. `div(uf)` stays ≤ 4e-12 over hundreds of advecting steps on a mesh with ~7 000 2:1
+  sub-faces, which is the conservation benefit B2 was opened to exercise. It also settled the
+  pressure-iteration question (§B4).
 - **B3 — sub-face closures** (`amr_mixed_level_cut_band_plan.md` §8a, risk register). Bounded, not
   retired: 0.20 % of rows at depth 7, 1.57 % at depth 8. An accuracy item with an open design fork,
   not a stability blocker. **It has acquired a second reason to exist** (`amr_cf_flux_gate.md` §5
@@ -161,6 +165,31 @@ refined mesh, which is the entire point of the package.
   it: if the policy error moves by less than the ghost scheme's own 0.2–0.3 % bias, the O(h)-on-a-
   curve loss is below the noise and C is not worth its cost (a change inside `ghost_projection*.hpp`,
   a new invisible-subspace analysis, and a re-run of the whole throat ladder).
+
+- **B4 — the deferred-corrected C/F pressure gradient (option B)** — **DESIGNED, PARKED
+  2026-09-23.** Design `amr_pressure_iteration.md` §6–§8, verdict §14. The worry was that the
+  advecting face velocity at a 2:1 sub-face carries a tangential leak of the pressure increment
+  that the standard pressure matrix cannot cancel. Measured directly on the benchmark, the leak is
+  **1.0e-4 at N = 32, CFL 0.5 — four parts in a thousand of the face error the solver makes anyway
+  — and it is O(dt²)**, so it shrinks twice as fast as the time step (gate S, answered at last).
+  The gate as originally written (`m1/m3 ≥ 0.3`) fired for an unrelated reason and is re-spelled in
+  §14.3 on the leak itself. (B) is a designed, unbuilt option; its trigger is a consumer running a
+  graded octree at `dt ≫` CFL with an evolving pressure (a scalar-transport or coupling driver),
+  not this benchmark. Nothing to do until then.
+
+- **B5 — the 2:1 interface truncation constant.** **NEW 2026-09-23**, from B2's control arm. On a
+  smooth flow the graded mesh's *shape* error is ~3× the unrefined coarse mesh's — enough that the
+  refined shell makes the answer 1.56× worse than not refining it at all (`amr_tg_graded.md` §4(6)).
+  It is dt-independent, converges at order ≈ 2 (so a constant, not an order loss), is present only
+  with the convective term, and is insensitive to the limiter, implicit/explicit advection, the
+  advecting face velocity and the C/F interpolation order — i.e. it is the convective flux's
+  non-telescoping truncation at the 2:1 face, a first-order source on a codimension-1 set. It is
+  **not** the pressure-increment leak (60× too small) and **not** the initial projection (≤ 15 %).
+  `amr_pressure_iteration.md` §14.4 has the ablation table and names the one experiment that would
+  identify the term: a one-step a-priori probe with `set_pressure(exact)` after four warm-up steps,
+  advection on vs off, reading the interface layer against the bulk. Priority **low–medium**: a
+  constant, and in a bed the refined band sits on cut cells where the resolution is genuinely
+  bought, so it competes with the cut-cell error rather than with nothing.
 
 - **A7 — the C/F face-value delta is gated per FACE** — **DONE 2026-09-22.** `buildCfDivDelta` was
   gated per CELL (`rowRegular`) and `buildCfUfDelta` per face-pair fluidity, so at a 2:1 sub-face

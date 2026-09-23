@@ -53,8 +53,9 @@ export PATH=/usr/local/cuda-13.2/bin:$PATH                 # for the nvidia-cuda
 ```
 
 **Counts** (host-openmp): **96** C++ ctests (28 single-rank + 17 distributed binaries × np = 1, 2,
-4, 8) + 5 `bench` (four `study_amr_*` + `bench_amr_flow`) + 4 `python` (`python_amr`,
-`python_amr_np2`, `python_state_hash`, `python_flow_parity`) = 105. (92 / 101 until 2026-09-21,
+4, 8) + 5 `bench` (four `study_amr_*` + `bench_amr_flow`) + 5 `python` (`python_amr`,
+`python_amr_np2`, `python_state_hash`, `python_flow_parity`, `python_amr_tg_graded` — the last
+also carries the `bench` label, so `-LE bench` runs 4 of them) = 106. (92 / 101 until 2026-09-21,
 when `amr_distributed_cf` — the distributed C/F quadratic scheme — added a 17th distributed
 binary.) The battery was 92 + 2 Python ctests in core's `build_rel_k` / `build_rel_py` before the
 move and reproduces here test for test.
@@ -80,6 +81,16 @@ SKIPS the gate with exit 77 — CI shows it skipped — because the last bits of
 toolchain-specific; `-O0` vs `-O3` alone changes them through FMA contraction). Any structural
 change must leave every hash identical on the recording toolchain; a numerics change re-records the
 reference (`--save`) in its own commit and says so.
+
+**The graded time-accurate gate** (`tests/study/amr_tg_graded.py --gate`, ctest
+`python_amr_tg_graded`, `docs/amr_tg_graded.md`): a decaying Taylor-Green vortex with advection on,
+against its exact solution, on a graded octree. Four facts in ~45 s: the advecting face field is
+still a conservative flux there (`div(uf) <= 1e-9`), the pressure-increment leak at the 2:1
+sub-faces stays under 5 % of the regular faces' own error (gate W of
+`docs/amr_pressure_iteration.md` §14.3 — today 0.4 %), a 2:1 sub-face is not a worse place for the
+advecting velocity than an ordinary one, and the error levels themselves are within 5 % of what
+`amr_tg_graded.md` §3 records. Labelled `bench` — it runs with the studies, not in the default
+battery.
 
 **The uniform-grid parity gate** (`tests/study/flow_parity/parity_gate.py`, ctest
 `python_flow_parity`, `docs/amr_flow_uniform_parity.md`): at `lmax = 0` the octree IS the
@@ -173,7 +184,9 @@ Header-only under `include/peclet/amr/` (namespace `peclet::amr`; `common.hpp` c
   `amr_flow_uniform_parity.md` (what this solver shares with `peclet.flow`'s collocated solver at
   `lmax = 0`, measured cell by cell, and the two places it does not),
   `amr_collocated_projection.md` (the collocated projection + `uf`
-  advection), `amr_mixed_level_cut_band_plan.md`, `amr_setup_parallel_plan.md` (the parallel
+  advection), `amr_tg_graded.md` (the graded time-accurate benchmark: second order in an unsteady
+  flow, and why the C/F pressure-increment leak does not need fixing) with its design/verdict note
+  `amr_pressure_iteration.md`, `amr_mixed_level_cut_band_plan.md`, `amr_setup_parallel_plan.md` (the parallel
   builders, D1′), `amr_anisotropic.md` (per-axis root spacing). The dated campaign records are in
   `docs/archive/` behind its README index — `amr_march_perf_and_distributed_plan.md` (march economics
   + the distributed band; its status table names the two items still open), `amr_distributed_flow.md`,
