@@ -41,14 +41,15 @@ endforeach()
 # amr_momentum_assembly  device momentum (cut-cell + FOU advection) assembly
 # amr_facegeom       device face-geometry assembly
 # amr_multigrid      device multigrid V-cycle
+# amr_mg_lift        the level below the root brick (root lift) vs the deeper-tree emulation
 # amr_fv_openness    device openness-folded operator
 # amr_kappa_restrict / amr_kappa_dirichlet  kappa restriction / Dirichlet closure on device
 # amr_pcg            MG-preconditioned CG over the device V-cycle
 # amr_momentum       device momentum operator + BiCGStab vs the host AmrCutCell
 # amr_flow_solver    the device AmrFlow step vs the host oracle + analytic solutions
 foreach(t IN ITEMS block_octree_view amr_fv_op amr_assembly amr_momentum_assembly amr_facegeom
-                   amr_multigrid amr_fv_openness amr_kappa_restrict amr_kappa_dirichlet amr_pcg
-                   amr_momentum amr_flow_solver)
+                   amr_multigrid amr_mg_lift amr_fv_openness amr_kappa_restrict amr_kappa_dirichlet
+                   amr_pcg amr_momentum amr_flow_solver)
   _amr_test_exe(test_${t})
   peclet_amr_add_test(${t} test_${t})
 endforeach()

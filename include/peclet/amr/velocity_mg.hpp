@@ -63,7 +63,11 @@ class VelocityMG {
              const MomentumOp& fineOp, const std::vector<double>& kappa,
              const std::vector<char>& fluid, const std::vector<char>& cut, Index minCoarse = 256) {
     hmg_ = std::make_unique<AmrMultigrid<3, Bits>>();
-    hmg_->build(finest, h0);  // octree hierarchy + per-level AmrPoisson (periodicNeighbor etc.)
+    // liftRoot = false: the momentum hierarchy is NOT continued below the root brick here.
+    // docs/amr_mg_depth.md §12 / WO8 — the guard is `minCoarse` (a staircase-classified feature
+    // vanishes when coarsened below its scale), a property of the momentum operator, not of the
+    // root; until that work order lands this keeps the momentum path bit-identical.
+    hmg_->build(finest, h0, /*liftRoot=*/false);  // octree hierarchy + per-level AmrPoisson
     std::size_t nl = hmg_->numLevels();
     while (nl > 1 && hmg_->op(nl - 1).octree().numLeaves() < minCoarse)
       --nl;  // pore-scale cap

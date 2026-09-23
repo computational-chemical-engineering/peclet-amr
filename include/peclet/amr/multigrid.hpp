@@ -123,10 +123,15 @@ class Multigrid {
   /// Build + upload the hierarchy from a finest octree (uniform coarsening), openness-
   /// free. `h0` is the finest spacing (every level shares it; a coarse leaf's higher
   /// `level` encodes its width).
-  void build(const Octree& finest, double h0) { build(finest, detail::filledVec<Dim>(h0)); }
-  void build(const Octree& finest, const Vec<Dim>& h0) {
+  /// `liftRoot` / `bottomExtent` continue the ladder BELOW the root brick
+  /// (docs/amr_mg_depth.md §6.1–§6.2); they are simply forwarded to AmrMultigrid::build.
+  void build(const Octree& finest, double h0, bool liftRoot = true, Index bottomExtent = 4) {
+    build(finest, detail::filledVec<Dim>(h0), liftRoot, bottomExtent);
+  }
+  void build(const Octree& finest, const Vec<Dim>& h0, bool liftRoot = true,
+             Index bottomExtent = 4) {
     hmg_ = std::make_unique<AmrMultigrid<Dim, Bits>>();
-    hmg_->build(finest, h0);
+    hmg_->build(finest, h0, liftRoot, bottomExtent);
     buildFromHostMg();
   }
 
@@ -136,14 +141,15 @@ class Multigrid {
   /// coarsened aperture, so the coarse operators stay consistent cut-cell operators.
   template <class OpenFn>
   void build(const Octree& finest, double h0, OpenFn&& openFn, bool periodic = true,
-             bool immersedWall = false) {
-    build(finest, detail::filledVec<Dim>(h0), std::forward<OpenFn>(openFn), periodic, immersedWall);
+             bool immersedWall = false, bool liftRoot = true, Index bottomExtent = 4) {
+    build(finest, detail::filledVec<Dim>(h0), std::forward<OpenFn>(openFn), periodic, immersedWall,
+          liftRoot, bottomExtent);
   }
   template <class OpenFn>
   void build(const Octree& finest, const Vec<Dim>& h0, OpenFn&& openFn, bool periodic = true,
-             bool immersedWall = false) {
+             bool immersedWall = false, bool liftRoot = true, Index bottomExtent = 4) {
     hmg_ = std::make_unique<AmrMultigrid<Dim, Bits>>();
-    hmg_->build(finest, h0);
+    hmg_->build(finest, h0, liftRoot, bottomExtent);
     hmg_->setOpenness(std::forward<OpenFn>(openFn));
     hmg_->setPeriodic(periodic);          // non-periodic ⇒ homogeneous Dirichlet domain walls
     hmg_->setImmersedWall(immersedWall);  // true ⇒ velocity operator (solid faces = no-slip walls)

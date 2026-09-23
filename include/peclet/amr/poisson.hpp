@@ -637,13 +637,41 @@ class AmrMultigrid {
   using M = typename Octree::M;
   using Code = typename Octree::Code;
 
+  /// The single-rank lift rule of docs/amr_mg_depth.md §6.2, evaluated on one level: may the
+  /// hierarchy continue BELOW this level by lifting its root? `G` is the level's root brick.
+  /// Stops when the level is already small enough for the bottom smoother to be exact
+  /// (max extent <= bottomExtent), when the grid cannot halve into a cube level
+  /// (odd extent, or fewer than two cells left on an axis), or when the block itself cannot
+  /// lift (odd brick or odd global origin — trivially satisfied single-rank, origin 0).
+  static bool canLiftLevel(const Octree& t, Index bottomExtent) {
+    const IVec<Dim>& G = t.brick();
+    Index mx = 0;
+    for (int d = 0; d < Dim; ++d)
+      mx = std::max(mx, G[d]);
+    if (mx <= bottomExtent)
+      return false;
+    for (int d = 0; d < Dim; ++d)
+      if ((G[d] % 2) != 0 || (G[d] / 2) < 2)
+        return false;
+    return t.canLiftRoot();
+  }
+
   /// Build the hierarchy from a finest octree by uniform coarsening until a single
-  /// leaf remains (or no full sibling group can be merged).
-  void build(const Octree& finest, Real h0) { build(finest, detail::filledVec<Dim>(h0)); }
+  /// leaf remains (or no full sibling group can be merged), then — with `liftRoot` —
+  /// CONTINUE BELOW THE ROOT BRICK by lifting the root (docs/amr_mg_depth.md §6.1–§6.2):
+  /// each further level is the level above with its brick halved and `lmax` incremented, so
+  /// every former root cell acquires siblings and `coarsenIf` merges one octet more. The leaf
+  /// codes are untouched by a lift, so a lifted level is bit-for-bit the level a deeper tree
+  /// on the same mesh would have produced. `bottomExtent` is where the ladder stops because
+  /// the bottom smoother is exact there (§6.6).
+  void build(const Octree& finest, Real h0, bool liftRoot = true, Index bottomExtent = 4) {
+    build(finest, detail::filledVec<Dim>(h0), liftRoot, bottomExtent);
+  }
   /// Phase 3: every level shares the same PER-AXIS finest spacing — a coarse leaf carries a
   /// higher `level`, and `cellWidth = h0[d]*2^level` already encodes its width on each axis, so
   /// the root aspect ratio is inherited by the whole hierarchy (`docs/amr_anisotropic.md` AM1).
-  void build(const Octree& finest, const Vec<Dim>& h0) {
+  void build(const Octree& finest, const Vec<Dim>& h0, bool liftRoot = true,
+             Index bottomExtent = 4) {
     levels_.clear();
     levels_.push_back(finest);
     for (;;) {
@@ -654,6 +682,19 @@ class AmrMultigrid {
       levels_.push_back(c);
       if (c.numLeaves() == 1)
         break;
+    }
+    // Below the root brick: lift and merge while §6.2 allows it. Every leaf is a root cell here
+    // (the octree loop ran to exhaustion), and an even brick with an even origin tiles complete
+    // octets, so the coarsenIf after a lift merges ALL of them.
+    if (liftRoot) {
+      while (canLiftLevel(levels_.back(), bottomExtent)) {
+        Octree c = levels_.back();
+        c.liftRoot();
+        const Index merged = c.coarsenIf([](Code, unsigned) { return true; });
+        if (merged == 0 || c.numLeaves() == levels_.back().numLeaves())
+          break;  // defensive: a level that did not shrink would stall the ladder
+        levels_.push_back(std::move(c));
+      }
     }
     ops_.resize(levels_.size());
     // All levels share the finest h0: a coarse octree's leaves carry a higher

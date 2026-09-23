@@ -31,6 +31,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <cstdint>
 #include <vector>
 
@@ -249,6 +250,36 @@ class BlockOctree {
     codes_.swap(nc);
     levels_.swap(nl);
     return nmerged;
+  }
+
+  // ---- root lift (multigrid below the root brick) -------------------------
+
+  /// True iff the root brick can be halved on every axis: `brick()` and
+  /// `globalOrigin()` both even everywhere. This is the lift precondition, and
+  /// under MPI it is flow's `evenBlocks` test re-evaluated in the current root
+  /// units (docs/amr_mg_depth.md §6.2/§6.4).
+  bool canLiftRoot() const {
+    for (int d = 0; d < Dim; ++d)
+      if ((brick_[d] % 2) != 0 || (globalOrigin_[d] % 2) != 0)
+        return false;
+    return true;
+  }
+
+  /// Lift the root one level: halve the root brick (and the block's global root
+  /// origin) on every axis and increment `lmax`, leaving `codes_` and `levels_`
+  /// — and therefore the mesh — untouched. `brick[d] << lmax` is invariant, so
+  /// every downstream consumer of the octree (AmrPoisson's periodic wrap modulus,
+  /// the device assembly, the halo) sees exactly what it saw before. What changes
+  /// is that each former root cell now has siblings, so `coarsenIf` merges one
+  /// octet further: this is what a multigrid level below the root brick IS
+  /// (docs/amr_mg_depth.md §1, §6.1). Precondition: `canLiftRoot()`.
+  void liftRoot() {
+    assert(canLiftRoot());
+    for (int d = 0; d < Dim; ++d) {
+      brick_[d] /= 2;
+      globalOrigin_[d] /= 2;
+    }
+    ++lmax_;
   }
 
   /// Enforce 2:1 (graded) balance within this block: no two face-adjacent leaves
