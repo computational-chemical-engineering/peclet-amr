@@ -34,7 +34,8 @@ FX = 0.1
 DT = 0.05
 
 
-def case(N, lmax, graded, ghost=True, steps=10, warm=3, bottom_extent=None, emulate=False):
+def case(N, lmax, graded, ghost=True, steps=10, warm=3, bottom_extent=None, emulate=False,
+         bottom=None, reps=1):
     """One configuration.  `emulate` refines EVERYWHERE to level 0, so an `lmax = k` tree carries
     the same N^3 uniform mesh as an `lmax = 0` one — the emulation the C1 design rests on and the
     reference the §10 depth gate now compares the lifted ladder against, on the same box."""
@@ -52,15 +53,24 @@ def case(N, lmax, graded, ghost=True, steps=10, warm=3, bottom_extent=None, emul
     f.set_implicit_advection(True)
     f.set_ghost_projection(ghost)
     f.set_body_force(FX, 0.0, 0.0)
+    # Both knobs take effect at set_solid, which is where the pressure hierarchy is built.
     if bottom_extent is not None:
-        f.diagnostics.set_pressure_bottom_extent(bottom_extent)   # BEFORE set_solid (§6.2/§11.4)
+        f.diagnostics.set_pressure_bottom_extent(bottom_extent)   # §6.2/§11.4
+    if bottom is not None:
+        f.diagnostics.set_pressure_bottom(bottom)                 # §6.6
     f.set_solid(sdf)
     for _ in range(warm):
         f.step(mom_iters=400, pres_iters=400)
-    t = time.perf_counter()
-    for _ in range(steps):
-        f.step(mom_iters=400, pres_iters=400)
-    wall = (time.perf_counter() - t) / steps
+    # `reps` independent timed windows on the SAME solver; report the MINIMUM. The mean is the
+    # wrong estimator on a shared box -- contention only ever adds time, so the minimum is the
+    # closest thing to the machine's own number. (Measured noise floor on this host: ~3 %.)
+    wall = None
+    for _ in range(reps):
+        t = time.perf_counter()
+        for _ in range(steps):
+            f.step(mom_iters=400, pres_iters=400)
+        w = (time.perf_counter() - t) / steps
+        wall = w if wall is None else min(wall, w)
     root = N // (1 << lmax)
     built = list(f.diagnostics.pressure_mg_levels)
     # The ladder `predict_pressure_hierarchy` describes.  Its `lmax` is the number of octree
@@ -80,19 +90,32 @@ def case(N, lmax, graded, ghost=True, steps=10, warm=3, bottom_extent=None, emul
 
 
 def sweep(ghost):
-    """docs/amr_mg_depth.md §11.4, folded into WO5: where should the ladder stop?  `bottomExtent`
-    decides BOTH how many (tiny, launch-bound) levels the ladder builds and how well the 60-sweep
-    damped-Jacobi bottom solves what is left (§6.6's amplification table: 8e-9 at extent 4, 8e-3
-    at 8, 0.30 at 16).  The shipped default is whatever this measures, not a preference."""
-    cfgs = [(32, 0, False), (64, 0, False), (64, 2, True), (64, 3, True)]
-    print(f"{'N':>4} {'lmax':>5} {'mesh':>8} {'bottomExtent':>13} {'ms/step':>9} {'pres it':>8} "
-          f"{'levels':>7} {'coarsest':>9} {'bottom':>12}")
+    """docs/amr_mg_depth.md §11.4, folded into WO5: where should the ladder stop?
+
+    The first pass of this sweep confounded two variables. `bottomExtent` decides BOTH how many
+    (tiny, launch-bound) levels the ladder builds AND -- with the default `auto` bottom -- whether
+    the coarsest level is SOLVED or merely smoothed: §6.6's justification for the 60-sweep damped
+    Jacobi bottom is that it is exact at extent <= 4 (8e-9), and it is not at 8 (8e-3) or 16 (0.30).
+    So a one-dimensional sweep over the extent compares "deeper ladder, exact bottom" against
+    "shallower ladder, inexact bottom", which is not the question.
+
+    This is the 2-D form: extent x bottom kind, with `agglomerated` forcing the exact solve at
+    EVERY extent so that depth is the only variable on that arm. `smoother` is the other arm --
+    always the sweeps -- so the pair also measures what the exact bottom is worth per extent. The
+    iteration count is the deterministic column and the one to weigh; ms/step carries the host's
+    ~3 % noise, hence the minimum of `reps` timed windows.
+    """
+    cfgs = [(64, 0, False), (64, 2, True), (64, 3, True)]
+    print(f"{'N':>4} {'lmax':>5} {'mesh':>8} {'bottom':>13} {'bE':>4} {'ms/step':>9} "
+          f"{'pres it':>8} {'levels':>7} {'coarsest':>9} {'reported':>10}")
     for N, lmax, graded in cfgs:
-        for be in (4, 8, 16):
-            r = case(N, lmax, graded, ghost=ghost == "on", bottom_extent=be)
-            print(f"{r['N']:>4} {r['lmax']:>5} {r['mesh']:>8} {be:>13} {r['ms']:>9.1f} "
-                  f"{r['pres']:>8} {len(r['built']):>7} {r['built'][-1]:>9} {r['bottom']:>12}",
-                  flush=True)
+        for kind in ("smoother", "agglomerated"):
+            for be in (4, 8, 16):
+                r = case(N, lmax, graded, ghost=ghost == "on", bottom_extent=be, bottom=kind,
+                         reps=3)
+                print(f"{r['N']:>4} {r['lmax']:>5} {r['mesh']:>8} {kind:>13} {be:>4} "
+                      f"{r['ms']:>9.1f} {r['pres']:>8} {len(r['built']):>7} "
+                      f"{r['built'][-1]:>9} {r['bottom']:>10}", flush=True)
     return 0
 
 
