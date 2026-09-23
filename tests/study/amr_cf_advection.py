@@ -46,6 +46,7 @@ import sys
 import numpy as np
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
+import amr_tg_graded  # noqa: E402
 from amr_tg_graded import MU, RHO, build, exact, pexact  # noqa: E402
 
 
@@ -70,6 +71,43 @@ def vrms(r, vol, mask):
     return float(np.sqrt((vol[mask] * r[mask] ** 2).sum() / vol[mask].sum())) if mask.any() else 0.0
 
 
+def patch_split(o, top, own, cf, r):
+    """Split the residual on the FINE cells of each 2:1 face into coherent and alternating parts.
+
+    The design note's §2 mechanism puts an O(1) truncation on each fine cell of a coarse face's
+    2x2 patch, ALTERNATING in sign across the patch (the four sub-faces carry the tangential offset
+    with opposite signs).  What no sub-face stencil can remove is the COHERENT part — the intrinsic
+    jump in the flux-error constant from h to 2h across the seam.  So: group the four fine
+    neighbours of every coarse 2:1 face, and report the rms of the patch MEAN (coherent) against
+    the rms of the deviation from it (alternating).  A residual that is mostly coherent is the
+    intrinsic seam layer and nothing to chase; a residual that is still mostly alternating would
+    mean the sub-face sample is still leaking.
+    """
+    lev, axis, dr, nbr = o.levels(), top["axis"], top["dir"], top["nbr"]
+    m = cf & (lev[own] > lev[nbr])                      # owner is the COARSE cell of the pair
+    if not m.any():
+        return 0.0, 0.0, 0.0, 0.0
+    key = (own[m] * 3 + axis[m]) * 2 + (dr[m] > 0)      # one group per coarse face
+    order = np.argsort(key, kind="stable")
+    k, fineCells = key[order], nbr[m][order]
+    bnd = np.flatnonzero(np.r_[True, k[1:] != k[:-1], True])
+    co, al = [], []
+    for a, b in zip(bnd[:-1], bnd[1:]):
+        rr = r[fineCells[a:b]]
+        mu = rr.mean(axis=0)
+        co.append((mu ** 2).sum())
+        al.append(((rr - mu) ** 2).sum() / (b - a))
+    al = np.asarray(al)
+    # Is what is left of the alternating part spread over every patch (an intrinsic property of a
+    # 2:1 seam) or concentrated on a few (the tangential sample's fallback branches at staircase
+    # corners)?  `conc` = the fraction of patches carrying half the alternating energy: 0.5 means
+    # perfectly uniform, a small number means a few corners.
+    e = np.sort(al)[::-1]
+    conc = float((np.searchsorted(np.cumsum(e), 0.5 * e.sum()) + 1) / len(e)) if e.sum() else 0.0
+    return (float(np.sqrt(np.mean(co))), float(np.sqrt(np.mean(al))), conc,
+            float(np.sqrt(e[0] / np.mean(al))) if np.mean(al) else 0.0)
+
+
 # ---- instrument 1: the one-step truncation of the whole solver -----------------------------------
 
 def step_probe(arm, N, cfl, advection, warm=4):
@@ -88,10 +126,13 @@ def step_probe(arm, N, cfl, advection, warm=4):
     u1 = np.stack([f.velocity(0), f.velocity(1), f.velocity(2)], axis=1)
     k = 2.0 * np.pi / N
     r = (u1 - ue) / dt + 2.0 * (MU / RHO) * k * k * ue     # residual of du/dt = -2 nu k^2 u
-    touch, _, _ = interface_cells(o, f.diagnostics.face_topology())
+    top = f.diagnostics.face_topology()
+    touch, own, cf = interface_cells(o, top)
     vol = o.sizes(0) ** 3
     e2 = (r ** 2).sum(axis=1)
+    coh, alt, conc, peak = patch_split(o, top, own, cf, r)
     return dict(arm=arm, N=N, adv=advection, n_if=int(touch.sum()),
+                coherent=coh, alternating=alt, conc=conc, peak=peak,
                 rms_if=vrms(np.sqrt(e2), vol, touch), rms_bulk=vrms(np.sqrt(e2), vol, ~touch),
                 max_if=float(np.abs(r[touch]).max()) if touch.any() else 0.0,
                 max_bulk=float(np.abs(r[~touch]).max()))
@@ -376,22 +417,28 @@ def main():
     ap.add_argument("--n", type=int, nargs="+", default=[16, 32, 64])
     ap.add_argument("--step", action="store_true", help="the whole-solver one-step truncation")
     ap.add_argument("--flux", action="store_true", help="the convective operator alone")
+    ap.add_argument("--seam", default="on", choices=["on", "off"],
+                    help="the B5 seam reconstruction (--step only; --flux selects it by mode)")
     a = ap.parse_args()
+    amr_tg_graded.SEAM = a.seam == "on"
     if not (a.step or a.flux):
         a.step = a.flux = True
 
     if a.step:
         print("# one-step truncation of the whole solver, cell CFL 0.5")
         print(f"{'arm':>4} {'N':>4} {'adv':>6} {'#if':>7} {'rms @interface':>15} {'rms bulk':>11} "
-              f"{'ratio':>7} {'max @if':>11} {'max bulk':>11}")
+              f"{'ratio':>7} {'coherent':>10} {'alternating':>12} {'coh frac':>9} {'alt conc':>9} {'alt peak':>9}")
         for N in a.n:
             for arm in ("C", "G"):
                 for adv in (False, True):
                     d = step_probe(arm, N, 0.5, adv)
                     q = d["rms_if"] / d["rms_bulk"] if d["rms_bulk"] else float("nan")
+                    tot = d["coherent"] ** 2 + d["alternating"] ** 2
+                    cfrac = d["coherent"] ** 2 / tot if tot else float("nan")
                     print(f"{d['arm']:>4} {d['N']:>4} {str(d['adv']):>6} {d['n_if']:>7} "
                           f"{d['rms_if']:>15.4e} {d['rms_bulk']:>11.4e} {q:>7.2f} "
-                          f"{d['max_if']:>11.3e} {d['max_bulk']:>11.3e}", flush=True)
+                          f"{d['coherent']:>10.3e} {d['alternating']:>12.3e} "
+                          f"{cfrac:>9.2f} {d['conc']:>9.3f} {d['peak']:>9.1f}", flush=True)
 
     if a.flux:
         for N in a.n:

@@ -70,6 +70,9 @@ def pexact(c, t, N):
         * np.exp(-4.0 * (MU / RHO) * k * k * t)
 
 
+SEAM = True          # --seam off flips the B5 seam reconstruction (docs/amr_cf_convective.md)
+
+
 def build(arm, N, dt, cf_scheme):
     """Octree + Flow for one arm, initialised to the t = 0 Taylor-Green field."""
     lmax = 0 if arm == "U" else 1
@@ -84,6 +87,8 @@ def build(arm, N, dt, cf_scheme):
     f.set_implicit_advection(True)
     f.set_cf_scheme({"standard": 0, "quadratic": 1}[cf_scheme])   # BEFORE set_solid: the C/F
     f.set_solid(lambda x, y, z: 1e3)          # overlays are built there, and there is no solid
+    if not SEAM:
+        f.diagnostics.set_seam_reconstruction(False)
     c = o.centers()
     u, v, w = exact(c, 0.0, N)
     f.set_velocity(0, u)
@@ -278,8 +283,12 @@ def main():
                     help="horizon in convective times L/U0 = N (default 2)")
     ap.add_argument("--pres-tol", type=float, default=0.0,
                     help="pressure solve rtol (0 = the solver default)")
+    ap.add_argument("--seam", default="on", choices=["on", "off"],
+                    help="the B5 seam reconstruction of the advected value (default on)")
     ap.add_argument("--json", default="")
     a = ap.parse_args()
+    global SEAM
+    SEAM = a.seam == "on"
     if a.gate:
         return gate()
 
