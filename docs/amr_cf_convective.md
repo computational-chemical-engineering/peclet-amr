@@ -475,3 +475,67 @@ Linear extrapolation from column points at distances `a`, `b` from the face: err
 | case 3, 8-child block | h | 3h | 3/2 |
 | shipped case 2 / case 3 | — | — | O(h): `(1/4)h φ' + (1/4)h ∂_tφ` |
 | shipped coarse-upwind sub-face | — | — | O(h): `δ·∂_tφ`, `δ = ±h/2` twice |
+
+---
+
+## 12. As built and measured (2026-09-23)
+
+Built on `b5-cf-convective`: WO1 `f12b54c` (the tables, inert), WO2 `3fff13a` (the kernels), byte
+gate re-recorded `c765681`, WO0 `4072693` (the instrument), WO3 `2aa54c4` (the benchmark
+re-recorded), WO4 `00325a3` (the distributed gate). Defaults of §10 Q-A/C/D/E as written;
+`Flow.diagnostics.set_seam_reconstruction(bool)`, developer tier, default **on**.
+
+| gate | required | measured | |
+|---|---|---|---|
+| **G0** off ⇒ inert | byte gate identical, np = 1 and 2 | identical, 14/14 keys; `--step` advection-off unchanged to all digits; the uniform arm of the benchmark bit-identical at 5.7998e-03 | **pass** |
+| **G1** operator | Appendix A | the instrument's `seam` mode reproduces it to every printed digit | **pass** |
+| **G2** one step | if-rms ≤ 3.5e-3, if/bulk ≤ 5 | **2.008e-03**, **3.40** (from 7.881e-03 / 9.23) | **pass** |
+| **G3** headline | m3 ≤ 1.30e-2, G/C ≤ 1.45 | **1.1216e-02**, **1.218** (from 1.4328e-02 / 1.556) | **pass** |
+| | shape ≤ 3.6e-3, G/C shape ≤ 1.6 | 5.318e-03, 2.348 (from 7.417e-03 / 3.274) | **missed — see below** |
+| **G4** distributed | np = 1 bitwise, np ≥ 2 in the ~3e-7 class | 0.000e+00; 5.2e-09 / 3.9e-09 / 6.4e-09 at np = 2/4/8, with a non-vacuity control at 10 % of the velocity scale | **pass** |
+| **G5** stability | 12 throat meshes finite, policy error within ±0.3 pp | **bit-identical**, all 13 configurations — the sweep is Stokes and the change touches only the convective flux | **pass** |
+| **G6** cost | step ≤ +1 %, setSolid ≤ +1 % | step 34.6 → 34.4 s (within noise); `setSolid` phases within ±2 %; 2688 sample + 672 layer records built | **pass** |
+| battery | green | 86/86 + 17/17 np8; `-R 'distributed\|seam'` 66/66 | **pass** |
+
+### 12.1 G3's shape clause was mis-attributed, not failed
+
+The clause "if G/C shape stays > 2.0 with G1 met, the premise is wrong — stop, do not tune" fired,
+and the review of it (2026-09-23) ruled that the **premise is confirmed and the bookkeeping between
+the two halves was wrong**. Excess over C in quadrature at N = 64: shape 7.06e-3 → 4.81e-3
+(−32 %), amplitude 5.3e-3 → 1.5e-3 (−72 %) — §0 predicted the reverse. The mechanism says why: the
+O(1) forcing this fix removes **alternates** across the 2×2 fine patch, which is high-wavenumber,
+so viscosity damps it and it shows up in the answer as *amplitude* loss, not shape. The coherent
+first-order part — the intrinsic h → 2h jump in the flux-error constant, §4 fact 2 — is
+low-wavenumber and is what the shape error reads; the design said it stays, and it stays.
+
+The coherent/alternating split (`amr_cf_advection.py --step`, N = 64, advection on) confirms it:
+
+| | coherent | alternating | coherent fraction |
+|---|---|---|---|
+| off | 5.190e-03 | 1.114e-02 | 0.18 |
+| **on** | **1.497e-03** | **1.258e-03** | 0.59 |
+| advection off (the viscous seam) | 1.385e-03 | 2.653e-04 | 0.96 |
+
+The alternating part falls **89 %**, the coherent **71 %**, and the coherent part converges ×4.58
+from N = 32 to 64 — first order on the seam, which §4 fact 2 calls the floor. The review's
+"coherent ≥ 70 % ⇒ close" criterion reads 0.59 only because the coherent part fell further than it
+expected (1.5e-3 against an expected 2e-3); the absolute residual beats every expectation. What is
+left of the alternating part is spread over an eighth of the patches with a peak 2.3× its rms —
+the same character as the advection-off seam layer, which involves no sub-face stencil at all, and
+not the few staircase corners a fallback defect would give. **No stencil suspect survives.**
+
+**The gate should have been written on the total excess over C and the coherent/alternating split,
+never on the shape half alone.** Third time a ratio of two moving quantities has been mistaken for
+a verdict in this campaign (gate W of `amr_pressure_iteration.md`, its §14.3 correction, this).
+
+### 12.2 Two observations that are not this item's
+
+* **`bench_amr_flow` and `amr_two_sphere_gap.py` both run Stokes.** Neither can measure anything in
+  the advective path. `--advection 0|1`, `--max-steps` and `--seam on|off` were added to the
+  latter for this gate; the benchmark binary still cannot, and G6 was measured on the graded
+  Taylor–Green case instead.
+* **One throat mesh diverges at N = 64 and has always done so.** `g = 8, n = 2` reaches
+  k ~ −1e12 by step 180. It does the same on `cf58d27`, the commit *before* the per-FACE C/F gate
+  — so it predates this campaign entirely. n = 2 is two cells across the throat, far below the
+  n = 4…6 the sweep calibrates to, and the recorded N = 128 run has it finite; the N = 64 rung had
+  never been run. Recorded, not chased.

@@ -24,7 +24,13 @@ constrains to [n, 2n) by construction), plus the overlay census — in particula
 genuinely throat-graded mesh generates the closed mixed faces that would make the unimplemented
 sub-face closures blocking rather than merely untidy.
 
-  core/tests/study/amr_two_sphere_gap.py [N] [--gaps 8,16] [--ns 1,2,3,4,6,8] [--cf 1]
+  tests/study/amr_two_sphere_gap.py [N] [--gaps 8,16] [--ns 1,2,3,4,6,8] [--cf 1]
+                                       [--advection 0|1] [--max-steps 20000]
+
+  --advection 1 turns the convective term ON. The sweep is Stokes by default, which is right for
+  calibrating the coarsening policy but means it cannot exercise anything in the advective path --
+  including the B5 seam reconstruction (docs/amr_cf_convective.md), whose stability gate needs it.
+  --max-steps caps the march, for a stability probe that does not need the steady answer.
 """
 import math
 import sys
@@ -105,12 +111,17 @@ def throat_level(t, N):
     return int(np.asarray(t.levels())[i]) if i >= 0 else -1
 
 
-def permeability(N, g, n, cf, tol=1e-7, max_steps=20000, dt=60.0):
+SEAM = True   # --seam off: the B5 seam reconstruction (docs/amr_cf_convective.md), for an A/B
+
+
+def permeability(N, g, n, cf, tol=1e-7, max_steps=20000, dt=60.0, advection=False):
     t = build(N, g, n)
     lev = np.asarray(t.levels())
     fl = amr.Flow(t, 1.0, MU, dt)
     fl.set_body_force(FX, 0.0, 0.0)
-    fl.set_advection(False)
+    fl.set_advection(advection)
+    if not SEAM:
+        fl.diagnostics.set_seam_reconstruction(False)
     fl.set_ghost_sampled(True)
     # UNCONDITIONAL: cf=0 must SELECT the standard scheme. The quadratic scheme has been the
     # DEFAULT since 2026-09-21, so `if cf:` silently turned a --cf 0 sweep into a second copy of
@@ -166,7 +177,10 @@ if __name__ == "__main__":
     tol = float(opt("--tol", "1e-7"))
     gaps = [int(v) for v in opt("--gaps", "8,16").split(",")]
     ns = [float(v) for v in opt("--ns", "1,2,3,4,6,8").split(",")]
-    skip = {"--cf", "--gaps", "--ns", "--tol"}
+    advection = bool(int(opt("--advection", "0")))
+    SEAM = opt("--seam", "on") == "on"
+    maxSteps = int(opt("--max-steps", "20000"))
+    skip = {"--cf", "--gaps", "--ns", "--tol", "--advection", "--max-steps", "--seam"}
     vals, i = [], 0
     while i < len(args):
         if args[i] in skip:
@@ -183,7 +197,7 @@ if __name__ == "__main__":
         R, cs = geometry(N, g)
         print(f"\n=== throat g = {g} h0  (R = {R:.1f} h0, two spheres on z, both gaps = g) ===",
               flush=True)
-        ctl = permeability(N, g, None, cf, tol=tol)
+        ctl = permeability(N, g, None, cf, tol=tol, max_steps=maxSteps, advection=advection)
         print(f"{'n':>5} {'k':>13} {'d(ctl)%':>9} {'Lthroat':>8} {'gap/h_L':>8} "
               f"{'leaves':>9} {'vs ctl':>7} {'steps':>7} {'pres':>5} {'s':>6}", flush=True)
         print(f"{'ctl':>5} {ctl['k']:>13.6e} {0.0:>9.4f} {ctl['throatLevel']:>8} "
@@ -195,7 +209,7 @@ if __name__ == "__main__":
             # The aggressive end can pinch the throat outright (that is the failure the floor
             # exists to prevent, so it is a RESULT, not a bug) — keep the sweep alive through it.
             try:
-                r = permeability(N, g, n, cf, tol=tol)
+                r = permeability(N, g, n, cf, tol=tol, max_steps=maxSteps, advection=advection)
             except Exception as e:  # noqa: BLE001
                 print(f"{n:>5g} {'FAILED':>13}  {type(e).__name__}: {e}", flush=True)
                 continue
