@@ -227,8 +227,11 @@ refined mesh, which is the entire point of the package.
 
 ## E. Surface
 
-- **E1 — validation page** in `peclet-examples`, mirroring what `flow` and `voro` have. Gated on
-  B1: there is nothing to publish until the graded mesh has a convergence result.
+- **E1 — validation page** in `peclet-examples`, mirroring what `flow` and `voro` have. **The gate
+  on it is lifted 2026-09-23**: the graded mesh now has two convergence results to publish — the
+  steady Poiseuille ladder (B1, `amr_graded_convergence.md`) and the unsteady Taylor–Green one
+  (B2, `amr_tg_graded.md`), whose (U)/(C)/(G) table and second-order rung are the page's spine.
+  `docs/data/amr_tg_graded.json` is the raw data in the form the gallery's static pages want.
 - **E2 — boundary conditions.** `Flow` is **triply periodic, full stop** — the box is periodic and
   the only driving is a uniform body force; `flow` carries no-slip walls, inflow/outflow, lid and
   profile BCs plus per-position profiles. The workaround in the tree is to express a wall as an
