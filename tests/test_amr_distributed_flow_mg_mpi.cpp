@@ -3,7 +3,11 @@
 // On a graded, cross-block 2:1-balanced octree with a genuine cut-cell aperture openness
 // (sphere) it validates, at np = 1,2,4,8:
 //   (1) hierarchy parity: the distributed ladder has exactly the single-rank level count
-//       (per-rank coarsenIf + global-max padding == the whole-domain ladder);
+//       (per-rank coarsenIf + global-max padding + the LOCKSTEP root lift == the whole-domain
+//       ladder), and it really does go BELOW the root brick — the 8^3 root grid lifts once to a
+//       global 4^3 coarsest level (docs/amr_mg_depth.md §6.2/§6.4, work order WO3). The root grid
+//       used to be 4^3, exactly at bottomExtent, so nothing lifted on either side and the level
+//       counts agreed for the wrong reason;
 //   (2) V-cycle WORLD==SELF BIT-EXACT with mean removal off: a fixed number of V-cycles on
 //       the distributed hierarchy reproduces the single-rank device Multigrid bit-for-bit on
 //       every backend config (Jacobi smoothing, local transfers and the per-level halo are
@@ -75,7 +79,10 @@ std::vector<double> down(const View<double>& d) {
 }
 
 void run() {
-  const long Nr = 4;  // 4^3 roots, lmax 2 ⇒ 16^3 fine, periodic [0,1)^3
+  // 8^3 roots, lmax 2 ⇒ 32^3 fine, periodic [0,1)^3. PAST bottomExtent = 4 on every axis, so the
+  // §6.2 ladder lifts the root once (global 8^3 → 4^3) on every rank count this test runs at:
+  // np = 1 (brick 8^3), 2 (4x8x8), 4 (4x4x8), 8 (4^3) all have even blocks at even origins.
+  const long Nr = 8;
   const unsigned lmax = 2;
   const double h0 = 1.0 / (Nr * (1 << lmax));
   AmrGeometry<3> geo;
@@ -105,9 +112,21 @@ void run() {
   dmg.build(world, h0, openFn);
   Multigrid<3, kBits> smg;
   smg.build(self.local(), h0, openFn, /*periodic=*/true);
+  // The pre-C1 ladder (no lift below the root brick), as the reference the lift is measured from.
+  Multigrid<3, kBits> smgNoLift;
+  smgNoLift.build(self.local(), h0, openFn, /*periodic=*/true, /*immersedWall=*/false,
+                  /*liftRoot=*/false);
 
-  // (1) hierarchy parity.
+  // (1) hierarchy parity, and that the ladder actually went below the root brick.
   PECLET_AMR_CHECK_EQ((long)dmg.numLevels(), (long)smg.numLevels());
+  PECLET_AMR_CHECK_EQ((long)smg.numLevels(), (long)smgNoLift.numLevels() + 1);
+  {
+    // The coarsest level is the once-lifted global root grid: (Nr/2)^3 cells, summed over ranks.
+    long nc = (long)dmg.numLeaves(dmg.numLevels() - 1), gnc = 0;
+    MPI_Allreduce(&nc, &gnc, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
+    PECLET_AMR_CHECK_EQ(gnc, (Nr / 2) * (Nr / 2) * (Nr / 2));
+    PECLET_AMR_CHECK_EQ((long)smg.numLeaves(smg.numLevels() - 1), (Nr / 2) * (Nr / 2) * (Nr / 2));
+  }
   if (size > 1)
     PECLET_AMR_CHECK(dmg.halo(0).numGhosts() > 0);
   if (size == 1)

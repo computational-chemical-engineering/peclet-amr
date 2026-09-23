@@ -37,8 +37,10 @@
 #ifndef PECLET_AMR_DISTRIBUTED_FLOW_MG_HPP
 #define PECLET_AMR_DISTRIBUTED_FLOW_MG_HPP
 
+#include <algorithm>
 #include <array>
 #include <memory>
+#include <stdexcept>
 #include <vector>
 
 #include "peclet/amr/common.hpp"
@@ -105,16 +107,23 @@ class DistributedFlowMultigrid {
   /// (φ, the overlay chains, the PCG/BiCGStab scratch): one layout, no cross-indexing.
   /// Level-0 probes (±1 face reach incl. finer sub-neighbours) are a subset of the flow's
   /// forEachFaceFull discovery, so every probe resolves from the frozen registry.
+  ///
+  /// `liftRoot` / `bottomExtent` continue the ladder BELOW the root brick (docs/amr_mg_depth.md
+  /// §6.2/§6.4): the lift is LOCKSTEP across ranks, so every rank builds the same number of levels
+  /// and every per-level collective still pairs up.
   template <class OpenFn>
   void build(const DO& finest, double h0, OpenFn&& openFn,
-             const LeafHalo<Dim, Bits>* shared0 = nullptr) {
-    build(finest, detail::filledVec<Dim>(h0), std::forward<OpenFn>(openFn), shared0);
+             const LeafHalo<Dim, Bits>* shared0 = nullptr, bool liftRoot = true,
+             Index bottomExtent = 4) {
+    build(finest, detail::filledVec<Dim>(h0), std::forward<OpenFn>(openFn), shared0, liftRoot,
+          bottomExtent);
   }
   /// Phase 3: the finest spacing per axis; every level inherits the aspect ratio (AM1).
   template <class OpenFn>
   void build(const DO& finest, const Vec<Dim>& h0, OpenFn&& openFn,
-             const LeafHalo<Dim, Bits>* shared0 = nullptr) {
-    buildImpl(finest, h0, shared0);
+             const LeafHalo<Dim, Bits>* shared0 = nullptr, bool liftRoot = true,
+             Index bottomExtent = 4) {
+    buildImpl(finest, h0, shared0, liftRoot, bottomExtent);
     // Openness ladder: finest level directly from the world-coord openFn (local + ghost rows,
     // both exact); coarser levels by the exact single-rank child-face averaging for local rows
     // + a one-time owner exchange for ghost rows.
@@ -127,6 +136,12 @@ class DistributedFlowMultigrid {
   void setRemoveMean(bool on) { removeMean_ = on; }
 
   std::size_t numLevels() const { return levels_.size(); }
+  /// How many of those levels are IN PLACE — octree coarsenings plus lifted levels, i.e. the ones
+  /// that keep the ORB and whose transfers are local. Tail levels (docs/amr_mg_depth.md §6.5) are
+  /// appended after them. Compare against `predictPressureLadder(...).numInPlace()`.
+  std::size_t numInPlaceLevels() const { return levels_.size(); }
+  /// How many levels the ladder gained BELOW the root brick by lifting (§6.2).
+  Index liftDepth() const { return liftDepth_; }
   Index numLeaves(std::size_t L = 0) const { return levels_[L]->n; }
   Index extendedSize(std::size_t L = 0) const { return levels_[L]->nExt; }
   View<double> x(std::size_t L = 0) { return levels_[L]->x; }
@@ -187,9 +202,11 @@ class DistributedFlowMultigrid {
     std::vector<Index> c2pHost;  // kept for the openness coarsening
   };
 
-  void buildImpl(const DO& finest, const Vec<Dim>& h0, const LeafHalo<Dim, Bits>* shared0) {
+  void buildImpl(const DO& finest, const Vec<Dim>& h0, const LeafHalo<Dim, Bits>* shared0,
+                 bool liftRoot, Index bottomExtent) {
     comm_ = finest.comm();
     h0_ = h0;
+    bottomExtent_ = bottomExtent;
     levels_.clear();
     // Ladder of coarsened copies of the SAME distributed octree (decomposition preserved).
     {
@@ -218,6 +235,35 @@ class DistributedFlowMultigrid {
         auto lv = std::make_unique<Level>();
         lv->d = levels_.back()->d;
         levels_.push_back(std::move(lv));
+      }
+      // Below the root brick (docs/amr_mg_depth.md §6.2/§6.4). Every rank now sits at its root
+      // brick (the coarsenIf loop ran to exhaustion; the padded ranks repeat theirs), so the lift
+      // is a pure function of the global root grid and the ORB blocks — and it is LOCKSTEP: the
+      // depth is the MIN over ranks of the depth each rank's own block allows, Allreduced BEFORE
+      // any level is built. Every rank therefore appends the SAME number of levels and the
+      // per-level halo collectives below keep pairing up (the padding argument, extended by k).
+      if (liftRoot)
+        liftDepth_ = allowedLiftDepth(levels_.back()->d, bottomExtent);
+      for (Index j = 0; j < liftDepth_; ++j) {
+        auto lv = std::make_unique<Level>();
+        lv->d = levels_.back()->d;  // copy: carries the decomposition AND the leaf set
+        lv->d.liftRoot();           // root brick halved, lmax + 1, codes/levels untouched
+        const Index before = lv->d.local().numLeaves();
+        const Index merged = lv->d.local().coarsenIf([](Code, unsigned) { return true; });
+        if (merged == 0 || lv->d.local().numLeaves() == before)
+          break;  // defensive: a level that did not shrink would stall the ladder
+        levels_.push_back(std::move(lv));
+      }
+      // The level counts MUST be equal on every rank — every per-level halo build and exchange
+      // below is a collective. Cheap (once per build) and a hard error, not an assert.
+      {
+        int nlv = static_cast<int>(levels_.size()), lo = 0, hi = 0;
+        MPI_Allreduce(&nlv, &lo, 1, MPI_INT, MPI_MIN, comm_);
+        MPI_Allreduce(&nlv, &hi, 1, MPI_INT, MPI_MAX, comm_);
+        if (lo != hi)
+          throw std::runtime_error(
+              "amr::DistributedFlowMultigrid: the pressure ladder has different level counts on "
+              "different ranks (the lift is not lockstep)");
       }
     }
     // Per level: seam install + discovery fixpoint + topology freeze. Collective per level —
@@ -387,8 +433,41 @@ class DistributedFlowMultigrid {
     }
   }
 
+  /// How many lifts the §6.2 rule allows, as the MIN over ranks (one Allreduce). Iterated
+  /// arithmetically on `(G, blockOrigin, blockBrick) / 2^j` so no octree is copied to find out.
+  static Index allowedLiftDepth(const DO& d, Index bottomExtent) {
+    IVec<Dim> G = d.globalRootSize(), o = d.blockOriginRoot(), b = d.blockBrick();
+    int kLocal = 0;
+    for (;;) {
+      Index mx = 0;
+      for (int a = 0; a < Dim; ++a)
+        mx = std::max(mx, G[a]);
+      if (mx <= bottomExtent)
+        break;  // the bottom smoother is already exact here (§6.6)
+      bool ok = true;
+      for (int a = 0; a < Dim; ++a)
+        if ((G[a] % 2) != 0 || (G[a] / 2) < 2 || (o[a] % 2) != 0 || (b[a] % 2) != 0) {
+          ok = false;  // grid-limited, or decomposition-limited (this rank's block turns odd)
+          break;
+        }
+      if (!ok)
+        break;
+      for (int a = 0; a < Dim; ++a) {
+        G[a] /= 2;
+        o[a] /= 2;
+        b[a] /= 2;
+      }
+      ++kLocal;
+    }
+    int kGlobal = kLocal;
+    MPI_Allreduce(&kLocal, &kGlobal, 1, MPI_INT, MPI_MIN, d.comm());
+    return static_cast<Index>(kGlobal);
+  }
+
   MPI_Comm comm_ = MPI_COMM_NULL;
   Vec<Dim> h0_ = detail::filledVec<Dim>(1.0);
+  Index bottomExtent_ = 4;
+  Index liftDepth_ = 0;
   std::array<long, Dim> shift_{};
   std::vector<std::unique_ptr<Level>> levels_;
   bool removeMean_ = false;

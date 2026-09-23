@@ -125,6 +125,49 @@ class DistributedOctree {
     return local_.find(M::encode(lc).code());
   }
 
+  // ---- root lift: a multigrid level below the root brick (docs/amr_mg_depth.md §6.4) ------
+
+  /// True iff THIS rank's block nests one level deeper: the global root grid, this block's origin
+  /// and this block's size are all even on every axis — flow's `evenBlocks` test, re-evaluated in
+  /// the CURRENT root units. The decision is collective (one rank's odd block stops the ladder for
+  /// everyone), so a caller Allreduces this before lifting; see the lockstep depth in
+  /// `DistributedFlowMultigrid::buildImpl`.
+  bool canLiftRoot() const {
+    for (int d = 0; d < Dim; ++d)
+      if ((globalRootSize_[d] % 2) != 0 || (blockOriginRoot_[d] % 2) != 0 ||
+          (blockBrick_[d] % 2) != 0)
+        return false;
+    return local_.canLiftRoot();
+  }
+
+  /// Lift the root one level: the root CELL doubles on every axis, so the global root grid, this
+  /// block's root origin and its root size all halve, `rootSpan` doubles and `lmax` grows by one —
+  /// while every FINE quantity is untouched (`blockFineOrigin`, `blockFineSize`, `globalFineSize`,
+  /// the leaf codes and the level bytes). The ORB follows by `BlockDecomposer::coarsened`, which
+  /// halves every split and every block IN PLACE, so rank r's lifted block is exactly rank r's
+  /// block halved: owner lookups, the leaf halo and the multigrid transfers stay where they were
+  /// and a coarse cell's 2^Dim children are all local (§6.4). What changes is that every former
+  /// root cell now has siblings, so `local().coarsenIf` merges one octet further — which is what a
+  /// multigrid level below the root brick IS (§6.1).
+  ///
+  /// Precondition: `canLiftRoot()` on EVERY rank. Lifting one rank alone would desynchronise the
+  /// decomposition; `coarsened()` asserts the divisibility of every split and block in debug
+  /// builds.
+  void liftRoot() {
+    IVec<Dim> ratio{};
+    for (int d = 0; d < Dim; ++d)
+      ratio[d] = 2;
+    dec_ = dec_.coarsened(ratio);
+    for (int d = 0; d < Dim; ++d) {
+      globalRootSize_[d] /= 2;
+      blockOriginRoot_[d] /= 2;
+      blockBrick_[d] /= 2;
+    }
+    rootSpan_ *= 2;
+    ++lmax_;
+    local_.liftRoot();
+  }
+
   /// World geometry of this rank's block (the global geometry shifted to its origin).
   AmrGeometry<Dim> localGeometry() const {
     AmrGeometry<Dim> g = globalGeo_;
