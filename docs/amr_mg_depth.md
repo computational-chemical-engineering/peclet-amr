@@ -378,11 +378,14 @@ for the coarsest level `L_t`:
    single-rank run would build from level `L_t` down — flow's telescoping test measured that
    property as "matches the single-rank reference to 2.5e-14".
 
-**Per V-cycle.** At `L_t`: `b` (the restricted residual, device) → host staging → `Allgatherv` of
-`(gid, b)` → permute to tail order → `deep_copy(tail.b(0))`, `tail.x(0) = 0` → **one** tail
-V-cycle (it is the continuation of the same V-cycle, not a separate solve) → each rank picks its
-own rows from `tail.x(0)` by `gid` → `deep_copy` into `L_t`'s `x` → prolong as today. Every rank
-computes the identical tail, so the scatter is a local pick with no communication.
+**Per V-cycle.** At `L_t`: the level's RESIDUAL (device) → host staging → `Allgatherv` keyed by
+`gid` → permute to tail order → `tail.b(0)`, `tail.x(0) = 0` → **one** tail V-cycle (the
+continuation of the same V-cycle, not a separate solve) → each rank picks its own rows of
+`tail.x(0)` by `gid` and ADDS them to `L_t`'s iterate → prolong as today. Correction scheme, not
+overwrite: under a weighted partition the stage can fire at level 0, where the iterate must not be
+discarded; below level 0 the incoming iterate is zero so the two coincide (as built in WO4). Every
+rank computes the identical tail, so the scatter is a local pick with no communication. The
+movement itself is core machinery — see `amr_mg_core_boundary.md`.
 
 **Why redundant, not rank-0.** No serialization point, no broadcast, the same pattern flow's bottom
 uses; decomposition-independent because the tail is keyed by global id.
