@@ -847,6 +847,15 @@ class FlowDiagnostics {
   // What actually solves the coarsest pressure level: "jacobi" | "amg" (+ "+tail"). Today the only
   // bottom that exists is the 60-sweep damped Jacobi one, so this reports "jacobi" everywhere.
   std::string pressure_mg_bottom() const { return f_.engine().pressureMgBottom(); }
+  // §6.6/§11.4: what solves the coarsest pressure level, and where the ladder hands over to it.
+  // Both take effect at the next set_solid, which is where the pressure hierarchy is built.
+  void set_pressure_bottom(const std::string& kind) { f_.engine().setPressureBottom(kind); }
+  void set_pressure_bottom_extent(long e) {
+    f_.engine().setPressureBottomExtent(static_cast<peclet::core::Index>(e));
+  }
+  long pressure_bottom_extent() const {
+    return static_cast<long>(f_.engine().pressureBottomExtent());
+  }
   // The seam-reconstruction census (docs/amr_cf_convective.md §5.2), this rank's.
   peclet::core::Index num_seam_sample_records() const { return f_.engine().numSeamSampleRecords(); }
   peclet::core::Index num_seam_layer_records() const { return f_.engine().numSeamLayerRecords(); }
@@ -1306,10 +1315,25 @@ NB_MODULE(_amr, m) {
       .def_prop_ro("pressure_mg_bottom", &FlowDiagnostics::pressure_mg_bottom,
                    "What solves the coarsest pressure level: 'jacobi' (60 damped-Jacobi sweeps, "
                    "exact at extent <= 4) or 'amg' (the agglomerated GraphAMG-PCG solve), with the "
-                   "suffix '+tail' when the coarsest in-place level is gathered. Only the Jacobi "
-                   "bottom is implemented today, so this reports 'jacobi' on every path; "
-                   "`predict_pressure_hierarchy` reports the FINISHED design's bottom and may "
-                   "therefore say 'amg' where this says 'jacobi'.")
+                   "suffix '+tail' when the coarsest level is moved by the replicated stage. "
+                   "Which one runs follows `set_pressure_bottom` (default 'auto': the exact bottom "
+                   "engages only where the ladder ran out above `pressure_bottom_extent`).")
+      .def("set_pressure_bottom", &FlowDiagnostics::set_pressure_bottom, nb::arg("kind"),
+           "What solves the coarsest pressure level (docs/amr_mg_depth.md §6.6): 'auto' (default "
+           "-- the agglomerated GraphAMG-PCG bottom engages iff the coarsest global extent exceeds "
+           "`pressure_bottom_extent`, which is where 60 damped-Jacobi sweeps stop being a solve), "
+           "'smoother' (always the sweeps), 'agglomerated' (always the exact solve). Flow's three "
+           "spellings. Call BEFORE set_solid -- that is where the hierarchy is built. On a "
+           "DISTRIBUTED run the exact bottom lives in the stage's continued ladder; without a "
+           "stage the coarsest level is already at or below the bottom extent, where the sweeps "
+           "are exact.")
+      .def("set_pressure_bottom_extent", &FlowDiagnostics::set_pressure_bottom_extent,
+           nb::arg("extent"),
+           "Where the pressure ladder stops lifting the root and hands over to the bottom "
+           "(docs/amr_mg_depth.md §6.2/§11.4). The shipped default is measured, not preferred "
+           "-- see tests/study/amr_pressure_depth.py --sweep. Call BEFORE set_solid.")
+      .def_prop_ro("pressure_bottom_extent", &FlowDiagnostics::pressure_bottom_extent,
+                   "The bottom extent in force (docs/amr_mg_depth.md §6.8).")
       .def_prop_ro("num_seam_sample_records", &FlowDiagnostics::num_seam_sample_records,
                    "How many tangential-sample records the seam reconstruction built on THIS RANK "
                    "-- one per 2:1 sub-face pair that passes the C/F face gate (both cells regular "

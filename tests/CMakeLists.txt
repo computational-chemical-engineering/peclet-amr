@@ -43,13 +43,15 @@ endforeach()
 # amr_facegeom       device face-geometry assembly
 # amr_multigrid      device multigrid V-cycle
 # amr_mg_lift        the level below the root brick (root lift) vs the deeper-tree emulation
+# amr_mg_bottom      the exact (agglomerated GraphAMG-PCG) coarsest-level solve, docs/amr_mg_depth.md §6.6
 # amr_fv_openness    device openness-folded operator
 # amr_kappa_restrict / amr_kappa_dirichlet  kappa restriction / Dirichlet closure on device
 # amr_pcg            MG-preconditioned CG over the device V-cycle
 # amr_momentum       device momentum operator + BiCGStab vs the host AmrCutCell
 # amr_flow_solver    the device AmrFlow step vs the host oracle + analytic solutions
 foreach(t IN ITEMS block_octree_view amr_fv_op amr_assembly amr_momentum_assembly amr_facegeom
-                   amr_multigrid amr_mg_lift amr_fv_openness amr_kappa_restrict amr_kappa_dirichlet
+                   amr_multigrid amr_mg_lift amr_mg_bottom amr_fv_openness amr_kappa_restrict
+                   amr_kappa_dirichlet
                    amr_pcg amr_momentum amr_flow_solver)
   _amr_test_exe(test_${t})
   peclet_amr_add_test(${t} test_${t})
@@ -75,7 +77,7 @@ set(_mpi_tests amr_distributed amr_distributed_poisson amr_distributed_mg amr_di
                amr_distributed_rebalance amr_leaf_halo
                amr_distributed_view amr_leaf_halo_view amr_distributed_momentum
                amr_distributed_flow_mg amr_distributed_flow amr_distributed_adaptflow
-               amr_distributed_seam amr_distributed_cf amr_mg_lift_dist amr_mg_tail)
+               amr_distributed_seam amr_distributed_cf amr_mg_lift_dist amr_mg_tail amr_mg_bottom_dist)
 foreach(t IN LISTS _mpi_tests)
   _amr_test_exe(test_${t}_mpi)
 endforeach()

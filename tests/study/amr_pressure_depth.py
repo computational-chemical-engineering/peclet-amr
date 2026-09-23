@@ -34,11 +34,17 @@ FX = 0.1
 DT = 0.05
 
 
-def case(N, lmax, graded, ghost=True, steps=10, warm=3):
+def case(N, lmax, graded, ghost=True, steps=10, warm=3, bottom_extent=None, emulate=False):
+    """One configuration.  `emulate` refines EVERYWHERE to level 0, so an `lmax = k` tree carries
+    the same N^3 uniform mesh as an `lmax = 0` one — the emulation the C1 design rests on and the
+    reference the §10 depth gate now compares the lifted ladder against, on the same box."""
     R = 9.93 * N / 32.0
     sdf = lambda x, y, z: ((x - N / 2) ** 2 + (y - N / 2) ** 2 + (z - N / 2) ** 2) ** 0.5 - R
     o = amr.Octree(cells=[N] * 3, lmax=lmax, origin=[0.0] * 3, spacing=1.0)
-    if graded and lmax:
+    if emulate and lmax:
+        o.refine_to_sdf(lambda x, y, z: 0.0, 0, 1.0e18)   # everywhere -> the uniform N^3 mesh
+        o.balance()
+    elif graded and lmax:
         o.refine_to_sdf(sdf, 0, 4.0)
         o.balance()
     f = amr.Flow(o, density=1.0, viscosity=MU, dt=DT)
@@ -46,6 +52,8 @@ def case(N, lmax, graded, ghost=True, steps=10, warm=3):
     f.set_implicit_advection(True)
     f.set_ghost_projection(ghost)
     f.set_body_force(FX, 0.0, 0.0)
+    if bottom_extent is not None:
+        f.diagnostics.set_pressure_bottom_extent(bottom_extent)   # BEFORE set_solid (§6.2/§11.4)
     f.set_solid(sdf)
     for _ in range(warm):
         f.step(mom_iters=400, pres_iters=400)
@@ -59,20 +67,48 @@ def case(N, lmax, graded, ghost=True, steps=10, warm=3):
     # coarsenings THE MESH supports, not the tree's declared lmax: an UNREFINED Octree(N, lmax=k)
     # is the same mesh as Octree(N // 2**k, lmax=0), all of whose leaves are root cells.
     depth = int(o.lmax) - int(np.min(o.levels()))
-    pred = amr.predict_pressure_hierarchy(cells=[root * (1 << depth)] * 3, lmax=depth, num_ranks=1)
-    return dict(N=N, lmax=lmax, mesh="graded" if graded else "uniform", leaves=o.num_leaves,
+    be = 4 if bottom_extent is None else bottom_extent
+    pred = amr.predict_pressure_hierarchy(cells=[root * (1 << depth)] * 3, lmax=depth,
+                                          num_ranks=1, bottom_extent=be)
+    return dict(N=N, lmax=lmax,
+                mesh="emul" if emulate else ("graded" if graded else "uniform"),
+                leaves=o.num_leaves,
                 root=root, ms=wall * 1e3, pres=int(f.diagnostics.last_pres_iters()),
                 mom=int(f.diagnostics.last_mom_iters()), built=built,
                 pred=int(pred["num_levels"]), bottom=f.diagnostics.pressure_mg_bottom,
                 pred_bottom=pred["bottom"])
 
 
+def sweep(ghost):
+    """docs/amr_mg_depth.md §11.4, folded into WO5: where should the ladder stop?  `bottomExtent`
+    decides BOTH how many (tiny, launch-bound) levels the ladder builds and how well the 60-sweep
+    damped-Jacobi bottom solves what is left (§6.6's amplification table: 8e-9 at extent 4, 8e-3
+    at 8, 0.30 at 16).  The shipped default is whatever this measures, not a preference."""
+    cfgs = [(32, 0, False), (64, 0, False), (64, 2, True), (64, 3, True)]
+    print(f"{'N':>4} {'lmax':>5} {'mesh':>8} {'bottomExtent':>13} {'ms/step':>9} {'pres it':>8} "
+          f"{'levels':>7} {'coarsest':>9} {'bottom':>12}")
+    for N, lmax, graded in cfgs:
+        for be in (4, 8, 16):
+            r = case(N, lmax, graded, ghost=ghost == "on", bottom_extent=be)
+            print(f"{r['N']:>4} {r['lmax']:>5} {r['mesh']:>8} {be:>13} {r['ms']:>9.1f} "
+                  f"{r['pres']:>8} {len(r['built']):>7} {r['built'][-1]:>9} {r['bottom']:>12}",
+                  flush=True)
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--ghost", default="on", choices=["on", "off"])
+    ap.add_argument("--sweep", action="store_true",
+                    help="sweep the bottom extent (docs/amr_mg_depth.md §11.4) instead")
     a = ap.parse_args()
+    if a.sweep:
+        return sweep(a.ghost)
     cfgs = [(32, 0, False), (32, 1, False), (32, 1, True), (32, 2, True),
             (64, 0, False), (64, 1, True), (64, 2, True), (64, 3, True)]
+    # The §10 depth gate's reference: the SAME 64^3 uniform mesh inside a depth-3 tree (the
+    # emulation), measured on the same box in the same session.
+    emul = [(64, 3)]
     print(f"{'N':>4} {'lmax':>5} {'mesh':>8} {'leaves':>8} {'root brick':>11} "
           f"{'ms/step':>9} {'pres it':>8} {'mom it':>7} {'levels':>7} {'pred':>5} {'bottom':>8}")
     bad = 0
@@ -85,6 +121,14 @@ def main():
               f"{len(r['built']):>7} {r['pred']:>5}{'' if ok else ' !'} {r['bottom']:>8}",
               flush=True)
         print(f"     levels: {' '.join(str(x) for x in r['built'])}", flush=True)
+    for N, lmax in emul:
+        r = case(N, lmax, False, ghost=a.ghost == "on", emulate=True)
+        ok = len(r["built"]) == r["pred"]
+        bad += 0 if ok else 1
+        print(f"{r['N']:>4} {r['lmax']:>5} {r['mesh']:>8} {r['leaves']:>8} "
+              f"{str(r['root']) + '^3':>11} {r['ms']:>9.1f} {r['pres']:>8} {r['mom']:>7} "
+              f"{len(r['built']):>7} {r['pred']:>5}{'' if ok else ' !'} {r['bottom']:>8}",
+              flush=True)
     if bad:
         print(f"WARNING: {bad} row(s) where the built ladder differs from the prediction")
     return 0

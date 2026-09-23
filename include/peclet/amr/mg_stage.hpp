@@ -72,27 +72,34 @@ class MgStage {
   virtual Index numLeaves(std::size_t L) const = 0;
   virtual std::string bottomName() const = 0;
   virtual void setRemoveMean(bool on) = 0;
+  /// What solves the continued ladder's coarsest level (docs/amr_mg_depth.md §6.6). The exact
+  /// bottom lives in the single-rank `Multigrid`, so this is where the selector lands.
+  virtual void setBottom(typename Multigrid<Dim, Bits>::Bottom b) = 0;
   /// The continued ladder's level-0 solution — what `moveDown` reads. A test uses it to assert the
   /// stage produced the same answer everywhere it is replicated (§11.2).
   virtual View<double> targetX() = 0;
 
   // ---- the movement: the ONLY part the three instantiations differ in ------------------------
-  /// `src` (this rank's rows of the moved level, device) → the target's level-0 rhs. Collective on
-  /// the PARENT communicator: every rank takes part, active or not.
+  /// `src` (this rank's rows of the moved level, device; may be longer than `nSrc`) → the target's
+  /// level-0 rhs. Collective on the PARENT communicator: every rank takes part, active or not.
   virtual void moveUp(View<const double> src, Index nSrc) = 0;
   /// One cycle of the continued ladder on `targetComm()`. Called on active ranks only.
   virtual void cycle(int pre, int post, int bottom, double omega) = 0;
-  /// The target's level-0 solution → `dst` (this rank's rows of the moved level, device).
+  /// The target's level-0 solution → the first `nDst` rows of `dst`.
   virtual void moveDown(View<double> dst, Index nDst) = 0;
 
-  /// The whole stage for one V-cycle. This is what `vcycle` calls, and the reason it contains no
-  /// MPI of its own.
-  void apply(View<const double> src, View<double> dst, Index n, int pre, int post, int bottom,
-             double omega) {
-    moveUp(src, n);
+  /// The whole stage for one V-cycle, in the CORRECTION SCHEME §6.5 prescribes: the caller hands
+  /// in the residual at resolution L and gets back a correction to ADD. That is what makes the
+  /// stage legal at every level, including L = 0 — where the level being moved is the finest one
+  /// (no in-place lift was possible at all) and its iterate must not be thrown away. Where the
+  /// stage fires below level 0 the incoming iterate is zero, so residual == rhs and add ==
+  /// overwrite, and this is bit-for-bit §6.5.1's simpler description.
+  void apply(View<const double> residual, View<double> correction, Index n, int pre, int post,
+             int bottom, double omega) {
+    moveUp(residual, n);
     if (active())
       cycle(pre, post, bottom, omega);
-    moveDown(dst, n);
+    moveDown(correction, n);
   }
 };
 
@@ -216,13 +223,16 @@ class ReplicatedTailStage final : public MgStage<Dim, Bits> {
     mg_ = std::make_unique<Multigrid<Dim, Bits>>();
     mg_->buildRaw(oct_, h0, std::move(aTail), /*periodic=*/true, /*liftRoot=*/true, bottomExtent);
 
+    (void)nExt;
     sendBuf_.assign(static_cast<std::size_t>(n), 0.0);
     recvBuf_.assign(static_cast<std::size_t>(tot), 0.0);
     host_.assign(static_cast<std::size_t>(nt_), 0.0);
-    srcMirror_ =
-        Kokkos::View<double*, Kokkos::HostSpace>("stage_src", static_cast<std::size_t>(nExt));
-    dstMirror_ =
-        Kokkos::View<double*, Kokkos::HostSpace>("stage_dst", static_cast<std::size_t>(nExt));
+    // Sized by the level's OWN cell count, and staged through device scratch, so the caller may
+    // hand in a longer view (the distributed levels carry a ghost tail) without a subview.
+    dSrc_ = View<double>("stage_dsrc", static_cast<std::size_t>(n));
+    dDst_ = View<double>("stage_ddst", static_cast<std::size_t>(n));
+    srcMirror_ = Kokkos::View<double*, Kokkos::HostSpace>("stage_src", static_cast<std::size_t>(n));
+    dstMirror_ = Kokkos::View<double*, Kokkos::HostSpace>("stage_dst", static_cast<std::size_t>(n));
     tbMirror_ = Kokkos::View<double*, Kokkos::HostSpace>("stage_tb", static_cast<std::size_t>(nt_));
     txMirror_ = Kokkos::View<double*, Kokkos::HostSpace>("stage_tx", static_cast<std::size_t>(nt_));
   }
@@ -236,18 +246,18 @@ class ReplicatedTailStage final : public MgStage<Dim, Bits> {
 
   std::size_t numLevels() const override { return mg_->numLevels(); }
   Index numLeaves(std::size_t L) const override { return mg_->numLeaves(L); }
-  /// What solves the continued ladder's coarsest level. WO5 replaces this with the ladder's own
-  /// `Multigrid::bottomName()` once the agglomerated bottom exists; until then every bottom is the
-  /// 60-sweep damped-Jacobi one.
-  std::string bottomName() const override { return "jacobi"; }
+  std::string bottomName() const override { return mg_->bottomName(); }
   void setRemoveMean(bool on) override { mg_->setRemoveMean(on); }
+  void setBottom(typename Multigrid<Dim, Bits>::Bottom b) override { mg_->setBottom(b); }
   View<double> targetX() override { return mg_->x(0); }
 
   /// The continued ladder itself — a single-rank `Multigrid`, exposed for the WO5 bottom selector.
   Multigrid<Dim, Bits>& multigrid() { return *mg_; }
 
   void moveUp(View<const double> src, Index nSrc) override {
-    Kokkos::deep_copy(srcMirror_, src);
+    auto ds = dSrc_;
+    Kokkos::parallel_for("amr::stage_pack", nSrc, KOKKOS_LAMBDA(const Index i) { ds(i) = src(i); });
+    Kokkos::deep_copy(srcMirror_, dSrc_);
     for (Index i = 0; i < nSrc; ++i)
       sendBuf_[static_cast<std::size_t>(i)] = srcMirror_(i);
     MPI_Allgatherv(sendBuf_.data(), static_cast<int>(nSrc), MPI_DOUBLE, recvBuf_.data(),
@@ -266,11 +276,12 @@ class ReplicatedTailStage final : public MgStage<Dim, Bits> {
 
   void moveDown(View<double> dst, Index nDst) override {
     Kokkos::deep_copy(txMirror_, mg_->x(0));
-    for (std::size_t i = 0; i < dstMirror_.extent(0); ++i)
-      dstMirror_(i) = 0.0;
     for (Index i = 0; i < nDst; ++i)
       dstMirror_(i) = txMirror_(rowOfLocal_[static_cast<std::size_t>(i)]);
-    Kokkos::deep_copy(dst, dstMirror_);
+    Kokkos::deep_copy(dDst_, dstMirror_);
+    auto dd = dDst_;
+    Kokkos::parallel_for(
+        "amr::stage_scatter", nDst, KOKKOS_LAMBDA(const Index i) { dst(i) = dd(i); });
   }
 
  private:
@@ -283,6 +294,7 @@ class ReplicatedTailStage final : public MgStage<Dim, Bits> {
   std::vector<int> counts_, displs_;
   std::vector<Index> rowOfLocal_, rowOfGathered_;
   std::vector<double> sendBuf_, recvBuf_, host_;
+  View<double> dSrc_, dDst_;
   /// Persistent host staging for the device↔host round trip (one allocation per build, not one per
   /// V-cycle). Explicitly HostSpace so this compiles on a device backend as well as on a host one.
   Kokkos::View<double*, Kokkos::HostSpace> srcMirror_, dstMirror_, tbMirror_, txMirror_;

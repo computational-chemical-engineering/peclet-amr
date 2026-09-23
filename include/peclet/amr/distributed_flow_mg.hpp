@@ -48,6 +48,7 @@
 #include <string>
 #include <vector>
 
+#include "peclet/amr/amg_bottom.hpp"  // the exact coarsest-level solve (docs/amr_mg_depth.md §6.6)
 #include "peclet/amr/common.hpp"
 #include "peclet/amr/distributed_octree.hpp"
 #include "peclet/amr/fv_op.hpp"
@@ -175,10 +176,25 @@ class DistributedFlowMultigrid {
   /// holds an identical copy, which is what §11.2's cross-rank bitwise check reads.
   View<double> stageSolution() { return stage_->targetX(); }
   MgStage<Dim, Bits>& stage() { return *stage_; }
-  /// `"jacobi"` | (WO5) `"amg"`, suffixed by the stage's own spelling — `"+tail"` for the
-  /// replicated one (docs/amr_mg_depth.md §6.7).
+  /// `"jacobi"` | `"amg"`, suffixed by the stage's own spelling — `"+tail"` for the replicated
+  /// one (docs/amr_mg_depth.md §6.7). Without a stage the coarsest in-place level is already at or
+  /// below `bottomExtent`, where the 60 damped-Jacobi sweeps are exact.
   std::string bottomName() const {
-    return std::string("jacobi") + (stage_ ? stage_->diagnosticSuffix() : "");
+    if (stage_)
+      return stage_->bottomName() + stage_->diagnosticSuffix();
+    return bottomAmg_ ? std::string("amg") : std::string("jacobi");
+  }
+
+  /// Select what solves the coarsest level (docs/amr_mg_depth.md §6.6). The exact bottom lives in
+  /// the single-rank `Multigrid`, so on this path it is the STAGE's bottom: without a stage the
+  /// coarsest in-place level is at or below `bottomExtent` and the sweeps there are exact, which
+  /// is why §6.6 scopes the agglomerated solve to `Multigrid` and the stage.
+  void setBottom(typename Multigrid<Dim, Bits>::Bottom b) {
+    bottomKind_ = b;
+    if (stage_)
+      stage_->setBottom(b);
+    else
+      buildStage();  // re-decide the local exact bottom (single-rank distributed runs)
   }
   Index numLeaves(std::size_t L = 0) const { return levels_[L]->n; }
   Index extendedSize(std::size_t L = 0) const { return levels_[L]->nExt; }
@@ -200,9 +216,20 @@ class DistributedFlowMultigrid {
     View<const double> bc(lv.b);
     if (L + 1 == levels_.size()) {
       if (stage_) {
-        // §6.5: the level MOVES onto the stage's decomposition, the ladder continues there, the
-        // correction comes back. No MPI in this function — the messages live behind the stage.
-        stage_->apply(bc, lv.x, lv.n, pre, post, bottom, omega);
+        // §6.5: the level MOVES onto the stage's decomposition, the ladder continues there, and
+        // the CORRECTION comes back — the residual goes up and the correction is added, which is
+        // what makes the stage legal even at L = 0 (nothing lifted in place, so the moved level is
+        // the finest one and its iterate must survive). No MPI in this function: every message
+        // lives behind the stage.
+        lv.ex.exchange(lv.x);
+        residualFv(lv.op, View<const double>(lv.x), bc, lv.res);
+        stage_->apply(View<const double>(lv.res), lv.tmp, lv.n, pre, post, bottom, omega);
+        auto x = lv.x;
+        auto c = lv.tmp;
+        Kokkos::parallel_for(
+            "amr::stage_add", lv.n, KOKKOS_LAMBDA(const Index i) { x(i) += c(i); });
+      } else if (bottomAmg_) {
+        bottomAmg_->solve(bc, lv.x);  // §6.6, single-rank: the level is already whole, here
       } else {
         for (int s = 0; s < bottom; ++s) {
           lv.ex.exchange(lv.x);
@@ -263,6 +290,7 @@ class DistributedFlowMultigrid {
   /// number.
   void buildStage() {
     stage_.reset();
+    bottomAmg_.reset();
     if (levels_.empty())
       return;
     Level& lt = *levels_.back();
@@ -272,11 +300,29 @@ class DistributedFlowMultigrid {
     Index mx = 0;
     for (int a = 0; a < Dim; ++a)
       mx = std::max(mx, stageFrom_[a]);
-    if (size <= 1 || mx <= bottomExtent_)
-      return;  // single-rank: the in-place ladder IS the whole hierarchy; small enough: no stage
+    const bool want = (bottomKind_ == Multigrid<Dim, Bits>::Bottom::Agglomerated) ||
+                      (bottomKind_ == Multigrid<Dim, Bits>::Bottom::Auto && mx > bottomExtent_);
+    if (!want)
+      return;  // the 60 damped-Jacobi sweeps are exact at this extent (§6.6)
+    if (size <= 1) {
+      // One rank: the coarsest level is already whole, so no stage is needed to reach an exact
+      // bottom — §6.2's `10^3 root, np=1` row is two levels and a GraphAMG bottom, not a tail, and
+      // this is what keeps the np=1 distributed ladder identical to the single-rank `Multigrid`.
+      const auto A = lt.ap.assembleFv();
+      bool singular = true;
+      for (double d : A.bcDiag)
+        if (d != 0.0) {
+          singular = false;
+          break;
+        }
+      bottomAmg_ = std::make_unique<AmgBottom<Dim, Bits>>();
+      bottomAmg_->build(lt.ap, singular);
+      return;
+    }
     auto tail = std::make_unique<ReplicatedTailStage<Dim, Bits>>();
     tail->build(lt.d, h0_, lt.ap, lt.n, lt.nExt, bottomExtent_, lt.comm);
     tail->setRemoveMean(removeMean_);
+    tail->setBottom(bottomKind_);
     stage_ = std::move(tail);
   }
 
@@ -548,7 +594,11 @@ class DistributedFlowMultigrid {
   Index bottomExtent_ = 4;
   Index liftDepth_ = 0;
   IVec<Dim> stageFrom_{};
+  typename Multigrid<Dim, Bits>::Bottom bottomKind_ = Multigrid<Dim, Bits>::Bottom::Auto;
   std::unique_ptr<MgStage<Dim, Bits>> stage_;
+  /// The exact bottom when there is no stage because there is only one rank (§6.6). At np > 1
+  /// without a stage the coarsest level is at or below `bottomExtent`, where the sweeps are exact.
+  std::unique_ptr<AmgBottom<Dim, Bits>> bottomAmg_;
   std::array<long, Dim> shift_{};
   std::vector<std::unique_ptr<Level>> levels_;
   bool removeMean_ = false;

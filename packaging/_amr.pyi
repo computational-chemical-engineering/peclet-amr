@@ -367,8 +367,22 @@ class FlowDiagnostics:
     @property
     def pressure_mg_bottom(self) -> str:
         """
-        What solves the coarsest pressure level: 'jacobi' (60 damped-Jacobi sweeps, exact at extent <= 4) or 'amg' (the agglomerated GraphAMG-PCG solve), with the suffix '+tail' when the coarsest in-place level is gathered. Only the Jacobi bottom is implemented today, so this reports 'jacobi' on every path; `predict_pressure_hierarchy` reports the FINISHED design's bottom and may therefore say 'amg' where this says 'jacobi'.
+        What solves the coarsest pressure level: 'jacobi' (60 damped-Jacobi sweeps, exact at extent <= 4) or 'amg' (the agglomerated GraphAMG-PCG solve), with the suffix '+tail' when the coarsest level is moved by the replicated stage. Which one runs follows `set_pressure_bottom` (default 'auto': the exact bottom engages only where the ladder ran out above `pressure_bottom_extent`).
         """
+
+    def set_pressure_bottom(self, kind: str) -> None:
+        """
+        What solves the coarsest pressure level (docs/amr_mg_depth.md §6.6): 'auto' (default -- the agglomerated GraphAMG-PCG bottom engages iff the coarsest global extent exceeds `pressure_bottom_extent`, which is where 60 damped-Jacobi sweeps stop being a solve), 'smoother' (always the sweeps), 'agglomerated' (always the exact solve). Flow's three spellings. Call BEFORE set_solid -- that is where the hierarchy is built. On a DISTRIBUTED run the exact bottom lives in the stage's continued ladder; without a stage the coarsest level is already at or below the bottom extent, where the sweeps are exact.
+        """
+
+    def set_pressure_bottom_extent(self, extent: int) -> None:
+        """
+        Where the pressure ladder stops lifting the root and hands over to the bottom (docs/amr_mg_depth.md §6.2/§11.4). The shipped default is measured, not preferred -- see tests/study/amr_pressure_depth.py --sweep. Call BEFORE set_solid.
+        """
+
+    @property
+    def pressure_bottom_extent(self) -> int:
+        """The bottom extent in force (docs/amr_mg_depth.md §6.8)."""
 
     @property
     def num_seam_sample_records(self) -> int:

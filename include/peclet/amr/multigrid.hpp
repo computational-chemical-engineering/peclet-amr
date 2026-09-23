@@ -27,10 +27,12 @@
 
 #include <cmath>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
-#include "peclet/amr/assembly.hpp"  // assembleFv (device per-level operator rebuild, D5)
+#include "peclet/amr/amg_bottom.hpp"  // the exact coarsest-level solve (docs/amr_mg_depth.md §6.6)
+#include "peclet/amr/assembly.hpp"    // assembleFv (device per-level operator rebuild, D5)
 #include "peclet/amr/block_octree.hpp"
 #include "peclet/amr/common.hpp"
 #include "peclet/amr/fv_op.hpp"
@@ -120,6 +122,12 @@ class Multigrid {
   using Code = typename Octree::Code;
   using Poisson = AmrPoisson<Dim, Bits>;
 
+  /// What solves the coarsest level (docs/amr_mg_depth.md §6.6). The three spellings are flow's
+  /// `set_pressure_bottom` values: `Auto` engages the exact bottom iff the coarsest global extent
+  /// exceeds `bottomExtent` (where 60 damped-Jacobi sweeps stop being a solve), `Smoother` forces
+  /// the sweeps, `Agglomerated` forces the exact bottom.
+  enum class Bottom { Auto, Smoother, Agglomerated };
+
   /// Build + upload the hierarchy from a finest octree (uniform coarsening), openness-
   /// free. `h0` is the finest spacing (every level shares it; a coarse leaf's higher
   /// `level` encodes its width).
@@ -130,6 +138,7 @@ class Multigrid {
   }
   void build(const Octree& finest, const Vec<Dim>& h0, bool liftRoot = true,
              Index bottomExtent = 4) {
+    bottomExtent_ = bottomExtent;
     hmg_ = std::make_unique<AmrMultigrid<Dim, Bits>>();
     hmg_->build(finest, h0, liftRoot, bottomExtent);
     buildFromHostMg();
@@ -148,6 +157,7 @@ class Multigrid {
   template <class OpenFn>
   void build(const Octree& finest, const Vec<Dim>& h0, OpenFn&& openFn, bool periodic = true,
              bool immersedWall = false, bool liftRoot = true, Index bottomExtent = 4) {
+    bottomExtent_ = bottomExtent;
     hmg_ = std::make_unique<AmrMultigrid<Dim, Bits>>();
     hmg_->build(finest, h0, liftRoot, bottomExtent);
     hmg_->setOpenness(std::forward<OpenFn>(openFn));
@@ -164,6 +174,7 @@ class Multigrid {
   /// openness ladder's own output and must be carried over, not re-sampled.
   void buildRaw(const Octree& finest, const Vec<Dim>& h0, std::vector<double> alphaRaw,
                 bool periodic = true, bool liftRoot = true, Index bottomExtent = 4) {
+    bottomExtent_ = bottomExtent;
     hmg_ = std::make_unique<AmrMultigrid<Dim, Bits>>();
     hmg_->build(finest, h0, liftRoot, bottomExtent);
     hmg_->setOpennessRaw(std::move(alphaRaw));
@@ -192,7 +203,35 @@ class Multigrid {
       lv.op.c0 = c0;
       lv.op.cD = cD;
     }
+    // The exact bottom assembles the pure FV Laplacian from the host AmrPoisson, which carries no
+    // reaction term — so a Helmholtz hierarchy falls back to the Jacobi bottom rather than solving
+    // the wrong operator. (docs/amr_mg_depth.md §6.6 scopes the exact bottom to the pressure.)
+    if (c0 != 0.0 || cD != 1.0)
+      amgOn_ = false;
   }
+
+  /// Select what solves the coarsest level (§6.6). Takes effect immediately — the exact bottom is
+  /// (re)assembled here — so it may be called before or after build().
+  void setBottom(Bottom b) {
+    bottomKind_ = b;
+    buildBottom();
+  }
+  Bottom bottom() const { return bottomKind_; }
+  /// `"jacobi"` | `"amg"` — what the coarsest level ACTUALLY runs.
+  std::string bottomName() const { return amgOn_ ? "amg" : "jacobi"; }
+  Index bottomExtent() const { return bottomExtent_; }
+  Index bottomSize() const { return amg_ ? amg_->size() : 0; }
+  Index bottomIdentityRows() const { return amg_ ? amg_->numIdentityRows() : 0; }
+  int bottomComponents() const { return amg_ ? amg_->numComponents() : 0; }
+  int bottomIters() const { return amg_ ? amg_->lastIters() : 0; }
+  /// Whether the exact bottom's per-V-cycle solve runs on the device (§5.5's 10^4-row rule).
+  bool bottomOnDevice() const { return amg_ && amg_->onDevice(); }
+
+  /// Opt-in §6.6 consistency gate (flow's `AGMG_DEBUG`): after every exact bottom solve, recompute
+  /// |b − L x| with the V-CYCLE'S OWN FvOp and record max|b − Lx| / max|b|. Off by default (two
+  /// extra device reductions per V-cycle); §10 quotes `bottomResidual()` at <= 1e-9.
+  void setBottomCheck(bool on) { bottomCheck_ = on; }
+  double bottomResidual() const { return bottomRel_; }
 
   std::size_t numLevels() const { return levels_.size(); }
   Index numLeaves(std::size_t L = 0) const { return levels_[L].n; }
@@ -210,8 +249,12 @@ class Multigrid {
     Level& lv = levels_[L];
     View<const double> bc(lv.b);
     if (L + 1 == levels_.size()) {
-      for (int s = 0; s < bottom; ++s)
-        jacobiFv(lv.op, lv.x, bc, lv.tmp, omega);
+      if (amgOn_) {
+        bottomSolveExact(lv);  // §6.6: the agglomerated GraphAMG-PCG solve
+      } else {
+        for (int s = 0; s < bottom; ++s)
+          jacobiFv(lv.op, lv.x, bc, lv.tmp, omega);
+      }
       if (removeMean_)
         removeMeanFv(lv.op, lv.x);
       return;
@@ -352,6 +395,7 @@ class Multigrid {
     const Index n0 = levels_[0].n;
     dq_ = View<double>("mg_dq", static_cast<std::size_t>(n0));
     b0true_ = View<double>("mg_b0", static_cast<std::size_t>(n0));
+    buildBottom();  // §6.6: the exact coarsest-level solve, if the ladder stopped short
   }
 
   // Build the consistent face CSR (+ invVol/bcDiag) for one level by assembling it ON THE DEVICE
@@ -361,6 +405,61 @@ class Multigrid {
   // re-upload. The Helmholtz c0/cD of this level are preserved (assembleFv returns the pure-L
   // defaults; setHelmholtz / a prior value is re-applied), so a reassemble after the geometry moves
   // keeps the momentum-preconditioner form.
+  /// §6.6. Decide whether the coarsest level needs the exact bottom and, if so, assemble it once.
+  /// The criterion is the coarsest grid's largest EXTENT (not its cell count): that is what decides
+  /// how many damped-Jacobi sweeps the slowest mode needs.
+  void buildBottom() {
+    amgOn_ = false;
+    amg_.reset();
+    if (!hmg_ || levels_.empty())
+      return;
+    const std::size_t Lc = levels_.size() - 1;
+    const Poisson& ap = hmg_->op(Lc);
+    Index E = 0;
+    for (int d = 0; d < Dim; ++d)
+      E = std::max(E, ap.octree().brick()[d]);
+    const bool want =
+        (bottomKind_ == Bottom::Agglomerated) || (bottomKind_ == Bottom::Auto && E > bottomExtent_);
+    if (!want)
+      return;
+    // Singular iff the operator carries no Dirichlet term anywhere — read from the assembly, so it
+    // does not depend on whether setRemoveMean has been called yet.
+    const auto A = ap.assembleFv();
+    bool singular = true;
+    for (double d : A.bcDiag)
+      if (d != 0.0) {
+        singular = false;
+        break;
+      }
+    amg_ = std::make_unique<AmgBottom<Dim, Bits>>();
+    amg_->build(ap, singular);
+    amgOn_ = true;
+  }
+
+  /// One exact bottom solve. `AmgBottom` takes and returns device views: at or below 10^4 rows it
+  /// stages them to the host and runs the CG there, above it the CG runs on the device (§5.5).
+  void bottomSolveExact(Level& lv) {
+    amg_->solve(View<const double>(lv.b), lv.x);
+    if (!bottomCheck_)
+      return;
+    residualFv(lv.op, View<const double>(lv.x), View<const double>(lv.b), lv.res);
+    auto res = lv.res;
+    auto bb = lv.b;
+    double rm = 0.0, bm = 0.0;
+    Kokkos::parallel_reduce(
+        "amr::bottom_check", lv.n,
+        KOKKOS_LAMBDA(const Index i, double& a, double& c) {
+          const double r = res(i) < 0.0 ? -res(i) : res(i);
+          const double b = bb(i) < 0.0 ? -bb(i) : bb(i);
+          if (r > a)
+            a = r;
+          if (b > c)
+            c = b;
+        },
+        Kokkos::Max<double>(rm), Kokkos::Max<double>(bm));
+    bottomRel_ = (bm > 0.0) ? rm / bm : 0.0;
+  }
+
   void buildFaceCsr(const Poisson& ap, const Octree& t, Level& lv) {
     const double c0 = lv.op.c0, cD = lv.op.cD;
     BlockOctreeView<Dim, Bits> ov;
@@ -380,6 +479,7 @@ class Multigrid {
     const std::size_t nl = hmg_->numLevels();
     for (std::size_t L = 0; L < nl && L < levels_.size(); ++L)
       buildFaceCsr(hmg_->op(L), hmg_->op(L).octree(), levels_[L]);
+    buildBottom();  // the exact bottom is assembled FROM that operator, so it is stale otherwise
   }
 
  private:
@@ -466,6 +566,11 @@ class Multigrid {
   std::vector<Level> levels_;
   bool kappaRestrict_ = false;  // default: plain volume-average restriction
   bool removeMean_ = false;     // default off; per-level nullspace projection for singular MG-PCG
+  Bottom bottomKind_ = Bottom::Auto;
+  Index bottomExtent_ = 4;
+  bool amgOn_ = false, bottomCheck_ = false;
+  double bottomRel_ = 0.0;
+  std::unique_ptr<AmgBottom<Dim, Bits>> amg_;
   View<Index> qStart_, qSlot_;  // finest-level quadratic correction CSR
   View<double> qCoef_;
   View<double> dq_, b0true_;  // finest-level deferred-correction scratch

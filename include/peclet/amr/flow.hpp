@@ -822,17 +822,19 @@ class AmrFlow {
         // gpOp0() reads presMGD_ whenever dist_ is set, so building presMG_ here left the ghost
         // solver pointing at an empty operator.
         if (dist_)
-          presMGD_.build(*dist_, h0_, binFn, &dhalo_);
+          presMGD_.build(*dist_, h0_, binFn, &dhalo_, /*liftRoot=*/true, presBottomExtent_);
         else
-          presMG_.build(*t_, h0_, binFn, /*periodic=*/true);
+          presMG_.build(*t_, h0_, binFn, /*periodic=*/true, /*immersedWall=*/false,
+                        /*liftRoot=*/true, presBottomExtent_);
         profPhase("presMG.build");
       } else {
         auto binFn = makeBinaryOpenFn([&sdfFn](const Vec<3>& p) { return sdfFn(p); }, h0_);
         pres_.buildOpenness(binFn);
         if (dist_)
-          presMGD_.build(*dist_, h0_, binFn, &dhalo_);
+          presMGD_.build(*dist_, h0_, binFn, &dhalo_, /*liftRoot=*/true, presBottomExtent_);
         else
-          presMG_.build(*t_, h0_, binFn, /*periodic=*/true);
+          presMG_.build(*t_, h0_, binFn, /*periodic=*/true, /*immersedWall=*/false,
+                        /*liftRoot=*/true, presBottomExtent_);
       }
       ghostGrad_ = true;  // the directional gradient is part of the scheme
       // Fragmentation guard: pockets outside the main binary component are decoupled (see
@@ -847,10 +849,17 @@ class AmrFlow {
       auto openFn = [&](const Vec<3>& fc, int axis) { return faceFrac(sdfFn, fc, axis); };
       pres_.buildOpenness(openFn);
       if (dist_)
-        presMGD_.build(*dist_, h0_, openFn, &dhalo_);
+        presMGD_.build(*dist_, h0_, openFn, &dhalo_, /*liftRoot=*/true, presBottomExtent_);
       else
-        presMG_.build(*t_, h0_, openFn, /*periodic=*/true);
+        presMG_.build(*t_, h0_, openFn, /*periodic=*/true, /*immersedWall=*/false,
+                      /*liftRoot=*/true, presBottomExtent_);
     }
+    // What solves the coarsest level (docs/amr_mg_depth.md §6.6): `auto` engages the agglomerated
+    // GraphAMG-PCG bottom only where the ladder ran out above `presBottomExtent_`.
+    if (dist_)
+      presMGD_.setBottom(presBottom_);
+    else
+      presMG_.setBottom(presBottom_);
     // Singular periodic pressure: per-level nullspace projection.
     if (dist_) {
       presMGD_.setRemoveMean(true);
@@ -1836,8 +1845,40 @@ class AmrFlow {
   /// still `"jacobi"` on every path; `predict_pressure_hierarchy` reports the bottom of the
   /// FINISHED design and so may say `"amg"` where this says `"jacobi"`.
   std::string pressureMgBottom() const {
-    return dist_ ? presMGD_.bottomName() : std::string("jacobi");
+    return dist_ ? presMGD_.bottomName() : presMG_.bottomName();
   }
+
+  /// What solves the coarsest pressure level (docs/amr_mg_depth.md §6.6/§11.6): `"auto"` (the
+  /// default — the agglomerated GraphAMG-PCG bottom engages iff the coarsest global extent exceeds
+  /// `pressureBottomExtent()`, where 60 damped-Jacobi sweeps stop being a solve), `"smoother"`
+  /// (always the sweeps), `"agglomerated"` (always the exact solve). Flow's three spellings.
+  /// Call BEFORE setSolid — that is where the pressure hierarchy is built.
+  void setPressureBottom(const std::string& kind) {
+    using B = typename Multigrid<3, Bits>::Bottom;
+    if (kind == "auto")
+      presBottom_ = B::Auto;
+    else if (kind == "smoother")
+      presBottom_ = B::Smoother;
+    else if (kind == "agglomerated")
+      presBottom_ = B::Agglomerated;
+    else
+      throw std::runtime_error(
+          "amr::AmrFlow::setPressureBottom: expected 'auto', 'smoother' or 'agglomerated'");
+    if (dist_)
+      presMGD_.setBottom(presBottom_);
+    else
+      presMG_.setBottom(presBottom_);
+  }
+
+  /// Where the pressure ladder stops lifting the root and hands over to the bottom
+  /// (docs/amr_mg_depth.md §6.2/§11.4). Developer tier — the shipped default is measured, not
+  /// preferred (tests/study/amr_pressure_depth.py --sweep). Call BEFORE setSolid.
+  void setPressureBottomExtent(Index e) {
+    if (e < 1)
+      throw std::runtime_error("amr::AmrFlow::setPressureBottomExtent: must be >= 1");
+    presBottomExtent_ = e;
+  }
+  Index pressureBottomExtent() const { return presBottomExtent_; }
 
   /// Copy the divergence-free face field to host (one value per CSR (sub)face, forEachFaceFull
   /// order).
@@ -2570,6 +2611,10 @@ class AmrFlow {
   AmrCutCell<Bits> mom_;
   AmrPoisson<3, Bits> pres_;
   Multigrid<3, Bits> presMG_;
+  /// docs/amr_mg_depth.md §6.8's two pressure-ladder parameters. `presBottomExtent_` is the
+  /// measured shipped default (§11.4); `presBottom_` is `auto`.
+  typename Multigrid<3, Bits>::Bottom presBottom_ = Multigrid<3, Bits>::Bottom::Auto;
+  Index presBottomExtent_ = 4;
   MomentumMG<Bits> momMG_;  // Galerkin velocity multigrid (momentum preconditioner)
   VelocityMG<Bits> velMG_;  // rediscretized staircase velocity multigrid (alternative)
   MomentumOp momOp_;
