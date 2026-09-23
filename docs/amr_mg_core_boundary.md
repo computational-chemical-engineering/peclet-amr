@@ -103,13 +103,20 @@ template <int Dim> struct StageTarget {
 };
 
 // `liftable(dec)` is the METHOD's predicate ("every block can coarsen in place one more time").
-// Order: InPlace if liftable(cur); else the largest d with liftable(agglomerated(d)) and
-// minExtent(agglomerated(d)) >= 2*minExtent (flow's rule, verbatim); else a proportional ORB on
-// np_L = min(cur.numBlocks(), cells(G_L) / (2*minExtent)^Dim) ranks [0, np_L) if liftable; else
-// Replicated (one block; ownerOf = every rank).
+// ORDER (corrected in §11 — the first draft's order could never reach Repartition, because the
+// one-block candidate agglomerated(0) is always liftable):
+//   1. InPlace if liftable(cur) (and not tooSmall);
+//   2. the sibling search S = largest d with liftable(agglomerated(d)), fewer blocks, and the
+//      extent rule (flow's search, verbatim — S1's own function);
+//   3. S is ACCEPTED iff maxBlockCells == 0 (flow's byte-identical mode) or the largest target
+//      block of S has <= maxBlockCells cells;
+//   4. else Repartition: a proportional ORB of G_L on np_L ranks [0, np_L) (§11.2), if liftable;
+//   5. else S if it exists; else Replicated.
+// `maxBlockCells` is the caller's "a rank never holds more cells of a coarse level than it holds
+// of its finest level" — the finest level's largest block; 0 disables Repartition.
 template <int Dim, class Liftable>
 StageTarget<Dim> chooseStageTarget(const BlockDecomposer<Dim>& cur, const IVec<Dim>& G_L,
-                                   Liftable&& liftable, int minExtent);
+                                   Liftable&& liftable, int minExtent, Index maxBlockCells = 0);
 
 // --- communicators + membership ----------------------------------------------------------
 struct StageComm {
@@ -289,3 +296,196 @@ delete-and-include, not a rewrite.
 > flow's sibling-merge telescoping cannot handle the weighted decomposition load-balanced CFD-DEM
 > runs on (`mac_cutcell_mg.hpp:513–517`), and amr's C1 needed the same machinery. Evidence:
 > `amr/docs/amr_mg_core_boundary.md`, `amr/docs/amr_mg_depth.md` §5.6, `MG_TELESCOPING_PLAN.md` §4.
+
+## 11. S2 specification — the Repartition kind and the aligned weighted ORB
+
+> Written 2026-09-24 after S1 landed (core branch `stage`: `stage_target.hpp`, `stage_comm.hpp`,
+> `redistribute_topology.hpp`, `gather_by_global_id.hpp`; the policy reproduces flow's search on
+> 4872 ladder levels bitwise, the movement matches flow's gather/scatter and amr's replicated
+> gather bitwise) and after the measurement of §6. S1's Part A (`maxBlockCells == 0`, formerly
+> `allowRepartition == false`) must keep passing unchanged.
+
+### 11.1 The corrected policy order, and what excludes the one-block candidate
+
+The first draft ordered *sibling search → Repartition → Replicated*, and the sibling search can
+never fail: `agglomerated(0)` is one block at origin 0 of size `G_L`, liftable whenever the level
+grid can halve. The measurement sharpens the picture: on a weighted tree the search lands at the
+shallowest depth whose splits are all even, so what it returns is a *legal* sibling merge that
+sheds far too many ranks for the level's size. Neither the depth `d`, nor the number of tree
+levels merged, nor the shed *ratio* distinguishes that from flow's validated proportional ladder
+(384³/1536 merges 1536 → 64, a 24× shed, and is fine): the discriminator is the **absolute size of
+the block a rank would receive** — 12³ = 1 728 cells there, 96³ = 884 736 cells in the trap.
+
+So the economic knob is one number with a physical meaning: **a rank never holds more cells of a
+coarse level than it holds of the finest level.** The caller passes `maxBlockCells` = the largest
+finest-level block (flow: level 0's `n_` Allreduced MAX; amr: the largest rank's root-brick cell
+count `Π blockBrick · 2^(lmax·Dim)`, or its leaf count — the method's choice, replicated).
+
+```
+chooseStageTarget(cur, G_L, liftable, minExtent, maxBlockCells):
+  1. tooSmall := minExtent > 0 && minBlockExtent(cur) < minExtent
+     if nb <= 1 || (liftable(cur) && !tooSmall): return InPlace                 # S1, unchanged
+  2. S := siblingMergeSearch(cur, liftable, minExtent)                          # S1's function, verbatim
+  3. if S && (maxBlockCells == 0 || maxCells(S.dec) <= maxBlockCells): return SiblingMerge(S)
+  4. R := repartitionTarget(cur, G_L, liftable, minExtent, maxBlockCells)       # §11.2
+     if R: return Repartition(R)
+  5. if S: return SiblingMerge(S)            # legal but heavy — the measured collapse, never wrong
+  6. return Replicated
+```
+
+`maxCells(dec)` is the largest block's cell count. With `maxBlockCells == 0` steps 4–6 are never
+reached from step 3 except through S1's existing fallthrough (no `S`), so Part A is unchanged
+byte for byte. **The one-block candidate is excluded exactly when the level is larger than one
+finest-level block** — which is precisely when replicating or collapsing it is a scaling defect,
+and never at the true bottom (a 3³ or 6³ level is always accepted).
+
+Worked against the §6 table (`maxBlockCells` = level-0 block, ≈ `96³/np`, up to 1.8× for the
+weighted rows): heap np = 8 (`d = 0`, 884 736 cells > ~200k) → Repartition on 8; heap np = 4 →
+Repartition on 4; flat bed np = 8 (`d = 2`, 4 ranks of 221k > 110k) → Repartition on 8; tilt-0.3
+np = 4 at L1 (48³ = 110 592 ≤ 221k) → SiblingMerge accepted (measured cheap: 0.166 → 0.168);
+flat bed np = 4 → InPlace (null). flow's 384³/1536 ladder: 1 728 ≤ 37k → SiblingMerge accepted —
+**the validated proportional ladders are unchanged.**
+
+### 11.2 `np_L` and the repartition target
+
+```
+repartitionTarget(cur, G_L, liftable, minExtent, maxBlockCells):
+  np     := cur.numBlocks()
+  cells  := Π_d G_L[d]
+  npL    := clamp(ceil(cells / maxBlockCells), 1, np)          # as many ranks as the size justifies
+  if minExtent > 0:                                            # the extent rule, when it is ON:
+     cap := Π_d max(1, floor(G_L[d] / (2*minExtent)))          # blocks fat enough to survive the
+     npL := min(npL, cap)                                      # halving that follows (flow's rule)
+  # minExtent == 0 (flow's "economic trigger disabled"): no cap — npL is set by maxBlockCells only.
+  for n in [npL, then the largest power of two <= npL, then halving]:
+     R := BlockDecomposer(n, G_L)                              # proportional, unweighted, unaligned
+     if liftable(R): return {kind = Repartition, dec = R, ownerOf = identity on [0, n), groupOf = {}}
+  return none                                                  # step 5 / 6 take over
+```
+
+No division by zero: the extent cap is only formed when `minExtent > 0`, and `maxBlockCells > 0`
+is the precondition of reaching this function. `np_L` never exceeds the current rank count (ranks
+are only shed) and is at least 1. The liftability retry is what stops a stage from firing again at
+the very next level: a proportional ORB of an even grid on a power-of-two rank count is liftable
+under both flow's per-axis and amr's all-axes predicates; the loop is a pure, replicated function.
+Owners are parent ranks `[0, np_L)` with `ownerOf[b] = b`, so S1's convention "parent rank `r`
+owns target block `r`" holds for the active ranks unchanged.
+
+`StageComm` for Repartition: `group = parent` (every rank takes part in the movement),
+`sub = MPI_Comm_split(parent, rank < np_L ? 0 : MPI_UNDEFINED, rank)`, `active = rank < np_L`,
+`myTargetBlock = active ? rank : -1`, `members = {}` (there are no groups). The continued
+hierarchy runs on `sub` exactly as it does after a sibling merge — nothing new for the methods.
+
+### 11.3 The planned point-to-point movement (`RedistributeTopology`, kind `Repartition`)
+
+Shaped like S1's build: this rank's `srcSlots_` from `srcIndex` over its current block, per-segment
+`dstSlots_` from `dstIndex`, byte-packed field-major per segment, and `forward` / `backward` as the
+two directions of one fixed pattern. What changes is that the segments are **box intersections**
+rather than whole member blocks, and the transport is point-to-point on `c.parent`:
+
+- **Build (once).** For every target block `t` (owned by parent rank `t`): `I = my src block ∩
+  dst.dec.block(t)`; if non-empty, a *send segment* `{dst = t, cells of I in x-fastest order via
+  srcIndex}`. If active, for every source rank `s`: `J = dst.dec.block(rank) ∩ src.block(s)`; if
+  non-empty, a *receive segment* `{src = s, cells of J via dstIndex}`. Every rank computes every
+  intersection from the two decompositions alone — **no handshake, no NBX**: the pattern is known
+  to both sides by construction, which is what makes it a topology rather than an exchange plan.
+  The self-intersection (`t == rank`) is a direct copy, as in `redistributeGridFields`.
+  Assertions: send segments tile my source block; receive segments tile my target block;
+  `requireDistinct` on both slot lists (S1's).
+- **`forward`.** Pack each send segment (field-major within the segment, S1's layout);
+  `MPI_Irecv` every receive segment, `MPI_Isend` every send segment (one message each, `MPI_BYTE`,
+  a fixed tag), self-copy, `MPI_Waitall`, unpack. **`backward`** is the mirror: active ranks send
+  their receive segments back, every rank receives its send segments. Each cell has exactly one
+  source and one destination, so the result is independent of message order — bitwise the same
+  values as a one-shot `redistributeGridFields` over the same boxes (the test oracle, §11.6).
+- **Tag.** One constant from the range core reserves below the AMR direct tags (11 / 41 / 45,
+  `amr/CLAUDE.md`), offset by a per-topology `id` the caller passes at build (the level index) so
+  two levels' stages in flight on the same communicator cannot pair messages across each other;
+  `Waitall` before returning keeps the pattern serial in practice.
+- **Later, not now:** persistent requests (`MPI_Send_init`) and device-resident buffers, exactly
+  as `GridHalo` grew them; host-staged `Isend`/`Irecv` is the S2 form.
+
+`gatherByGlobalId` and the SiblingMerge / Replicated paths are untouched.
+
+### 11.4 The aligned weighted ORB — `init(numBlocks, globalSize, weights, align)`
+
+**Contract.** `align[k] ≥ 1`, `globalSize[k] % align[k] == 0`, `weights` covers the global grid
+x-fastest (`CONVENTIONS.md`). Result: a weighted ORB every one of whose split values, block origins
+and block sizes is a multiple of `align[k]` on axis `k`, so `coarsened(align)` divides cleanly and
+in-place lifting nests for `log2(align[k])` levels on every axis; `align_` is set to `align`.
+
+**Construction — coarse-first, never snap-after** (`DECOMPOSITION_AND_MULTIGRID.md` §1.3, §2.4,
+§2.5: snapping a chosen split cascaded 96|96 into 128|64; on the coarse grid one cell *is* the
+quantum):
+
+```
+Gc[k]  := globalSize[k] / align[k]
+wc[c]  := Σ weights over the align-box of coarse cell c        (x-fastest over Gc)
+coarse := BlockDecomposer(); coarse.initImpl(numBlocks, Gc, &wc)   # the EXISTING weighted ORB, align_ = 1
+*this  := coarse.refined(align)                                     # the EXISTING exact inverse of coarsened()
+```
+
+Both halves already exist: the weighted `initImpl` chooses each split on cumulative weight, and on
+the coarse grid that cumulative weight is exactly the fine weight of the same boxes; `refined()`
+scales splits, origins and sizes and sets `align_`. The unweighted aligned `init` (the snapping
+one, `block_decomposer.hpp:394–400`) is left as it is — existing partitions stay byte-identical.
+
+**Bit-exact reduction at `align = 1`:** `Gc = globalSize`; `wc[c]` is a one-term sum, so
+`wc == weights` bitwise; `initImpl` is the same call; `refined({1,…})` multiplies integers by 1.
+Hence `init(n, G, w, {1,…})` and `init(n, G, w)` produce identical `origins_`, `sizes_`, `tree_`
+(gate G-A1).
+
+**Choosing `a` (`align = 2^a` on every axis) from the imbalance budget — a pure, replicated
+function** (`weights` is the global vector on every rank in both `rebalanceByWeights` and amr's
+`rebalance`):
+
+```
+chooseAlignedWeighted(numBlocks, G, weights, budget = 1.05, aMax):
+  aMax := min(aMax, min_k trailingZeros(G[k]), largest a with Π_k (G[k]/2^a) >= numBlocks and every G[k]/2^a >= 2)
+  for a in aMax .. 1:
+     D := init(numBlocks, G, weights, {2^a,…})
+     imb := max_b W(b) / (W_total / numBlocks)              # weight imbalance, the balancer's own metric
+     if imb <= budget: return (D, a)
+  return (init(numBlocks, G, weights), 0)                   # today's partition — never worse than now
+```
+
+Cost: at most `aMax` ORB builds on grids shrinking by 8× each, once per rebalance — noise beside
+the migration. Expected `a`: flow at 384³/1536 (blocks 24–48 cells per axis) `a = 1–2`; at ≤ 384
+ranks `3–4`; amr's brick-granular balancer (`~8` bricks per axis per rank) `0–1`. Log `a` and
+`imb` (`check_decomposition.py --predict`, amr's `predict`).
+
+**Consequence for the measured trap.** The collapse lands at the shallowest odd split. With
+`align = 2^a` every split is even for `a` lifts, so the telescope cannot fire above level `a`, and
+whatever it then does happens on a level `8^a` smaller: on the §6 heap case with `a = 2`, level 2
+is 24³ = 13 824 cells — below one rank's level-0 block, so even a collapse to one rank there is
+accepted by §11.1 and costs nothing measurable. **S2a alone should return the probe to the
+unweighted timing.**
+
+### 11.5 Split S2 in two, in this order
+
+| | content | why this order |
+|---|---|---|
+| **S2a — aligned weighted `init` + `chooseAlignedWeighted`** (core), then its use in `rebalanceByWeights` / `coupling.rebalance()` / amr `rebalance` (the consumers' halves belong to S5 / S3 but the core half lands first) | §11.4 | The measurement says the defect is *where the first odd split sits*, and alignment moves every split; it is a decomposition change with no new communication, and it fixes the measured flow case on its own (§11.4). |
+| **S2b — the Repartition kind** (policy branch, `StageComm`, `RedistributeTopology` kind) | §11.1–11.3 | Needed where alignment cannot buy depth at bounded imbalance: amr's brick-granular balancer, `a = 0` forced by a very uneven weight, and large `np` where the budget yields `a = 1`. Also the correctness backstop that makes a rebalanced run never collapse a level larger than a rank's fine block. |
+
+S2a first because it has the higher measured leverage and the smaller blast radius; S2b is not
+optional — amr's S3 depends on it and it is what makes the policy honest under `maxBlockCells`.
+
+### 11.6 Gates, with expected numbers
+
+| gate | where | configuration | criterion |
+|---|---|---|---|
+| G-A1 reduction | core | 50 random weight fields, `np ∈ {1..8, 12, 24}`, grids 32³ / 48×32×16 / 96³ | `init(w, align=1)` == `init(w)`: `origins_`, `sizes_`, `tree_` bitwise |
+| G-A2 nesting | core | same, `a ∈ {1, 2, 3}` | every block origin and size a multiple of `2^a`; `coarsened(2^a)` succeeds; after `j ≤ a` halvings every block passes BOTH flow's per-axis and amr's all-axes `liftable` |
+| G-A3 chooser | core | same | returned `imb ≤ 1.05` whenever `a > 0`; `a` identical on every rank (Allreduce of a hash); `a = 0` returns today's partition bitwise |
+| **G-A4 the probe, alignment only** | flow (S5a) | `weighted_dec0_telescope_probe.py`, heap np = 8 and 4, `rebalanceByWeights` through `chooseAlignedWeighted`, Repartition OFF | telescope fires no earlier than level `a` (log the ladder and `a`; expect `a = 2` at 96³/np = 8); projection ≤ **1.15×** the unweighted baseline (0.080 → ≤ 0.092 s at np = 8; was 0.180); iterations 8 → 8; momentum time within ±10 % of the weighted baseline (the cell imbalance is the balancer's, not ours) |
+| G-B1 policy | core | the eight §6 trees exported as fixtures + S1's 4872-level fixture | with `maxBlockCells` = level-0 block: Repartition on 8 / 4 / 8 for the three `d = 0` rows and the flat-bed np = 8 row, SiblingMerge accepted for tilt-0.3 np = 4 at L1, InPlace for flat-bed np = 4; with `maxBlockCells = 0`: S1 Part A byte-identical |
+| G-B2 movement | core | `np ∈ {1..8}`, random proportional and weighted `src`, proportional `dst` on `np_L ∈ {1, 2, np/2, np}`, 1–3 fields | `backward(forward(x)) == x` bitwise; `forward` == `redistributeGridFields` values on the box layout; inactive ranks receive nothing; send segments tile the source block, receive segments the target block |
+| G-B3 the probe, repartition only | flow (S5b) | as G-A4 with alignment forced to `a = 0` and Repartition ON | Repartition at level 0 on all ranks; projection ≤ **1.3×** the unweighted baseline (one level-0 field exchange per direction per V-cycle); iterations 8 → 8 |
+| G-B4 the probe, both | flow (S5) | defaults | ≤ 1.15× (alignment wins; repartition silent unless `a` is capped) — and the comment at `mac_cutcell_mg.hpp:513–517` corrected |
+| G-B5 amr | amr (S3) | `amr_mg_depth.md` WO4b gate | weighted 24³-brick partition, np = 2/4/8: single-rank ladder and solution to ≤ 1e-13, np-independent iterations |
+
+Byte-identity of everything that existed: `maxBlockCells = 0` and `align = 1` are the shipped
+behaviours, so every existing MPI ctest in core, flow and amr must pass unchanged before either
+default moves; moving a default (flow's `rebalanceByWeights` to the aligned init; amr's rebalance)
+is its own commit with the G-A4 / G-B5 numbers in the message.
