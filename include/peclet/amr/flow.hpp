@@ -47,6 +47,7 @@
 #include "peclet/amr/multigrid.hpp"
 #include "peclet/amr/pcg.hpp"
 #include "peclet/amr/poisson.hpp"
+#include "peclet/amr/seam_recon.hpp"  // seam-reconstruction tables (docs/amr_cf_convective.md)
 #include "peclet/amr/velocity_mg.hpp"
 #include "peclet/core/common/host_parallel.hpp"
 #include "peclet/core/common/types.hpp"
@@ -977,6 +978,20 @@ class AmrFlow {
         cfGrad_[static_cast<std::size_t>(a)] =
             uploadCfCsr(gd[static_cast<std::size_t>(a)], "cf_grad");
       cfUfVel_ = uploadCfCompCsr(ufd.vel, "cf_ufvel");
+      // The convective flux at a 2:1 seam (ROADMAP B5, docs/amr_cf_convective.md §5.2): the
+      // descriptors + records the two advective kernels reconstruct the ADVECTED value from.
+      // It reuses the SAME per-face gate (`regularOk`) and the SAME tangential sample operator
+      // (`cfAppendStencil`, quadratic — §5.1 Q-A: one such operator suite-wide) as the four
+      // overlays above, which is why it is built here rather than beside the FaceGeom.
+      //
+      // It RIDES THE C/F SCHEME (the design note pins the stencil — "cfAppendStencil ...
+      // scheme = quadratic" §5.1 — but not this gating): with CfScheme::standard the whole
+      // projection family takes the raw coarse value at a 2:1 face, and a quadratic tangential
+      // sample in the advection alone would be a closure the rest of the operator does not
+      // share. It is also what keeps the distributed probe story exact — probeCfScheme() and
+      // probeSeamLayer() run under the same condition, so every coordinate this builder asks
+      // for is already in the halo registry.
+      uploadSeamRecon(buildSeamRecon(pres_, regularOk, fluidOk, CfScheme::quadratic));
     } else {
       cfGhostCols_ = 0;
       cfMom_ = CfCsrDev{};
@@ -984,6 +999,7 @@ class AmrFlow {
       for (int a = 0; a < 3; ++a)
         cfGrad_[static_cast<std::size_t>(a)] = CfCsrDev{};
       cfUfVel_ = CfCompCsrDev{};
+      clearSeamRecon();
     }
     profPhase("cf overlays");
     if (ghostProj_) {
@@ -1759,14 +1775,59 @@ class AmrFlow {
     std::vector<Index> start, nbr, upupI, upupJ;
     std::vector<int> axis, dir;
     std::vector<double> rawArea, dist, alpha;
+    // Seam reconstruction (docs/amr_cf_convective.md §5.2), empty where no tables were built.
+    std::vector<Index> seam, sampI, sampJ, uuRecI, uuRecJ, recStart, recCell;
+    std::vector<double> d1I, d1J, recDist, recW;
+    // World centre of EVERY slot (local leaves then ghosts, size nExt): the only way a caller can
+    // say what cell a ghost index in `nbr` / `recCell` is, and so the only way the record tables
+    // can be compared across decompositions (gate WO1c).
+    std::vector<double> center;
   };
   FaceTopologyHost faceTopology() const {
-    return {peclet::core::toVector(geom_.start),   peclet::core::toVector(geom_.nbr),
-            peclet::core::toVector(geom_.upupI),   peclet::core::toVector(geom_.upupJ),
-            peclet::core::toVector(geom_.axis),    peclet::core::toVector(geom_.dir),
-            peclet::core::toVector(geom_.rawArea), peclet::core::toVector(geom_.dist),
-            peclet::core::toVector(geom_.alpha)};
+    FaceTopologyHost t;
+    t.start = peclet::core::toVector(geom_.start);
+    t.nbr = peclet::core::toVector(geom_.nbr);
+    t.upupI = peclet::core::toVector(geom_.upupI);
+    t.upupJ = peclet::core::toVector(geom_.upupJ);
+    t.axis = peclet::core::toVector(geom_.axis);
+    t.dir = peclet::core::toVector(geom_.dir);
+    t.rawArea = peclet::core::toVector(geom_.rawArea);
+    t.dist = peclet::core::toVector(geom_.dist);
+    t.alpha = peclet::core::toVector(geom_.alpha);
+    t.seam = peclet::core::toVector(geom_.seam);
+    t.sampI = peclet::core::toVector(geom_.sampI);
+    t.sampJ = peclet::core::toVector(geom_.sampJ);
+    t.uuRecI = peclet::core::toVector(geom_.uuRecI);
+    t.uuRecJ = peclet::core::toVector(geom_.uuRecJ);
+    t.recStart = peclet::core::toVector(geom_.recStart);
+    t.recCell = peclet::core::toVector(geom_.recCell);
+    t.d1I = peclet::core::toVector(geom_.d1I);
+    t.d1J = peclet::core::toVector(geom_.d1J);
+    t.recDist = peclet::core::toVector(geom_.recDist);
+    t.recW = peclet::core::toVector(geom_.recW);
+    t.center = slotCenters();
+    return t;
   }
+  /// World centre of every slot of the extended (local + ghost) leaf array, row-major (nExt, 3).
+  /// Built from the block-local anchors the halo registry mirrors into `pres_`, plus the block's
+  /// own fine-grid origin, so a ghost's centre is its OWNER's centre — the global identity a
+  /// decomposition-independence check needs.
+  std::vector<double> slotCenters() const {
+    std::vector<double> c(static_cast<std::size_t>(nExt_) * 3, 0.0);
+    for (Index s = 0; s < nExt_; ++s) {
+      const std::array<long, 3> lo = pres_.loOf(s);
+      const double w = static_cast<double>(1L << pres_.levelOf(s));
+      for (int a = 0; a < 3; ++a)
+        c[static_cast<std::size_t>(s) * 3 + static_cast<std::size_t>(a)] =
+            origin_[a] + h0_[a] * (static_cast<double>(lo[a] + shiftD_[a]) + 0.5 * w);
+    }
+    return c;
+  }
+  /// Seam-reconstruction census (docs/amr_cf_convective.md §5.2): how many sample records (one per
+  /// 2:1 sub-face pair that passes the C/F gate) and face-layer records this rank built. LOCAL
+  /// under MPI, like `numCfGhostColumns`.
+  Index numSeamSampleRecords() const { return seamSampleRecords_; }
+  Index numSeamLayerRecords() const { return seamLayerRecords_; }
   Index numLeaves() const { return n_; }
   /// Distributed: number of ghost slots in the ±2 registry (0 single-rank).
   Index numGhostCells() const { return nExt_ - n_; }
@@ -1887,8 +1948,10 @@ class AmrFlow {
         bool viol = false;
         (void)buildGhostOverlay(*t_, pres_, mom_.sdfCRaw(), gpMatrixOrder_, gpRhsOrder_, &viol);
       }
-      if (cfScheme_ != CfScheme::standard)
-        probeCfScheme();  // the four buildCf*Delta builders' tangential reach
+      if (cfScheme_ != CfScheme::standard) {
+        probeCfScheme();   // the four buildCf*Delta builders' tangential reach
+        probeSeamLayer();  // the seam builder's far-side reach across a GHOST neighbour
+      }
       const double rBuildMs =
           std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - rT0).count();
       const long pend = dhalo_.resolveMisses();
@@ -1975,6 +2038,55 @@ class AmrFlow {
         }
       }
     }
+  }
+
+  /// Discovery arm for the SEAM builder (seam_recon.hpp), run beside probeCfScheme() inside
+  /// prepareDistributed's miss-collect fixpoint. Everything the builder reaches from a LOCAL cell
+  /// is already registered — the face sweep probes every sub-face neighbour of every local row and
+  /// probeCfScheme the tangential reach from the coarse cell of every local C/F face. What is NOT
+  /// is what it reaches from the NEIGHBOUR `j` of a local face when `j` is a ghost, because then
+  /// `j` owns no local row: (case 3) the four fine cells of the face layer BEYOND `j`, and
+  /// (case 2) the tangential reach of `cfAppendStencil` from `j`'s own coarser upstream cell.
+  /// Both are what the J-side of a face descriptor reads, so without them the record would be
+  /// withheld at a block seam and np = 1 would stop being bitwise against single-rank.
+  ///
+  /// Like probeCfScheme it is GATE-FREE on the layer probes (issuing them for every face, not
+  /// only the refined ones, is a strict superset and costs no ghosts: a coordinate inside a
+  /// same-level or coarser neighbour canonicalizes to that neighbour's own anchor, which the
+  /// face sweep has already registered). The case-2 tangential probes DO reach one cell further,
+  /// so they are issued only where the upstream really is coarser; an upstream that is still
+  /// unresolved this round resolves in the next one and the fixpoint picks it up then.
+  void probeSeamLayer() {
+    const Index n = t_->numLeaves();
+    hostParFor(n, [&](Index i) {
+      pres_.forEachFaceFull(i, [&](Index j, int axis, int dir, double, double, double) {
+        if (j < 0)
+          return;
+        const unsigned Lj = pres_.levelOf(j);
+        if (Lj > 0) {  // the four face-layer corners beyond j (a layer record with C == j)
+          const std::array<long, 3> lo = pres_.loOf(j);
+          const long sj = 1L << Lj, sh = sj >> 1;
+          std::array<long, 3> p{};
+          for (int d = 0; d < 3; ++d)
+            p[d] = lo[d];
+          p[axis] = (dir > 0) ? lo[axis] + sj : lo[axis] - 1;
+          for (int k = 0; k < 4; ++k) {
+            std::array<long, 3> q = p;
+            int bit = 0;
+            for (int t = 0; t < 3; ++t) {
+              if (t == axis)
+                continue;
+              q[t] = lo[t] + (((k >> bit) & 1) ? sh : 0L);
+              ++bit;
+            }
+            (void)pres_.probeSlot(q);
+          }
+        }
+        const Index uJ = pres_.periodicNeighbor(j, axis, dir);
+        if (uJ >= 0 && pres_.levelOf(uJ) > Lj)
+          probeCfTangential(uJ, axis);  // a sample record with C == uJ, F == j (case 2)
+      });
+    });
   }
 
   /// Mirror the halo registry's ghost metadata (block-local lo + level) into mom_ and pres_.
@@ -2116,6 +2228,39 @@ class AmrFlow {
   }
 
  private:
+  /// Upload the seam-reconstruction tables into geom_ (docs/amr_cf_convective.md §5.2).
+  void uploadSeamRecon(const SeamReconHost& h) {
+    geom_.seam = toDevice(h.seam, "seam_desc");
+    geom_.sampI = toDevice(h.sampI, "seam_sampi");
+    geom_.sampJ = toDevice(h.sampJ, "seam_sampj");
+    geom_.uuRecI = toDevice(h.uuRecI, "seam_uureci");
+    geom_.uuRecJ = toDevice(h.uuRecJ, "seam_uurecj");
+    geom_.d1I = toDevice(h.d1I, "seam_d1i");
+    geom_.d1J = toDevice(h.d1J, "seam_d1j");
+    geom_.recStart = toDevice(h.recStart, "seam_recstart");
+    geom_.recDist = toDevice(h.recDist, "seam_recdist");
+    geom_.recCell = toDevice(h.recCell, "seam_reccell");
+    geom_.recW = toDevice(h.recW, "seam_recw");
+    seamSampleRecords_ = h.numSampleRecords;
+    seamLayerRecords_ = h.numLayerRecords;
+  }
+  /// Drop them (the standard C/F scheme builds none): every slot stays on today's reconstruction.
+  void clearSeamRecon() {
+    geom_.seam = View<Index>{};
+    geom_.sampI = View<Index>{};
+    geom_.sampJ = View<Index>{};
+    geom_.uuRecI = View<Index>{};
+    geom_.uuRecJ = View<Index>{};
+    geom_.d1I = View<double>{};
+    geom_.d1J = View<double>{};
+    geom_.recStart = View<Index>{};
+    geom_.recDist = View<double>{};
+    geom_.recCell = View<Index>{};
+    geom_.recW = View<double>{};
+    seamSampleRecords_ = 0;
+    seamLayerRecords_ = 0;
+  }
+
   // Host build of the ghost-gradient overlay (setGhostGradient): one row per cut cell (fluid
   // with a solid face neighbour — the cells where the ABC grad3 is gauge-dependent O(1/h)),
   // holding a 3-point directional FD stencil per axis. Mirrors oracle::AmrFlow::gradOfDir: cut
@@ -2369,6 +2514,8 @@ class AmrFlow {
   CfCompCsrDev cfUfVel_;            // (uf_scheme − uf_std) face-field overlay: velocity part
   Index cfGhostCols_ = 0;           // overlay entries reading a ghost slot (diagnostic)
   Index cfCutFaces_ = 0;            // C/F slots where the face gate withholds the quadratic
+  Index seamSampleRecords_ = 0;     // seam tables: sample records built (docs/amr_cf_convective.md)
+  Index seamLayerRecords_ = 0;      // seam tables: face-layer records built
   View<double> maskC_;              // 1 = coupled row (Krylov subspace), 0 = pinned
   View<double> gpr_, gprh_, gpp_, gpph_, gpv_, gps_, gpsh_, gpt_;  // ghost BiCGStab scratch
   View<double> rscale_;

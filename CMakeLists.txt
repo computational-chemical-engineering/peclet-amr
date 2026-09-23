@@ -184,6 +184,21 @@ if(PECLET_AMR_BUILD_TESTS)
                      "${Python_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/python/test_amr.py" ${MPIEXEC_POSTFLAGS})
     set_tests_properties(python_amr_np2 PROPERTIES LABELS "mpi;python"
       ENVIRONMENT "${_py_env};PECLET_AMR_TEST_NP=2")
+    # The seam-reconstruction tables (docs/amr_cf_convective.md §5.2, WO1 acceptance b/c): every
+    # record checked cell by cell against an independent numpy rule on the graded N=32 mesh, and
+    # the owned descriptors compared against the single-rank build at np = 2 and 4.
+    add_test(NAME python_amr_seam_records
+             COMMAND "${Python_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/python/test_amr_seam_records.py")
+    set_tests_properties(python_amr_seam_records PROPERTIES LABELS "python"
+      ENVIRONMENT "${_py_env};PECLET_AMR_TEST_NP=1;OMP_NUM_THREADS=1")
+    foreach(_np 2 4)
+      add_test(NAME python_amr_seam_records_np${_np}
+               COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${_np} ${MPIEXEC_PREFLAGS}
+                       "${Python_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/python/test_amr_seam_records.py"
+                       ${MPIEXEC_POSTFLAGS})
+      set_tests_properties(python_amr_seam_records_np${_np} PROPERTIES LABELS "mpi;python"
+        ENVIRONMENT "${_py_env};PECLET_AMR_TEST_NP=${_np};OMP_NUM_THREADS=1")
+    endforeach()
     # The structural byte gate (QUALITY_PLAN §3.G): fixed-seed reference runs of every public entry
     # path, hashed; `--check python/state_hash_reference.json` fails on any drift. The reference is
     # toolchain-specific (its `toolchain` key); a build of another compiler / version / build type

@@ -818,8 +818,27 @@ class FlowDiagnostics {
     d["raw_area"] = vec1<double>(t.rawArea);
     d["dist"] = vec1<double>(t.dist);
     d["alpha"] = vec1<double>(t.alpha);
+    // Seam reconstruction (docs/amr_cf_convective.md §5.2). Empty arrays when no tables exist.
+    auto i64 = [](const std::vector<peclet::core::Index>& v) {
+      return vec1<std::int64_t>(std::vector<std::int64_t>(v.begin(), v.end()));
+    };
+    d["seam"] = i64(t.seam);
+    d["samp_i"] = i64(t.sampI);
+    d["samp_j"] = i64(t.sampJ);
+    d["uu_rec_i"] = i64(t.uuRecI);
+    d["uu_rec_j"] = i64(t.uuRecJ);
+    d["d1_i"] = vec1<double>(t.d1I);
+    d["d1_j"] = vec1<double>(t.d1J);
+    d["rec_start"] = i64(t.recStart);
+    d["rec_dist"] = vec1<double>(t.recDist);
+    d["rec_cell"] = i64(t.recCell);
+    d["rec_w"] = vec1<double>(t.recW);
+    d["cell_center"] = vec2<double>(std::vector<double>(t.center), 3);
     return d;
   }
+  // The seam-reconstruction census (docs/amr_cf_convective.md §5.2), this rank's.
+  peclet::core::Index num_seam_sample_records() const { return f_.engine().numSeamSampleRecords(); }
+  peclet::core::Index num_seam_layer_records() const { return f_.engine().numSeamLayerRecords(); }
   // Solver-internals and ablation switches (the production path needs none of them).
   void set_momentum_mg(bool on) { f_.engine().setMomentumMG(on); }
   void set_momentum_gs(bool on) { f_.engine().setMomentumGS(on); }
@@ -1213,7 +1232,24 @@ NB_MODULE(_amr, m) {
            "sub-face is a slot whose two incident leaves have different "
            "Octree.levels(); its centroid is the FINER leaf's face centre. Host-copied on every "
            "call -- a diagnostic, not a step-loop read-out. Under MPI a neighbour index >= "
-           "num_leaves is a ghost slot of this rank's registry.")
+           "num_leaves is a ghost slot of this rank's registry, whose world centre (like every "
+           "slot's) is row `slot` of 'cell_center', an (num_leaves + num_ghost_cells, 3) array. "
+           "The SEAM RECONSTRUCTION tables of docs/amr_cf_convective.md come with it: 'seam' "
+           "(one descriptor id per face slot, -1 = a plain slot that takes the ordinary SOU/Koren "
+           "line), the per-descriptor 'samp_i' / 'samp_j' (the tangential-sample record when i / j "
+           "is the COARSE cell of a 2:1 sub-face, else -1), 'uu_rec_i' / 'uu_rec_j' (the upstream "
+           "probe's record when the second upwind cell of i / j crosses a level, else -1) and "
+           "'d1_i' / 'd1_j' (half width along the face axis), and the record CSR 'rec_start', "
+           "'rec_cell', 'rec_w', 'rec_dist' (the probe distance, used only where a record is an "
+           "UPSTREAM probe). All empty with set_cf_scheme(0 = standard), which builds no tables.")
+      .def_prop_ro("num_seam_sample_records", &FlowDiagnostics::num_seam_sample_records,
+                   "How many tangential-sample records the seam reconstruction built on THIS RANK "
+                   "-- one per 2:1 sub-face pair that passes the C/F face gate (both cells regular "
+                   "fluid). 0 on a uniform mesh and with the standard C/F scheme.")
+      .def_prop_ro("num_seam_layer_records", &FlowDiagnostics::num_seam_layer_records,
+                   "How many face-layer records the seam reconstruction built on THIS RANK -- one "
+                   "per (coarse cell, face) whose far side is refined and whose four fine cells "
+                   "are fluid (the case-3 upstream probe).")
       .def("set_momentum_mg", &FlowDiagnostics::set_momentum_mg, nb::arg("on"),
            "Use the Galerkin velocity multigrid as the momentum solve preconditioner (default on; "
            "makes the momentum solve scale with resolution). Call before set_solid.")
