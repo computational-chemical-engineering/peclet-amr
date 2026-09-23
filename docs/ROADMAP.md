@@ -181,19 +181,40 @@ refined mesh, which is the entire point of the package.
   graded octree at `dt ≫` CFL with an evolving pressure (a scalar-transport or coupling driver),
   not this benchmark. Nothing to do until then.
 
-- **B5 — the 2:1 interface truncation constant.** **NEW 2026-09-23**, from B2's control arm. On a
-  smooth flow the graded mesh's *shape* error is ~3× the unrefined coarse mesh's — enough that the
-  refined shell makes the answer 1.56× worse than not refining it at all (`amr_tg_graded.md` §4(6)).
-  It is dt-independent, converges at order ≈ 2 (so a constant, not an order loss), is present only
-  with the convective term, and is insensitive to the limiter, implicit/explicit advection, the
-  advecting face velocity and the C/F interpolation order — i.e. it is the convective flux's
-  non-telescoping truncation at the 2:1 face, a first-order source on a codimension-1 set. It is
-  **not** the pressure-increment leak (60× too small) and **not** the initial projection (≤ 15 %).
-  `amr_pressure_iteration.md` §14.4 has the ablation table and names the one experiment that would
-  identify the term: a one-step a-priori probe with `set_pressure(exact)` after four warm-up steps,
-  advection on vs off, reading the interface layer against the bulk. Priority **low–medium**: a
-  constant, and in a bed the refined band sits on cut cells where the resolution is genuinely
-  bought, so it competes with the cut-cell error rather than with nothing.
+- **B5 — the 2:1 interface truncation constant** — **DONE 2026-09-23**
+  (`docs/amr_cf_convective.md`, verdict and gates §12). At a 2:1 face the coarse cell's column is
+  offset tangentially from the sub-face by half a fine cell, so the advected value was **first
+  order** there — and because the four sub-faces of one coarse face carry that error with opposite
+  signs, the coarse cell barely noticed while each **fine** cell saw an O(1) forcing alternating
+  across the 2×2 patch. Two same-level faces beside the seam were broken too (their second upwind
+  sample sits across the jump), at 16× the true bulk truncation. The fix reconstructs from the
+  upwind side with level-aware probes — the coarse value tangentially sampled by the existing
+  `cfAppendStencil`, applied **once** to the extrapolated value, and an upstream probe at another
+  level taken at its true distance. Measured at N = 64: the one-step seam truncation
+  **7.881e-03 → 2.008e-03** and its ratio to the bulk **9.23 → 3.40**; the graded mesh against the
+  *same mesh without its refined shell* **1.556× → 1.218×**, against a perfect-seam ceiling of
+  **0.96×** (the shell is 6.8 % of the volume, so refining it can buy 4 %). Inert without
+  advection and on any uniform mesh, bit-identical with the switch off, ~5e-9 at np = 2/4/8, no
+  measurable cost. `Flow.diagnostics.set_seam_reconstruction(bool)`, default on.
+
+  Two things the work established that outlive it. **Refinement pays once it covers enough of the
+  domain**: thicken the shell to 42 % of the volume and the graded mesh reads 0.93× the unrefined
+  one, where before the fix it still lost at 1.46×. And **the penalty does not compound over a deep
+  hierarchy** — a finest-level band plus `balance`, one seam per level, gives 1.27× / 1.18× / 1.05×
+  of the ceiling at 2 / 3 / 4 levels with 33 % *more* seam faces, because each seam's cost is set
+  by the cells it separates and the coarsest one dominates.
+
+- **B6 — matching the flux-error constants across a seam** (NEW 2026-09-23, **low priority**).
+  What is left after B5 is the jump in the truncation constant itself when the cell width doubles:
+  adjacent faces no longer share an error that cancels in their difference, which is what makes a
+  second-order scheme second order. It is one order lower on a codimension-1 set, which keeps the
+  global order (Gustafsson 1975; Kreiss et al. 1986) and leaves the constant every AMR code
+  carries. The lever is **matching** the two sides' constants, not maximising either — a higher-
+  order flux on the coarse cells beside the seam, or a buffer of intermediate constant, or the mesh
+  generator's band thickness. `amr_cf_convective.md` §4 fact 3 already spends the little freedom
+  there is (the true-distance probes, L2 ratio 0.81 measured). Worth ~0.22× on a smooth flow;
+  less where refinement sits on the feature. Do not reopen this as a sub-face stencil question —
+  §12.1 closes that.
 
 - **A7 — the C/F face-value delta is gated per FACE** — **DONE 2026-09-22.** `buildCfDivDelta` was
   gated per CELL (`rowRegular`) and `buildCfUfDelta` per face-pair fluidity, so at a 2:1 sub-face

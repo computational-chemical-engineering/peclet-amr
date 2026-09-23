@@ -177,7 +177,7 @@ Header-only under `include/peclet/amr/` (namespace `peclet::amr`; `common.hpp` c
   simulation; `Flow.diagnostics` (a view holding a reference to the Flow — `last_mom_iters`,
   `last_pres_iters`, `last_outer_iters`, `divergence_norm_face`, and the solver-internals /
   ablation switches `set_momentum_mg`, `set_momentum_gs`, `set_velocity_mg_staircase`,
-  `set_momentum_mg_solver`, `set_ghost_gradient`, `set_aperture_order`, `set_uf_advection`) is what
+  `set_momentum_mg_solver`, `set_ghost_gradient`, `set_aperture_order`, `set_uf_advection`, `set_seam_reconstruction`) is what
   a developer uses to inspect or ablate. Scheme selectors take an INT, not a string:
   `set_cf_scheme(0 = standard | 1 = quadratic)` — **before `set_solid`**, which is where the C/F
   overlays are built — and `set_advection_scheme(0 = SOU | 1 = Koren)`.
@@ -187,7 +187,8 @@ Header-only under `include/peclet/amr/` (namespace `peclet::amr`; `common.hpp` c
   `amr_collocated_projection.md` (the collocated projection + `uf`
   advection), `amr_tg_graded.md` (the graded time-accurate benchmark: second order in an unsteady
   flow, and why the C/F pressure-increment leak does not need fixing) with its design/verdict note
-  `amr_pressure_iteration.md`, `amr_mixed_level_cut_band_plan.md`, `amr_setup_parallel_plan.md` (the parallel
+  `amr_pressure_iteration.md`, `amr_cf_convective.md` (the advected value at a 2:1 seam —
+  level-aware upwind probes, and why what remains is intrinsic), `amr_mixed_level_cut_band_plan.md`, `amr_setup_parallel_plan.md` (the parallel
   builders, D1′), `amr_anisotropic.md` (per-axis root spacing). The dated campaign records are in
   `docs/archive/` behind its README index — `amr_march_perf_and_distributed_plan.md` (march economics
   + the distributed band; its status table names the two items still open), `amr_distributed_flow.md`,
