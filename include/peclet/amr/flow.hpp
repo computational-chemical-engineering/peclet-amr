@@ -1751,13 +1751,21 @@ class AmrFlow {
   /// direction (+1/-1, pointing from the owning cell to the neighbour). A 2:1 sub-face is one
   /// whose two incident leaves sit at different octree levels, which the caller reads off the
   /// octree's own `levels()`. Under MPI a neighbour index >= numLeaves() is a ghost slot.
+  /// `rawArea` is the face area the ADVECTIVE flux uses (at a 2:1 sub-face, the FINE area, so the
+  /// four sub-faces of a coarse face sum to the coarse area); `dist` the face-normal centre
+  /// distance (1.5 h_fine at a 2:1 sub-face); `upupI` / `upupJ` the second upwind probes the
+  /// SOU/Koren reconstruction samples, `-1` where none exists.
   struct FaceTopologyHost {
-    std::vector<Index> start, nbr;
+    std::vector<Index> start, nbr, upupI, upupJ;
     std::vector<int> axis, dir;
+    std::vector<double> rawArea, dist, alpha;
   };
   FaceTopologyHost faceTopology() const {
-    return {peclet::core::toVector(geom_.start), peclet::core::toVector(geom_.nbr),
-            peclet::core::toVector(geom_.axis), peclet::core::toVector(geom_.dir)};
+    return {peclet::core::toVector(geom_.start),   peclet::core::toVector(geom_.nbr),
+            peclet::core::toVector(geom_.upupI),   peclet::core::toVector(geom_.upupJ),
+            peclet::core::toVector(geom_.axis),    peclet::core::toVector(geom_.dir),
+            peclet::core::toVector(geom_.rawArea), peclet::core::toVector(geom_.dist),
+            peclet::core::toVector(geom_.alpha)};
   }
   Index numLeaves() const { return n_; }
   /// Distributed: number of ghost slots in the ±2 registry (0 single-rank).

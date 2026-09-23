@@ -813,6 +813,11 @@ class FlowDiagnostics {
     d["nbr"] = vec1<std::int64_t>(std::vector<std::int64_t>(t.nbr.begin(), t.nbr.end()));
     d["axis"] = vec1<std::int32_t>(std::vector<std::int32_t>(t.axis.begin(), t.axis.end()));
     d["dir"] = vec1<std::int32_t>(std::vector<std::int32_t>(t.dir.begin(), t.dir.end()));
+    d["upup_i"] = vec1<std::int64_t>(std::vector<std::int64_t>(t.upupI.begin(), t.upupI.end()));
+    d["upup_j"] = vec1<std::int64_t>(std::vector<std::int64_t>(t.upupJ.begin(), t.upupJ.end()));
+    d["raw_area"] = vec1<double>(t.rawArea);
+    d["dist"] = vec1<double>(t.dist);
+    d["alpha"] = vec1<double>(t.alpha);
     return d;
   }
   // Solver-internals and ablation switches (the production path needs none of them).
@@ -1200,8 +1205,12 @@ NB_MODULE(_amr, m) {
       .def("face_topology", &FlowDiagnostics::face_topology,
            "The face CSR topology face_field() is indexed by, as a dict of four arrays: 'start' "
            "(num_leaves+1 row offsets, int64), 'nbr' (neighbour leaf per (sub)face, int64), "
-           "'axis' (0/1/2, int32) and 'dir' (+1/-1 from the owning cell toward the neighbour, "
-           "int32). A 2:1 sub-face is a slot whose two incident leaves have different "
+           "'axis' (0/1/2, int32), 'dir' (+1/-1 from the owning cell toward the neighbour, "
+           "int32), 'raw_area' (the area the ADVECTIVE flux uses -- the FINE area at a 2:1 "
+           "sub-face, so a coarse face's four sub-faces sum to the coarse area), 'dist' (centre "
+           "distance, 1.5*h_fine at a 2:1 sub-face), 'alpha' (openness) and 'upup_i' / 'upup_j' "
+           "(the second upwind probes the SOU/Koren reconstruction samples, -1 where none). A 2:1 "
+           "sub-face is a slot whose two incident leaves have different "
            "Octree.levels(); its centroid is the FINER leaf's face centre. Host-copied on every "
            "call -- a diagnostic, not a step-loop read-out. Under MPI a neighbour index >= "
            "num_leaves is a ghost slot of this rank's registry.")
