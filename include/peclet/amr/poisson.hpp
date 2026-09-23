@@ -814,6 +814,21 @@ class AmrMultigrid {
       coarsenOpenness(L);
   }
 
+  /// Same, but the finest level's openness is handed over ALREADY EVALUATED (`alpha` is the
+  /// `AmrPoisson::opennessRaw()` layout: `numLeaves()·2·Dim` doubles, face-major per leaf) instead
+  /// of being sampled from a geometry callable. The ladder below it is the identical
+  /// area-averaging. This is what the redundant tail needs (docs/amr_mg_depth.md §6.5): the tail's
+  /// level 0 is a gathered copy of a distributed level whose α rows were computed by the
+  /// distributed openness ladder — re-sampling the geometry there would be both wasteful and, at a
+  /// coarsened cut face, not the same number.
+  void setOpennessRaw(std::vector<double> alpha) {
+    if (levels_.empty())
+      return;
+    ops_[0].setOpennessRaw(std::move(alpha));
+    for (std::size_t L = 0; L + 1 < levels_.size(); ++L)
+      coarsenOpenness(L);
+  }
+
  private:
   static int faceIdx(int axis, int dir) { return 2 * axis + (dir > 0 ? 0 : 1); }
 

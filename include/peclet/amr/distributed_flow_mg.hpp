@@ -26,6 +26,10 @@
 //     re-derived).
 //   * V-cycle: jacobiFv with a ghost refresh before every sweep, local restrict/prolong
 //     (parents never cross blocks), Allreduce'd volume-weighted mean removal (removeMean).
+//   * Below the in-place ladder: a STAGE (mg_stage.hpp, docs/amr_mg_depth.md §5.6/§6.5) moves the
+//     coarsest level onto a new decomposition of its own grid and continues the ladder there. The
+//     V-cycle contains no MPI of its own for this — every message lives behind MgStage::apply, so
+//     WO4b's sibling-merge and repartition stages need no change here.
 //
 // Bit-exactness: at np=1 every probe resolves locally (zero ghosts) and the whole cycle is
 // the single-rank Multigrid arithmetic verbatim. Across ranks the smoother/transfers are
@@ -41,12 +45,14 @@
 #include <array>
 #include <memory>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 #include "peclet/amr/common.hpp"
 #include "peclet/amr/distributed_octree.hpp"
 #include "peclet/amr/fv_op.hpp"
 #include "peclet/amr/leaf_halo.hpp"
+#include "peclet/amr/mg_stage.hpp"   // the telescoping primitive (docs/amr_mg_depth.md §5.6/§6.5)
 #include "peclet/amr/multigrid.hpp"  // restrictField / prolongAdd (shared transfer kernels)
 #include "peclet/amr/poisson.hpp"
 #include "peclet/core/common/mpi.hpp"
@@ -131,17 +137,49 @@ class DistributedFlowMultigrid {
     for (std::size_t L = 0; L + 1 < levels_.size(); ++L)
       coarsenOpennessTo(L);
     finishOps();
+    buildStage();  // §6.5: below the in-place ladder the level MOVES to a new decomposition
   }
 
-  void setRemoveMean(bool on) { removeMean_ = on; }
+  /// Per-level nullspace projection for the singular (periodic pure-Neumann) pressure. The stage's
+  /// continued ladder follows this flag rather than being pinned on: on the production path flow
+  /// sets it true, which is docs/amr_mg_depth.md §6.5.1 step 4's `setRemoveMean(true)`, and with it
+  /// off the stage stays what §6.5 calls it — the continuation of the same V-cycle — so the
+  /// WORLD==SELF bitwise contract of §10 still holds where the stage fires.
+  void setRemoveMean(bool on) {
+    removeMean_ = on;
+    if (stage_)
+      stage_->setRemoveMean(on);
+  }
 
   std::size_t numLevels() const { return levels_.size(); }
   /// How many of those levels are IN PLACE — octree coarsenings plus lifted levels, i.e. the ones
-  /// that keep the ORB and whose transfers are local. Tail levels (docs/amr_mg_depth.md §6.5) are
-  /// appended after them. Compare against `predictPressureLadder(...).numInPlace()`.
+  /// that keep the ORB and whose transfers are local. A stage's levels (docs/amr_mg_depth.md
+  /// §6.5) are appended after them. Compare against `predictPressureLadder(...).numInPlace()`.
   std::size_t numInPlaceLevels() const { return levels_.size(); }
   /// How many levels the ladder gained BELOW the root brick by lifting (§6.2).
   Index liftDepth() const { return liftDepth_; }
+  /// Whether a STAGE fires below the in-place ladder (docs/amr_mg_depth.md §5.6/§6.5): the
+  /// coarsest in-place level is still larger than `bottomExtent` on some axis, so that level moves
+  /// onto a new decomposition of its own grid and the ladder continues there. Only the REPLICATED
+  /// instantiation exists today (one block on every rank, moved by `Allgatherv`); the sibling-merge
+  /// and repartition stages are WO4b and slot in behind the same `MgStage` interface.
+  bool hasStage() const { return stage_ != nullptr; }
+  const char* stageKind() const { return stage_ ? stage_->kind() : "none"; }
+  /// Levels of the continued ladder (its level 0 IS the moved level, so the full ladder is
+  /// `numInPlaceLevels() + numStageLevels()` — the convention `predictPressureLadder` reports).
+  std::size_t numStageLevels() const { return stage_ ? stage_->numLevels() : 0u; }
+  Index stageLeaves(std::size_t L = 0) const { return stage_->numLeaves(L); }
+  /// The global grid the stage moves (the coarsest in-place level's extent).
+  const IVec<Dim>& stageFrom() const { return stageFrom_; }
+  /// The moved level's solution on THIS rank's target block. For the replicated stage every rank
+  /// holds an identical copy, which is what §11.2's cross-rank bitwise check reads.
+  View<double> stageSolution() { return stage_->targetX(); }
+  MgStage<Dim, Bits>& stage() { return *stage_; }
+  /// `"jacobi"` | (WO5) `"amg"`, suffixed by the stage's own spelling — `"+tail"` for the
+  /// replicated one (docs/amr_mg_depth.md §6.7).
+  std::string bottomName() const {
+    return std::string("jacobi") + (stage_ ? stage_->diagnosticSuffix() : "");
+  }
   Index numLeaves(std::size_t L = 0) const { return levels_[L]->n; }
   Index extendedSize(std::size_t L = 0) const { return levels_[L]->nExt; }
   View<double> x(std::size_t L = 0) { return levels_[L]->x; }
@@ -161,12 +199,18 @@ class DistributedFlowMultigrid {
     Level& lv = *levels_[L];
     View<const double> bc(lv.b);
     if (L + 1 == levels_.size()) {
-      for (int s = 0; s < bottom; ++s) {
-        lv.ex.exchange(lv.x);
-        jacobiFv(lv.op, lv.x, bc, lv.tmp, omega);
+      if (stage_) {
+        // §6.5: the level MOVES onto the stage's decomposition, the ladder continues there, the
+        // correction comes back. No MPI in this function — the messages live behind the stage.
+        stage_->apply(bc, lv.x, lv.n, pre, post, bottom, omega);
+      } else {
+        for (int s = 0; s < bottom; ++s) {
+          lv.ex.exchange(lv.x);
+          jacobiFv(lv.op, lv.x, bc, lv.tmp, omega);
+        }
       }
       if (removeMean_)
-        removeMeanFvDist(lv.op, lv.x, comm_);
+        removeMeanFvDist(lv.op, lv.x, lv.comm);
       return;
     }
     for (int s = 0; s < pre; ++s) {
@@ -185,7 +229,7 @@ class DistributedFlowMultigrid {
       jacobiFv(lv.op, lv.x, bc, lv.tmp, omega);
     }
     if (removeMean_)
-      removeMeanFvDist(lv.op, lv.x, comm_);
+      removeMeanFvDist(lv.op, lv.x, lv.comm);
   }
 
  private:
@@ -197,10 +241,44 @@ class DistributedFlowMultigrid {
     LeafHaloExchange ex;
     FvOp op;
     Index n = 0, nExt = 0;
+    /// THIS level's communicator. Every level shares the parent's today; a stage on a
+    /// sub-communicator (WO4b) is where they start to differ, and every per-level collective
+    /// (`removeMeanFvDist`, the halo build) already reads it from here rather than from the
+    /// multigrid (docs/amr_mg_depth.md §6.5).
+    MPI_Comm comm = MPI_COMM_NULL;
     View<double> x, b, res, tmp;  // x/b sized nExt (PCG deep_copies match); res/tmp local
     View<Index> c2p, childStart, childIdx;
     std::vector<Index> c2pHost;  // kept for the openness coarsening
   };
+
+  /// §6.5, once per build. Below the in-place ladder the coarsest level does not just get
+  /// smoothed: if its global grid is still larger than `bottomExtent` on some axis, it MOVES onto
+  /// a new decomposition of its own grid and the ladder continues there. Only the REPLICATED
+  /// instantiation exists today — one block on every rank, `Allgatherv` — which is the degenerate
+  /// stage and the fallback; the sibling-merge and repartition stages of §5.6 are WO4b and land
+  /// behind the same interface without touching `vcycle`.
+  ///
+  /// It runs AFTER the openness ladder, because what the stage carries over is that ladder's own α
+  /// rows for the moved level — re-sampling the geometry at a coarsened cut face is not the same
+  /// number.
+  void buildStage() {
+    stage_.reset();
+    if (levels_.empty())
+      return;
+    Level& lt = *levels_.back();
+    stageFrom_ = lt.d.globalRootSize();
+    int size = 1;
+    MPI_Comm_size(comm_, &size);
+    Index mx = 0;
+    for (int a = 0; a < Dim; ++a)
+      mx = std::max(mx, stageFrom_[a]);
+    if (size <= 1 || mx <= bottomExtent_)
+      return;  // single-rank: the in-place ladder IS the whole hierarchy; small enough: no stage
+    auto tail = std::make_unique<ReplicatedTailStage<Dim, Bits>>();
+    tail->build(lt.d, h0_, lt.ap, lt.n, lt.nExt, bottomExtent_, lt.comm);
+    tail->setRemoveMean(removeMean_);
+    stage_ = std::move(tail);
+  }
 
   void buildImpl(const DO& finest, const Vec<Dim>& h0, const LeafHalo<Dim, Bits>* shared0,
                  bool liftRoot, Index bottomExtent) {
@@ -277,6 +355,7 @@ class DistributedFlowMultigrid {
     bool first = true;
     for (auto& lvp : levels_) {
       Level& lv = *lvp;
+      lv.comm = comm_;  // every level shares the parent's communicator until WO4b's sub-comms
       lv.n = lv.d.local().numLeaves();
       lv.ap.init(lv.d.local(), h0_);
       lv.ap.setOrigin(gorigin);
@@ -468,6 +547,8 @@ class DistributedFlowMultigrid {
   Vec<Dim> h0_ = detail::filledVec<Dim>(1.0);
   Index bottomExtent_ = 4;
   Index liftDepth_ = 0;
+  IVec<Dim> stageFrom_{};
+  std::unique_ptr<MgStage<Dim, Bits>> stage_;
   std::array<long, Dim> shift_{};
   std::vector<std::unique_ptr<Level>> levels_;
   bool removeMean_ = false;

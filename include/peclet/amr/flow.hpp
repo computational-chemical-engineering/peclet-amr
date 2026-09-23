@@ -1219,11 +1219,11 @@ class AmrFlow {
     spOuter_ += lastOuterIters_;
     if (!spHeader_) {  // the static hierarchy shape, on the first profiled step (H-mg's
                        // denominator, and the one line a contention-exposed box can still trust)
-      const std::size_t nl = dist_ ? presMGD_.numLevels() : presMG_.numLevels();
-      std::fprintf(stderr, "[step-prof] leaves %lld | pressure MG levels %zu:", (long long)n_, nl);
-      for (std::size_t L = 0; L < nl; ++L)
-        std::fprintf(stderr, " %lld",
-                     (long long)(dist_ ? presMGD_.numLeaves(L) : presMG_.numLeaves(L)));
+      const std::vector<Index> lad = pressureMgLevels();
+      std::fprintf(stderr, "[step-prof] leaves %lld | pressure MG levels %zu:", (long long)n_,
+                   lad.size());
+      for (Index n : lad)
+        std::fprintf(stderr, " %lld", (long long)n);
       std::fprintf(stderr, " | bottom %s\n", pressureMgBottom().c_str());
       spHeader_ = true;
     }
@@ -1818,20 +1818,26 @@ class AmrFlow {
   /// appended when the redundant tail engages (WO4). Compare against
   /// `peclet.amr.predict_pressure_hierarchy` rather than against a literal.
   std::vector<Index> pressureMgLevels() const {
-    const std::size_t nl = dist_ ? presMGD_.numLevels() : presMG_.numLevels();
     std::vector<Index> out;
-    out.reserve(nl);
-    for (std::size_t L = 0; L < nl; ++L)
-      out.push_back(dist_ ? presMGD_.numLeaves(L) : presMG_.numLeaves(L));
+    if (!dist_) {
+      for (std::size_t L = 0; L < presMG_.numLevels(); ++L)
+        out.push_back(presMG_.numLeaves(L));
+      return out;
+    }
+    for (std::size_t L = 0; L < presMGD_.numLevels(); ++L)
+      out.push_back(presMGD_.numLeaves(L));
+    for (std::size_t L = 0; L < presMGD_.numStageLevels(); ++L)
+      out.push_back(presMGD_.stageLeaves(L));  // §6.5: the stage's level 0 IS the moved level
     return out;
   }
   /// What actually solves the coarsest pressure level (docs/amr_mg_depth.md §6.6/§6.7):
-  /// `"jacobi"` | `"amg"`, with the suffix `"+tail"` when the coarsest in-place level is gathered.
-  /// Today the only bottom that EXISTS is the 60-sweep damped-Jacobi one — the agglomerated
-  /// GraphAMG bottom is WO5 and the redundant tail is WO4 — so this reports `"jacobi"` on every
-  /// path. `predict_pressure_hierarchy` reports the bottom of the FINISHED design and so may say
-  /// `"amg"` where this says `"jacobi"`: that gap is exactly the work those two orders do.
-  std::string pressureMgBottom() const { return "jacobi"; }
+  /// `"jacobi"` | `"amg"`, with the suffix `"+tail"` when the coarsest in-place level is gathered
+  /// and continued redundantly (§6.5). The agglomerated GraphAMG bottom is WO5, so the kind is
+  /// still `"jacobi"` on every path; `predict_pressure_hierarchy` reports the bottom of the
+  /// FINISHED design and so may say `"amg"` where this says `"jacobi"`.
+  std::string pressureMgBottom() const {
+    return dist_ ? presMGD_.bottomName() : std::string("jacobi");
+  }
 
   /// Copy the divergence-free face field to host (one value per CSR (sub)face, forEachFaceFull
   /// order).

@@ -156,6 +156,21 @@ class Multigrid {
     buildFromHostMg();
   }
 
+  /// Build from a finest octree whose face openness is handed over ALREADY EVALUATED — `alphaRaw`
+  /// in the `AmrPoisson::opennessRaw()` layout (`finest.numLeaves()·2·Dim` doubles, face-major per
+  /// leaf). The ladder, the area-averaged coarsening and the device assembly are the openFn build's
+  /// verbatim. This is the entry point the redundant tail uses (docs/amr_mg_depth.md §6.5 step 4):
+  /// the tail's level 0 is a gathered copy of a distributed level, so its α is the distributed
+  /// openness ladder's own output and must be carried over, not re-sampled.
+  void buildRaw(const Octree& finest, const Vec<Dim>& h0, std::vector<double> alphaRaw,
+                bool periodic = true, bool liftRoot = true, Index bottomExtent = 4) {
+    hmg_ = std::make_unique<AmrMultigrid<Dim, Bits>>();
+    hmg_->build(finest, h0, liftRoot, bottomExtent);
+    hmg_->setOpennessRaw(std::move(alphaRaw));
+    hmg_->setPeriodic(periodic);
+    buildFromHostMg();
+  }
+
   /// Opt-in: use κ-weighted (fluid-fraction) restriction instead of the default plain
   /// volume-average. Experimental — validate with the comparison test before relying on it.
   void setKappaRestrict(bool on) { kappaRestrict_ = on; }
