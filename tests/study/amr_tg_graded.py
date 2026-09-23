@@ -71,6 +71,7 @@ def pexact(c, t, N):
 
 
 SEAM = True          # --seam off flips the B5 seam reconstruction (docs/amr_cf_convective.md)
+BAND = 1.0           # --band: shell thickness in cells, i.e. how much of the box gets refined
 
 
 def build(arm, N, dt, cf_scheme):
@@ -80,7 +81,7 @@ def build(arm, N, dt, cf_scheme):
     if arm == "G":
         # The finest cells are the SHELL the sphere surface passes through (the octree's own
         # semantics), which gives two closed coarse/fine surfaces instead of one.
-        o.refine_to_sphere([N / 2.0] * 3, N / 4.0)
+        o.refine_to_sphere([N / 2.0] * 3, N / 4.0, 0, BAND)
         o.balance()
     f = amr.Flow(o, density=RHO, viscosity=MU, dt=dt)
     f.set_advection(True)
@@ -246,19 +247,19 @@ def gate():
             bad.append(f"eps_cf/m2r = {r['m7r']:.3e} > 0.05 at N={r['N']} CFL=1")
     # (4) The graded solver still converges, and to the same answer. Second order is a 32 -> 64
     # statement (measured 2.07, docs/amr_tg_graded.md §3); the 16 -> 32 rung the gate can afford is
-    # PRE-ASYMPTOTIC -- the shell is four cells across there -- and reads ~1.05, so the gate floors
+    # PRE-ASYMPTOTIC -- the shell is four cells across there -- and reads ~1.2, so the gate floors
     # it at 0.9 and pins the levels themselves instead.
     for cfl in (0.5, 2.0):
         a = next(r for r in rows if r["arm"] == "G" and r["N"] == 16 and r["cfl"] == cfl)
         b = next(r for r in rows if r["arm"] == "G" and r["N"] == 32 and r["cfl"] == cfl)
         o = np.log2(a["m3"] / b["m3"])
-        print(f"# graded m3 order 16->32 at CFL {cfl:g}: {o:.2f} (pre-asymptotic; 2.07 at 32->64)")
+        print(f"# graded m3 order 16->32 at CFL {cfl:g}: {o:.2f} (pre-asymptotic; 2.22 at 32->64)")
         if o < 0.9:
             bad.append(f"graded m3 order {o:.2f} < 0.9 at CFL {cfl:g}")
     # (5) The error levels themselves, +-5 % of what docs/amr_tg_graded.md §3 records. Wide enough
     # for a compiler or thread-count change, narrow enough that a numerics change has to say so.
-    for arm, N, cfl, ref in (("G", 16, 0.5, 1.2900e-01), ("G", 32, 0.5, 6.0236e-02),
-                             ("G", 32, 1.0, 5.5160e-02), ("U", 32, 0.5, 5.7998e-03)):
+    for arm, N, cfl, ref in (("G", 16, 0.5, 1.2388e-01), ("G", 32, 0.5, 5.2383e-02),
+                             ("G", 32, 1.0, 4.7745e-02), ("U", 32, 0.5, 5.7998e-03)):
         r = next(x for x in rows if x["arm"] == arm and x["N"] == N and x["cfl"] == cfl)
         if abs(r["m3"] / ref - 1.0) > 0.05:
             bad.append(f"m3 = {r['m3']:.4e} is {100 * (r['m3'] / ref - 1):+.1f} % off the recorded "
@@ -285,10 +286,13 @@ def main():
                     help="pressure solve rtol (0 = the solver default)")
     ap.add_argument("--seam", default="on", choices=["on", "off"],
                     help="the B5 seam reconstruction of the advected value (default on)")
+    ap.add_argument("--band", type=float, default=1.0,
+                    help="refined shell thickness in cells (how much of the box is refined)")
     ap.add_argument("--json", default="")
     a = ap.parse_args()
-    global SEAM
+    global SEAM, BAND
     SEAM = a.seam == "on"
+    BAND = a.band
     if a.gate:
         return gate()
 

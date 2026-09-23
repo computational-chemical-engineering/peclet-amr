@@ -61,9 +61,14 @@ comparison a clean price tag for the 2:1 interface.
 | C | 16 | 512 | 1.4578e-01 | 9.549e-03 | 3.37e-01 | — | 2.188e-01 | — | — | — | 2.2e-16 |
 | C | 32 | 4 096 | 4.9354e-02 | 6.670e-03 | 8.85e-02 | — | 7.567e-02 | — | — | — | 5.7e-14 |
 | C | 64 | 32 768 | 9.2112e-03 | 2.265e-03 | 1.43e-02 | — | 1.647e-02 | — | — | — | 2.1e-14 |
-| **G** | 16 | 1 632 | 1.2900e-01 | 5.442e-02 | 2.71e-01 | 1.855e-01 | 2.494e-01 | 0.74 | 2.52e-04 | 1.0e-03 | 1.2e-13 |
-| **G** | 32 | 8 184 | 6.0236e-02 | 2.616e-02 | 9.82e-02 | 8.865e-02 | 1.064e-01 | 0.83 | 1.01e-04 | 9.4e-04 | 1.3e-13 |
-| **G** | 64 | 48 448 | 1.4328e-02 | 7.417e-03 | 1.96e-02 | 3.334e-02 | 3.200e-02 | 1.04 | 1.72e-05 | 5.4e-04 | 2.8e-13 |
+| **G** | 16 | 1 632 | 1.2388e-01 | 4.822e-02 | 2.64e-01 | 1.712e-01 | 2.364e-01 | 0.72 | 2.32e-04 | 9.8e-04 | 7.3e-14 |
+| **G** | 32 | 8 184 | 5.2383e-02 | 2.248e-02 | 8.57e-02 | 6.510e-02 | 9.058e-02 | 0.72 | 9.10e-05 | 1.0e-03 | 2.2e-13 |
+| **G** | 64 | 48 448 | 1.1216e-02 | 5.318e-03 | 1.58e-02 | 1.614e-02 | 2.132e-02 | 0.76 | 1.39e-05 | 6.5e-04 | 1.2e-13 |
+
+(The **G** rows carry the B5 seam reconstruction, on by default since 2026-09-23
+— `amr_cf_convective.md`. Before it they read m3 1.2900e-01 / 6.0236e-02 / 1.4328e-02, shape
+5.442e-02 / 2.616e-02 / 7.417e-03, 1−amp 2.71e-01 / 9.82e-02 / 1.96e-02, m1 1.855e-01 /
+8.865e-02 / 3.334e-02. **U** and **C** have no 2:1 faces and are unchanged to the last digit.)
 
 Observed orders on the 32 → 64 rung:
 
@@ -71,13 +76,13 @@ Observed orders on the 32 → 64 rung:
 |---|---|---|---|
 | U | 2.65 | 2.14 | 2.87 |
 | C | 2.42 | 1.56 | 2.63 |
-| **G** | **2.07** | **1.82** | **2.32** |
+| **G** | **2.22** | **2.08** | **2.44** |
 
 ## 4. What it says
 
-**(1) The graded solver is second order in an unsteady flow.** 2.07 on the cell velocity error
+**(1) The graded solver is second order in an unsteady flow.** 2.22 on the cell velocity error
 against the exact solution, 32 → 64, at a time step where the time error is small. The
-interface-generated part (the shape error) converges at 1.82 — the 2:1 interface costs a constant
+interface-generated part (the shape error) converges at 2.08 — the 2:1 interface costs a constant
 factor, not an order. This is the validation the project did not have.
 
 **(2) The advecting face field stays a conservative flux.** div(uf) ≤ 4e-12 at every N and every
@@ -97,34 +102,66 @@ asks for — and it falls by ~6× per mesh doubling at fixed CFL. A leak growing
 have forced building the deferred correction; this one shrinks twice as fast as the time step.
 
 **(4) A 2:1 sub-face is not a worse place for the advecting velocity than an ordinary face.**
-m6 = m1/m2r is 0.74, 0.83, 1.04 at N = 16/32/64 — the worst face-velocity error on the mesh is at a
-regular face, or on a par with the C/F one.
+m6 = m1/m2r is 0.72, 0.72, 0.76 at N = 16/32/64 — the worst face-velocity error on the mesh is at a
+regular face by a clear margin (it was 0.74 / 0.83 / 1.04 before the B5 seam reconstruction).
 
 **(5) The quadratic C/F scheme earns its default.** On the same meshes with
 `set_cf_scheme('standard')` the velocity error is 11 % worse and the C/F face error 68 % worse than
 with the quadratic scheme (measured before the pressure IC was added; the ablation table of
 `amr_pressure_iteration.md` §14.4c has the current numbers). The 2026-09-21 default stands.
 
-**(6) The open item: a refined shell in a smooth flow costs more accuracy than it buys.**
-G against C at N = 64, CFL 0.5 — the same mesh with a shell refined, 48 % more cells:
+**(6) A refined shell in a smooth flow still costs more accuracy than it buys — but far less, and
+the item is closed.** G against C at N = 64, CFL 0.5 — the same mesh with a shell refined, 48 %
+more cells — before and after the B5 seam reconstruction (`amr_cf_convective.md`):
 
-    m3       1.433e-02  vs  9.211e-03   (1.56x worse)
-    shape    7.417e-03  vs  2.265e-03   (3.27x worse)
-    1-amp    1.96e-02   vs  1.43e-02    (1.37x worse)
+    m3       1.433e-02 -> 1.122e-02   against C's 9.211e-03   (1.56x -> 1.22x)
+    shape    7.417e-03 -> 5.318e-03   against C's 2.265e-03   (3.27x -> 2.35x)
+    1-amp    1.96e-02  -> 1.58e-02    against C's 1.43e-02    (1.37x -> 1.10x)
 
-The review (`amr_pressure_iteration.md` §14.4) ruled out both first guesses — it is **not** the
-pressure-increment leak (sixty times too small, and dt-flat where the leak is dt²) and **not** the
-initial projection (a horizon ladder puts that at ≤ 15 % of it). It survives Koren, explicit
-advection, the un-projected advecting velocity and the standard C/F scheme, and drops tenfold with
-advection off: it is the **convective flux's truncation at the 2:1 interface**, a first-order source
-on a codimension-1 set, O(h²) globally, with a constant ~3× the coarse mesh's own shape error.
-The ROADMAP item and the one experiment that would name the term are in §14.4.
+**What the ceiling actually is.** Splicing the uniform-fine solution into the refined shell and the
+uniform-coarse one everywhere else — the answer a *perfect* seam would give on this very mesh —
+reads **8.83e-03**, i.e. **0.96x** C. The shell is only **6.8 % of the volume**, so refining it can
+buy 4 % and no more; this benchmark refines where the flow has no feature, by design, to stress the
+seam. The right figure of merit is therefore the distance to that ceiling, which went from **1.62x
+to 1.27x**.
 
-Two caveats on reading (6): the shell is refined where this flow has no feature, so the refinement
-can only pay through the interface — in a bed the band sits on the cut cells, where resolution is
-genuinely bought. And the amplitude half of the gap is separate: it is the C/F fluxes' numerical
-viscosity, and the quadratic scheme already halves it against the standard flux, Koren halves it
-again.
+**Refinement does pay once it covers enough of the domain.** Thickening the shell at N = 64
+(`--band`), measured against the perfect-seam ceiling for each:
+
+| shell | leaves | volume refined | ceiling | before | after |
+|---|---|---|---|---|---|
+| 1 cell | 48 448 | 6.8 % | 0.97 | 1.56 | 1.22 |
+| 3 cells | 60 488 | 12.1 % | 0.94 | 1.69 | 1.30 |
+| 6 cells | 80 256 | 20.7 % | 0.90 | 1.80 | 1.31 |
+| 12 cells | 129 144 | 42.0 % | 0.78 | 1.46 | **0.93** |
+
+At 42 % refined the graded mesh now beats the unrefined one outright, where before it still lost.
+The seam's toll is roughly constant in relative terms because it lives on a surface while the gain
+lives in a volume.
+
+**And it does not compound over a deep hierarchy** — the case that matters for real use. A one-cell
+band at the finest level on a sphere plus `balance`, i.e. refine sharply and coarsen as fast as 2:1
+allows, one seam per level:
+
+| levels | leaves | seam faces | ceiling error | before | after |
+|---|---|---|---|---|---|
+| 2 | 48 448 | 19 968 | 8.83e-03 | 1.62x | 1.27x |
+| 3 | 24 088 | 24 960 | 5.63e-02 | 1.39x | 1.18x |
+| 4 | 21 624 | 26 496 | 2.10e-01 | 1.14x | **1.05x** |
+
+A third more seam faces, half the cells, and the gap to a perfect seam *falls*. Each seam's cost is
+set by the cells it separates, so the coarsest seam dominates — and there is only one of those. It
+is a converging series, not an accumulating one. (Caveat: this flow has its error spread evenly. In
+a bed the error sits at the interface where the finest cells are, and the balance shifts toward the
+inner seams; the standing evidence there is the cut-cell sphere permeability, 1.2 % against a
+uniform-fine reference.)
+
+**What is left is intrinsic, not a stencil defect.** The residual is the jump in the flux-error
+constant when the cell width doubles: adjacent faces no longer share an error that cancels in their
+difference, which is what makes a second-order scheme second order. That is one order lower on a
+codimension-1 set, which keeps the global order (Gustafsson 1975; Kreiss et al. 1986) and leaves a
+constant every AMR code carries. The remaining lever is to **match** the two sides' error constants,
+not to maximise either — `amr_cf_convective.md` §4 fact 3 — which is a different scheme, parked.
 
 ## 5. Gate W — the deferred correction (B) is parked
 
@@ -150,10 +187,14 @@ PYTHONPATH=<build> python tests/study/amr_tg_graded.py \
     --n 16 32 64 --arms U C G --cfl 0.5 1 2 --json docs/data/amr_tg_graded.json   # §3, ~7 min
 PYTHONPATH=<build> python tests/study/amr_tg_graded.py \
     --n 32 --arms G --cfl 0.0625 0.125 0.25 0.5 1 2 4 8                    # the dt ladder, ~40 s
+PYTHONPATH=<build> python tests/study/amr_tg_graded.py --n 64 --arms G --seam off   # the B5 A/B
+PYTHONPATH=<build> python tests/study/amr_tg_graded.py --n 64 --arms G --band 12     # §4(6)
 ```
 
-The gate checks four things: div(uf) ≤ 1e-9, ε_cf/m2r ≤ 0.05 at CFL 1 (gate W's regression bound,
-12× margin), m1 ≤ 1.1·m2r, and the graded h-order ≥ 1.8.
+The gate checks five things: div(uf) ≤ 1e-9, ε_cf/m2r ≤ 0.05 at CFL 1 (gate W's regression bound,
+12× margin), m1 ≤ 1.1·m2r, the graded h-order (floored at 0.9 on the pre-asymptotic 16 → 32 rung;
+second order is the 32 → 64 statement, 2.22), and the error levels themselves within 5 % of §3.
+`--seam off` restores the pre-2026-09-23 advected-value reconstruction for an A/B on one build.
 
 `Flow.diagnostics.face_topology()` (added with this benchmark) is what makes m1/m2r/ε_cf possible
 from Python: it returns the CSR row offsets, neighbour, axis and direction that `Flow.face_field()`
