@@ -847,6 +847,7 @@ class FlowDiagnostics {
   void set_ghost_gradient(bool on) { f_.engine().setGhostGradient(on); }
   void set_aperture_order(int order) { f_.engine().setApertureOrder(order); }
   void set_uf_advection(bool on) { f_.engine().setUfAdvection(on); }
+  void set_seam_reconstruction(bool on) { f_.engine().setSeamReconstruction(on); }
 
  private:
   Flow& f_;
@@ -1277,7 +1278,18 @@ NB_MODULE(_amr, m) {
            "on=False, the un-projected 1/2(u_i+u_j) cell->face average that the first step uses "
            "before any projection has run. It is the ONE discretization difference between this "
            "solver and peclet.flow's SolverColocated on a uniform grid; turning it off makes the "
-           "two agree to solver tolerance (docs/amr_flow_uniform_parity.md).");
+           "two agree to solver tolerance (docs/amr_flow_uniform_parity.md).")
+      .def("set_seam_reconstruction", &FlowDiagnostics::set_seam_reconstruction, nb::arg("on"),
+           "ABLATION. Reconstruct the ADVECTED value with level-aware probes at every face whose "
+           "upwind-side stencil crosses a 2:1 coarse/fine seam (default ON, "
+           "docs/amr_cf_convective.md): the coarse upwind cell is tangentially sampled at the "
+           "sub-face's own column, and an upstream probe at another octree level is taken at its "
+           "TRUE distance (a coarser one as the same tangential sample, a finer one as the mean of "
+           "the four face-layer children). Without it the sub-face value carries the coarse "
+           "column's tangential offset -- an O(h) face error, so an O(1) local truncation on the "
+           "fine side of the seam. on=False restores that, bit for bit, and may be flipped between "
+           "steps; the tables are built in set_solid either way. Inert with advection off, with "
+           "set_cf_scheme(0 = standard), and on any mesh with no 2:1 face.");
 
   nb::class_<DistributedOctree> distributed(
       m, "DistributedOctree",

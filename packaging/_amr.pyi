@@ -344,6 +344,23 @@ class FlowDiagnostics:
         How many 2:1 C/F sub-face slots of THIS RANK carry the standard two-point face value because the quadratic one is withheld: both incident cells must be REGULAR fluid (fluid and not cut) for set_cf_scheme('quadratic') to apply there, so this counts the sub-faces where a level boundary meets the wall. 0 on every uniform or finest-band mesh; on a graded mesh it measures the size of the set that runs at the standard scheme's local order. Each sub-face contributes two slots (one per incident cell) and the sum over ranks equals the single-rank count.
         """
 
+    def face_topology(self) -> dict:
+        """
+        The face CSR topology face_field() is indexed by, as a dict of four arrays: 'start' (num_leaves+1 row offsets, int64), 'nbr' (neighbour leaf per (sub)face, int64), 'axis' (0/1/2, int32), 'dir' (+1/-1 from the owning cell toward the neighbour, int32), 'raw_area' (the area the ADVECTIVE flux uses -- the FINE area at a 2:1 sub-face, so a coarse face's four sub-faces sum to the coarse area), 'dist' (centre distance, 1.5*h_fine at a 2:1 sub-face), 'alpha' (openness) and 'upup_i' / 'upup_j' (the second upwind probes the SOU/Koren reconstruction samples, -1 where none). A 2:1 sub-face is a slot whose two incident leaves have different Octree.levels(); its centroid is the FINER leaf's face centre. Host-copied on every call -- a diagnostic, not a step-loop read-out. Under MPI a neighbour index >= num_leaves is a ghost slot of this rank's registry, whose world centre (like every slot's) is row `slot` of 'cell_center', an (num_leaves + num_ghost_cells, 3) array. The SEAM RECONSTRUCTION tables of docs/amr_cf_convective.md come with it: 'seam' (one descriptor id per face slot, -1 = a plain slot that takes the ordinary SOU/Koren line), the per-descriptor 'samp_i' / 'samp_j' (the tangential-sample record when i / j is the COARSE cell of a 2:1 sub-face, else -1), 'uu_rec_i' / 'uu_rec_j' (the upstream probe's record when the second upwind cell of i / j crosses a level, else -1) and 'd1_i' / 'd1_j' (half width along the face axis), and the record CSR 'rec_start', 'rec_cell', 'rec_w', 'rec_dist' (the probe distance, used only where a record is an UPSTREAM probe). All empty with set_cf_scheme(0 = standard), which builds no tables.
+        """
+
+    @property
+    def num_seam_sample_records(self) -> int:
+        """
+        How many tangential-sample records the seam reconstruction built on THIS RANK -- one per 2:1 sub-face pair that passes the C/F face gate (both cells regular fluid). 0 on a uniform mesh and with the standard C/F scheme.
+        """
+
+    @property
+    def num_seam_layer_records(self) -> int:
+        """
+        How many face-layer records the seam reconstruction built on THIS RANK -- one per (coarse cell, face) whose far side is refined and whose four fine cells are fluid (the case-3 upstream probe).
+        """
+
     def set_momentum_mg(self, on: bool) -> None:
         """
         Use the Galerkin velocity multigrid as the momentum solve preconditioner (default on; makes the momentum solve scale with resolution). Call before set_solid.
@@ -377,6 +394,11 @@ class FlowDiagnostics:
     def set_uf_advection(self, on: bool) -> None:
         """
         ABLATION. The advecting velocity of the momentum advection: the projected, divergence-free face field uf (ON, the shipped Almgren-Bell-Colella scheme) or, with on=False, the un-projected 1/2(u_i+u_j) cell->face average that the first step uses before any projection has run. It is the ONE discretization difference between this solver and peclet.flow's SolverColocated on a uniform grid; turning it off makes the two agree to solver tolerance (docs/amr_flow_uniform_parity.md).
+        """
+
+    def set_seam_reconstruction(self, on: bool) -> None:
+        """
+        ABLATION. Reconstruct the ADVECTED value with level-aware probes at every face whose upwind-side stencil crosses a 2:1 coarse/fine seam (default ON, docs/amr_cf_convective.md): the coarse upwind cell is tangentially sampled at the sub-face's own column, and an upstream probe at another octree level is taken at its TRUE distance (a coarser one as the same tangential sample, a finer one as the mean of the four face-layer children). Without it the sub-face value carries the coarse column's tangential offset -- an O(h) face error, so an O(1) local truncation on the fine side of the seam. on=False restores that, bit for bit, and may be flipped between steps; the tables are built in set_solid either way. Inert with advection off, with set_cf_scheme(0 = standard), and on any mesh with no 2:1 face.
         """
 
 class DistributedOctree:

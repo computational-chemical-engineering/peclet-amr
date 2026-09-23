@@ -346,6 +346,43 @@ inline void buildFou(const FaceGeom& g, View<const double> u0, View<const double
       });
 }
 
+/// THE advected face value at one (sub)face slot — written once so `deferredSou` and
+/// `advectExplicit` cannot drift (docs/amr_cf_convective.md §5.3).
+///
+/// A PLAIN slot (`sv.on == false`, or no descriptor) takes today's line VERBATIM: `hoFaceValue` on
+/// the raw (upup, up, down) triple. It must, because `hoFaceValueSeam` is not bit-identical to it
+/// even in the regular-face limit (§5.1) — routing a plain slot through the seam form would move
+/// digits everywhere for nothing, and gate G0 is what catches it.
+///
+/// A SEAM slot reconstructs from the upwind side with level-aware probes: `φ_U*` is the upwind
+/// cell tangentially sampled at the sub-face's column when it is the coarse side of a 2:1 face,
+/// `φ_UU*` the upstream probe at its true distance (a coarser one as the same tangential sample, a
+/// finer one as the mean of the four face-layer children), and — Koren only — `φ_D*` the downwind
+/// cell sampled the same way. Everything comes from prebuilt records (seam_recon.hpp), gathered in
+/// record order.
+template <class FldFn>
+KOKKOS_INLINE_FUNCTION double advectedFaceValue(const SeamView& sv, Index k, bool upIsI,
+                                                double phiUpUp, double phiUp, double phiDown,
+                                                double distK, int advScheme, const FldFn& fld) {
+  const Index s = sv.on ? sv.seam(k) : Index(-1);
+  if (s < 0)
+    return hoFaceValue(phiUpUp, phiUp, phiDown, advScheme);  // today's reconstruction, bit for bit
+  const Index rs = upIsI ? sv.sampI(s) : sv.sampJ(s);        // φ_U* (case 1)
+  const Index ru = upIsI ? sv.uuRecI(s) : sv.uuRecJ(s);      // φ_UU* (cases 2/3)
+  const Index rd = upIsI ? sv.sampJ(s) : sv.sampI(s);        // φ_D*, Koren only
+  const double d1 = upIsI ? sv.d1I(s) : sv.d1J(s);
+  const double upStar = (rs >= 0) ? sv.gather(rs, fld) : phiUp;
+  // No upstream record: the probe is at the upwind cell's own level (or was withheld by a gate),
+  // which is the equal-spacing `dUU = 2·d1` today's formula already assumes.
+  double uu = phiUpUp, dUU = 2.0 * d1;
+  if (ru >= 0) {
+    uu = sv.gather(ru, fld);
+    dUU = sv.recDist(ru);
+  }
+  const double downStar = (advScheme != 0 && rd >= 0) ? sv.gather(rd, fld) : phiDown;
+  return hoFaceValueSeam(uu, phiUp, upStar, downStar, d1, dUU, distK, advScheme);
+}
+
 /// Deferred-correction advection term for component `comp`: defc = ρ·SOU − ρ·FOU (UNSCALED; the
 /// predictor RHS applies the cut-cell rscale once). The explicit part of the implicit-FOU/SOU
 /// split, it vanishes at steady state. The advecting velocity is u0..2 (uⁿ) and — for a lagged
@@ -355,16 +392,18 @@ inline void buildFou(const FaceGeom& g, View<const double> u0, View<const double
 /// operator (AmrCutCell::buildAdvectionFou + assembleOperator) so the two cancel at steady state.
 inline void deferredSou(const FaceGeom& g, View<const double> u0, View<const double> u1,
                         View<const double> u2, int comp, double rho, int advScheme,
-                        View<double> defc, View<const double> uf, bool useFace) {
+                        View<double> defc, View<const double> uf, bool useFace, bool seamOn) {
   auto st = g.start;
   auto nb = g.nbr;
   auto ax = g.axis;
   auto dr = g.dir;
   auto ra = g.rawArea;
+  auto ds = g.dist;
   auto iv = g.invVol;
   auto fl = g.fluid;
   auto uiP = g.upupI;
   auto ujP = g.upupJ;
+  const SeamView sv = makeSeamView(g, seamOn);
   Kokkos::parallel_for(
       "amr::flow_defsou", g.n, KOKKOS_LAMBDA(const Index i) {
         if (!fl(i)) {
@@ -381,13 +420,15 @@ inline void deferredSou(const FaceGeom& g, View<const double> u0, View<const dou
           const double uai = (a == 0) ? u0(i) : (a == 1) ? u1(i) : u2(i);
           const double uaj = (a == 0) ? u0(j) : (a == 1) ? u1(j) : u2(j);
           const double velOut = useFace ? dr(k) * uf(k) : dr(k) * 0.5 * (uai + uaj);
-          const Index up = (velOut > 0.0) ? i : j;
-          const Index down = (velOut > 0.0) ? j : i;
-          const Index upup = (velOut > 0.0) ? uiP(k) : ujP(k);
+          const bool upIsI = velOut > 0.0;
+          const Index up = upIsI ? i : j;
+          const Index down = upIsI ? j : i;
+          const Index upup = upIsI ? uiP(k) : ujP(k);
           const double phiUp = fld(up);
           const double phiUpUp = (upup >= 0 && fl(upup)) ? fld(upup) : phiUp;
           const double phiDown = fld(down);
-          const double phiFace = hoFaceValue(phiUpUp, phiUp, phiDown, advScheme);  // shared recon
+          const double phiFace = advectedFaceValue(sv, k, upIsI, phiUpUp, phiUp, phiDown, ds(k),
+                                                   advScheme, fld);  // shared recon
           sou += ra(k) * velOut * phiFace;
           fou += ra(k) * velOut * fld(up);  // FOU flux = velOut · upwind value
         }
@@ -399,16 +440,18 @@ inline void deferredSou(const FaceGeom& g, View<const double> u0, View<const dou
 /// `setImplicitAdvection(false)` fallback). Same SOU/TVD reconstruction as deferredSou.
 inline void advectExplicit(const FaceGeom& g, View<const double> u0, View<const double> u1,
                            View<const double> u2, int comp, double rho, int advScheme,
-                           View<double> defc, View<const double> uf, bool useFace) {
+                           View<double> defc, View<const double> uf, bool useFace, bool seamOn) {
   auto st = g.start;
   auto nb = g.nbr;
   auto ax = g.axis;
   auto dr = g.dir;
   auto ra = g.rawArea;
+  auto ds = g.dist;
   auto iv = g.invVol;
   auto fl = g.fluid;
   auto uiP = g.upupI;
   auto ujP = g.upupJ;
+  const SeamView sv = makeSeamView(g, seamOn);
   Kokkos::parallel_for(
       "amr::flow_advexpl", g.n, KOKKOS_LAMBDA(const Index i) {
         if (!fl(i)) {
@@ -425,13 +468,15 @@ inline void advectExplicit(const FaceGeom& g, View<const double> u0, View<const 
           const double uai = (a == 0) ? u0(i) : (a == 1) ? u1(i) : u2(i);
           const double uaj = (a == 0) ? u0(j) : (a == 1) ? u1(j) : u2(j);
           const double velOut = useFace ? dr(k) * uf(k) : dr(k) * 0.5 * (uai + uaj);
-          const Index up = (velOut > 0.0) ? i : j;
-          const Index down = (velOut > 0.0) ? j : i;
-          const Index upup = (velOut > 0.0) ? uiP(k) : ujP(k);
+          const bool upIsI = velOut > 0.0;
+          const Index up = upIsI ? i : j;
+          const Index down = upIsI ? j : i;
+          const Index upup = upIsI ? uiP(k) : ujP(k);
           const double phiUp = fld(up);
           const double phiUpUp = (upup >= 0 && fl(upup)) ? fld(upup) : phiUp;
           const double phiDown = fld(down);
-          const double phiFace = hoFaceValue(phiUpUp, phiUp, phiDown, advScheme);  // shared recon
+          const double phiFace = advectedFaceValue(sv, k, upIsI, phiUpUp, phiUp, phiDown, ds(k),
+                                                   advScheme, fld);  // shared recon
           sou += ra(k) * velOut * phiFace;
         }
         defc(i) = rho * sou * iv(i);  // ρ·SOU (fully explicit)
@@ -621,6 +666,12 @@ class AmrFlow {
   /// still averages the cell velocities — the swap its own design note prescribes was never made).
   /// See docs/amr_flow_uniform_parity.md.
   void setUfAdvection(bool on) { ufAdvect_ = on; }
+  /// ABLATION (docs/amr_cf_convective.md §5.5, Q-C). Reconstruct the ADVECTED value with
+  /// level-aware probes at every face whose upwind-side stencil crosses a 2:1 octree seam —
+  /// default ON. The tables are built either way (setSolid); this captures one bool in the two
+  /// advective kernels, so `false` is TODAY'S arithmetic bit for bit (gate G0) and the switch can
+  /// be flipped between steps. Inert without advection, and on any mesh with no 2:1 face.
+  void setSeamReconstruction(bool on) { seamRecon_ = on; }
   /// Use the Galerkin velocity multigrid (MomentumMG) as the momentum BiCGStab
   /// preconditioner. This is the scalable momentum solver: the coarse operators are the exact
   /// assembled cut-cell operator coarsened by R·A·P, so the V-cycle is a consistent
@@ -1268,10 +1319,12 @@ class AmrFlow {
         for (int c = 0; c < 3; ++c) {
           if (implicitFou_)
             deferredSou(geom_, View<const double>(u_[0]), View<const double>(u_[1]),
-                        View<const double>(u_[2]), c, rho_, advScheme_, defc_[c], ufv, useUf);
+                        View<const double>(u_[2]), c, rho_, advScheme_, defc_[c], ufv, useUf,
+                        seamRecon_);
           else
             advectExplicit(geom_, View<const double>(u_[0]), View<const double>(u_[1]),
-                           View<const double>(u_[2]), c, rho_, advScheme_, defc_[c], ufv, useUf);
+                           View<const double>(u_[2]), c, rho_, advScheme_, defc_[c], ufv, useUf,
+                           seamRecon_);
         }
         // The staircase MG's fine level mirrors the sharp operator; refresh it so it picks up the
         // current advection state (hasAdv). (The Galerkin MG is the static viscous operator.)
@@ -1634,7 +1687,7 @@ class AmrFlow {
     View<double> s("dbg_sou", static_cast<std::size_t>(n_));
     advectExplicit(geom_, View<const double>(u_[0]), View<const double>(u_[1]),
                    View<const double>(u_[2]), comp, 1.0, advScheme_, s, View<const double>(uf_),
-                   false);
+                   false, seamRecon_);
     std::vector<double> h(static_cast<std::size_t>(n_));
     auto m = Kokkos::create_mirror_view(s);
     Kokkos::deep_copy(m, s);
@@ -2514,6 +2567,7 @@ class AmrFlow {
   CfCompCsrDev cfUfVel_;            // (uf_scheme − uf_std) face-field overlay: velocity part
   Index cfGhostCols_ = 0;           // overlay entries reading a ghost slot (diagnostic)
   Index cfCutFaces_ = 0;            // C/F slots where the face gate withholds the quadratic
+  bool seamRecon_ = true;           // seam reconstruction of the advected value (§5.5, default on)
   Index seamSampleRecords_ = 0;     // seam tables: sample records built (docs/amr_cf_convective.md)
   Index seamLayerRecords_ = 0;      // seam tables: face-layer records built
   View<double> maskC_;              // 1 = coupled row (Krylov subspace), 0 = pinned
