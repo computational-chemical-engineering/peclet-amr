@@ -15,9 +15,15 @@ in-place level is gathered to every rank and the single-rank hierarchy continues
 there down to an exact bottom (damped Jacobi at extent ≤ 4, an agglomerated `GraphAMG`-PCG solve
 otherwise).**
 
-Everything downstream of the octree — `AmrPoisson::init`, the area-averaged openness ladder, the
-covering-leaf `c2p`, the device face-CSR assembly, the per-level `LeafHalo` — works on a lifted
-level verbatim. The ROADMAP's premise that "the coarse levels stop being octrees" is false, and
+**The multigrid does not stop at the mesh of bricks — it continues *through* it.** A lifted level
+IS the brick mesh coarsened: level `lmax + j` is the mesh of root bricks coarsened `j` times, with
+the octree inside each coarse brick one level deeper. `64→32→16→8→4` in §6.2 is the brick grid
+halving; `384→192→96→48` at 1536 ranks is the brick grid halving across ranks. Bricks remain the
+unit of decomposition and load balance at every level (a coarse brick belongs to the rank that
+owns its 2^Dim fine bricks), and the root brick mesh is meant to be *fine* — §5.4 rejects
+coarsening it to help the solver. Everything downstream of the octree — `AmrPoisson::init`, the
+area-averaged openness ladder, the covering-leaf `c2p`, the device face-CSR assembly, the
+per-level `LeafHalo` — works on a lifted level verbatim. The ROADMAP's premise that "the coarse levels stop being octrees" is false, and
 that is what makes the fix small.
 
 ## 2. Problem and scope
@@ -162,14 +168,33 @@ root for a 512³ domain) destroys the load balancer's resolution at 1536 ranks a
 mesh whose refinement already fixes `lmax`. The hierarchy must go below the root without moving
 the root.
 
-### 5.5 Semi-coarsening below the root (per-axis halving as in flow) — REJECTED
+### 5.5 Semi-coarsening below the root (per-axis halving as in flow) — REJECTED as a level type; the elongated brick mesh is handled by the exact bottom
 
-Would require a non-cubic level type (a structured brick with per-axis ratios) and a second set of
-operators, transfers and openness averaging. The measured benefit exists only for strongly
-anisotropic root bricks, and the exact bottom already covers that residue at a bounded cost
-(the residue after isotropic lifting is at most `max_d G[d] / min_d G[d]` cells long on the long
-axis divided by the short axis's power of two). Revisit only if a production slab domain measures
-badly (open question §11.5).
+The brick mesh is *intended* to be elongated — the octree is the cubic part, the aspect ratio
+lives in the brick counts — so this is the design's normal regime, not an edge case. A cubic-cell
+octree cannot represent a `2h × 2h × h` level; semi-coarsening would be a second level type with
+its own operators, transfers and openness averaging, and that is what is rejected.
+
+Adequacy argument. With brick counts carrying factors of two on every axis, isotropic lifting takes
+the *short* axes to 2 and the bottom has
+
+    n_b ≈ 2^Dim · Π_d (G_d / G_min)        (the aspect product, not the domain size)
+
+cells: `4096×32×32` bricks → `256×2×2` = 1024; `64×64×4` → `32×32×2` = 2048. An exact solve on
+that costs microseconds to a millisecond, and it is the reference's own answer to elongation:
+`DECOMPOSITION_AND_MULTIGRID.md` §2.7's `64×2×2` row is 6.0 iterations smoothed vs **4.0 exact**,
+and flow's full-depth *semi-coarsened* ladder (4.4) did not beat the exact bottom. Semi-coarsening
+buys nothing on iterations; it only bounds `n_b`, which matters when the short axis has few factors
+of two (`512×512×4` → `256×256×2` = 131 k cells, ~50 ms serial per V-cycle). Hence two rules,
+absorbed by WO5 and `predict`:
+
+- the exact bottom runs on the host for `n_b ≤ 10⁴` and on core's existing `GraphAMGDevice`
+  (`graph_amg_device.hpp`) above that;
+- design rule (joins §3 rule 1 of `DECOMPOSITION_AND_MULTIGRID.md`): choose brick counts for their
+  factors of two on every axis, keep the short axis at ≥ 8 bricks, and read `n_b` off `predict`.
+
+Revisit a structured semi-coarsening *tail* level (single-rank, uniform, no octree needed there)
+only if a production slab measures a bottom above ~10⁵ cells on device.
 
 ### 5.6 Sub-communicator telescoping first (flow's rung 2) — DEFERRED, not rejected
 
@@ -294,8 +319,19 @@ Two partitions produce those blocks:
   imbalance ≤ 1.05, falling back to `a = 0` (today's partition). Compatible with the settled
   decision that the weight grid is over root cells (it still is; the split positions are snapped).
 
-Both live in `distributed_octree.hpp` (WO7). Until WO7 lands, non-nesting partitions are handled
-by the tail — slower, never wrong.
+**The nesting constraint is an input to the balancer, not a post-hoc filter.** In the intended
+regime (many bricks, shallow octrees, routine rebalancing, the decomposition shared with DEM) a
+weighted partition will generally have odd origins, and without alignment every rebalanced run
+gathers the whole brick grid each V-cycle. Coarse-first keeps whole bricks on ranks and whole
+octrees migrating; the balancer's quantum becomes a `2^a`-brick group. `a` is chosen as the
+*smallest* depth whose gathered level fits the tail budget (`N_bricks / 2^(a·Dim) ≤ ~10⁵`) within
+the imbalance budget 1.05 — with hundreds of bricks per rank that is `a = 2–3` at a few per cent
+imbalance. CFD-DEM sharing is unaffected: alignment constrains split *positions*, the weights stay
+the combined ones. So WO7 belongs in core's `BlockDecomposer` (a weighted coarse-first `init`,
+once), used by `DistributedOctree::init/rebalance` and the coupling's shared factory. **WO7 is
+required for C1 to close** — before any rebalanced production run and before Snellius. Until it
+lands the tail keeps non-nesting partitions correct, and `pressure_mg_bottom` must show the
+gathered size so the cost is visible.
 
 ### 6.5 The redundant tail (distributed only)
 
@@ -417,7 +453,9 @@ Falsifiers, each a gate in §10:
    `presTol · res0` by more than 10× (exposes recurrence drift from the inner solve).
 3. `flow_parity` (six cases) leaves its existing tolerance; Z&H permeability moves in the ninth
    digit or worse; `python_amr_tg_graded` error levels move beyond its 5 % gate.
-4. Iterations do not fall (uniform 64³: 23 → ~12) or the count depends on N at fixed geometry.
+4. Iterations do not fall (uniform 64³: 23 → ~12), or grow faster than mildly logarithmically with
+   N at fixed geometry (a doubling per doubling of N would be a defect; 11/13/15 at N = 32/64/128,
+   as WO1 measured, is the mild class — see §11.9).
 
 What *will* change and is not a defect: every PCG iterate (hence every byte-gate key with a
 pressure/Poisson solve), the iteration count, and the last bits of the converged pressure within
@@ -480,7 +518,7 @@ at np = 4 (tail engages, 6→3) and np = 1 (no tail) the solutions agree to ≤ 
 number of V-cycles and the iteration counts are equal; every rank's tail `x(0)` is bitwise equal
 across ranks (Allreduce of a hash in the test); `predict` reports the tail.
 
-**WO5 — the exact bottom.** §6.6 header, `set_pressure_bottom`, `auto`. *Accept:* the consistency
+**WO5 — the exact bottom.** §6.6 header, `set_pressure_bottom`, `auto`; host `GraphAMG` for `n_b ≤ 10⁴`, `GraphAMGDevice` above (§5.5). *Accept:* the consistency
 gate ≤ 1e-9 on a 10³-root case (bottom 5³) and on a cut-cell case with a closed pocket (identity
 rows + two components); a 100³-root uniform Poisson (bottom 25³) converges in the same iteration
 count as 128³ (bottom 4³) ± 1; `smoother` reproduces WO1–4 bitwise; np = 2 vs np = 1 on the
@@ -491,7 +529,7 @@ naming the moved keys (expected: `Poisson`, both `Flow` keys, the distributed `F
 and np=2; NOT the `Octree`/`DistributedOctree` topology keys); ROADMAP C1 closed with the measured
 table; `CLAUDE.md` architecture paragraph gains one sentence on lifted levels.
 
-**WO7 — ORB alignment (coarse-first) for `init` and `rebalance`.** §6.4. *Accept:* power-of-two
+**WO7 — ORB alignment (coarse-first) for `init` and `rebalance` — REQUIRED for C1 to close (§6.4), in core's `BlockDecomposer`.** *Accept:* power-of-two
 grids × power-of-two `np` give the partition of today (bitwise runs); on 384³ `predict` at
 np = 1536 reaches ≥ 4 in-place levels; after `rebalance` on the weighted test case the ladder loses
 at most one in-place level versus the unweighted ladder at imbalance ≤ 1.05.
@@ -504,7 +542,7 @@ gates: `flow_parity` Stokes cases, `amr_two_sphere_gap.py` at cf = 1, momentum i
 
 | gate | configuration | criterion |
 |---|---|---|
-| depth study | `tests/study/amr_pressure_depth.py`, host-openmp 4 threads | uniform 64³ `lmax=0`: ≤ 270 ms/step, 12 ± 1 pres it (today 1947–2036 / 23); uniform 32³: ≤ 35 ms; graded rows within ±10 % |
+| depth study | `tests/study/amr_pressure_depth.py`, host-openmp 4 threads | uniform 64³ `lmax=0`: ≤ 1.05 × the everywhere-refined `lmax=3` emulation measured on the SAME box in the same session (the brief's 252 ms was another box; WO1 measured 291–312 at 13 it), 12–13 pres it (was 23); uniform 32³: ≤ 35 ms; graded rows within ±10 % |
 | scalability | uniform periodic sphere, N = 32, 64, 128, `lmax=0`, `presTol=1e-10` | PCG iterations ≤ 13 at every N and varying by ≤ 1 across N |
 | emulation oracle | WO1 acceptance | bitwise |
 | parity | `tests/study/flow_parity/parity_gate.py` (`PECLET_AMR_FLOW_PYTHONPATH` set) | six cases within their existing tolerances; advection case amr ≤ 1.3 × flow ms/step |
@@ -554,6 +592,20 @@ gates: `flow_parity` Stokes cases, `amr_two_sphere_gap.py` at cf = 1, momentum i
 8. **Recurrence-residual drift with the inexact bottom (needs a fact).** *Default:* the true-residual
    gate in §10; if it trips, tighten the inner tolerance to 1e-10 (flow measured no iteration
    change between 1e-5 and 1e-8) before considering flexible CG.
+
+9. **Iterations grow mildly with N — 11/13/15 at N = 32/64/128 (WO1 measurement; needs a fact,
+   separate item).** Not the lift's doing: the bottom is exact at every N. The first suspect is
+   NOT the level-0 cut-cell operator (the cut band's share shrinks with N, which would *reduce*
+   iterations) but the ladder's transfer pair — piecewise-constant prolongation + volume-average
+   restriction, `m_P + m_R = 2`, which does not satisfy the strict `> 2m` accuracy condition for a
+   rediscretized cell-centred hierarchy; MG-as-PCG-preconditioner is known to mask that to mild
+   growth. *Discriminator before anyone opens a hypothesis:* the same N-ladder on the
+   openness-free periodic `Poisson` with a smooth rhs. Growth there → the ladder (then try
+   `cyclesPerPrec = 2`, ω = 6/7, or a Galerkin-scaled coarse operator); flat there → the operator.
+   *Default:* open as its own ROADMAP item; C1 closes on the depth prize.
+10. **Elongated brick meshes with a short axis of few factors of two (fact).** `n_b` from §5.5 can
+   reach 10⁵; *default:* the device bottom (WO5) and the brick-count design rule; a structured
+   semi-coarsening tail level only if a production slab measures badly.
 
 ## 12. The three questions the brief asked
 
