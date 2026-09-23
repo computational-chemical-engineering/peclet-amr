@@ -520,3 +520,40 @@ Built as flagged by the implementer: `aMax` defaults to no cap beyond the geomet
 ORBs that return an empty block are rejected by the chooser; the coarse ORB takes `cellExtent =
 align`; sums are x-fastest within each box; "after j ≤ a halvings" was read as j < a (level `a`
 itself is not guaranteed even, and the probe telescopes exactly there).
+
+### 11.8 S2b as built and measured (2026-09-24)
+
+Core `a77eb14..10392fc`, merged: `chooseStageTarget(…, maxBlockCells)` replacing `allowRepartition`,
+`repartitionTarget`, `largestBlockCells`, Repartition in `makeStageComm` (`group` IS `parent`, not
+freed; `myGroup = −1`) and a planned `Isend`/`Irecv` movement in `RedistributeTopology` over the box
+intersections, tags 1–10 by per-topology id (audited across core, flow, amr, dem and voro — no other
+direct tag in that range; documented in `core/CLAUDE.md`). `redistributeGridFields` now tolerates a
+target with fewer blocks than ranks (bytes identical for existing callers).
+
+**Byte-identity at `maxBlockCells = 0`**: S1's Part A (4 872 levels) and Part D (22 711) unchanged,
+and a direct comparison of S1's header against the new one over 10 206 ladder levels: 0 differences.
+G-B2: `forward` equals `redistributeGridFields` bitwise and `backward(forward(x)) == x`, np 1–8.
+
+**§11.2 corrected: np_L is rounded UP to a power of two.** As first specified, the formula gave 5
+ranks on the heap case; five blocks of the 96-cell grid are 19 wide one level down, odd, so that
+level collapsed again (projection ÷ momentum 1.17–1.19). Rule now: `n = ceil(cells / maxBlockCells)`,
+the extent cap when `minExtent > 0`, then `np_L = min(np, nextPow2(n))` — and if that overshoots a
+cap that is not a power of two, the largest power of two within the cap — then the halving retry.
+Rounding up cannot violate the invariant (more ranks, smaller blocks) and a power-of-two count on a
+grid with factors of two keeps lifting.
+
+**G-B3** (flow probe, repartition only, np = 8, depth 8, quiet host, pinned):
+
+| case | projection | projection ÷ momentum |
+|---|---|---|
+| heap tilt 0.5, unweighted | 0.060–0.079 s | 0.98–1.02 |
+| heap tilt 0.5, collapse | 0.166–0.168 | 1.68–1.71 |
+| **heap tilt 0.5, repartition** | **0.096–0.098** | **0.97–1.00** |
+| tilt 0.3, unweighted | 0.060–0.072 | 0.98–1.13 |
+| tilt 0.3, collapse | 0.106–0.112 | 1.18–1.33 |
+| **tilt 0.3, repartition** | **0.091–0.092** | **1.08–1.11** |
+
+Heap passes the corrected gate and the original ≤ 0.104 s. Tilt 0.3 sits on the 10 % line, inside
+the scatter of its own unweighted ratio (0.98–1.13), with a clean ladder to the bottom. Iterations
+8 → 8 throughout. The flow wiring used to measure S2a and S2b lives only on throwaway branches
+(`s2a-probe`, `s2b-probe`); S4/S5 do it properly.
