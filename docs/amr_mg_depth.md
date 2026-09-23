@@ -196,13 +196,31 @@ absorbed by WO5 and `predict`:
 Revisit a structured semi-coarsening *tail* level (single-rank, uniform, no octree needed there)
 only if a production slab measures a bottom above ~10⁵ cells on device.
 
-### 5.6 Sub-communicator telescoping first (flow's rung 2) — DEFERRED, not rejected
+### 5.6 Telescoping — IN, as *stages*; the replicated tail is the degenerate stage
 
-The correct at-scale continuation (§11.1). Not first because (a) the redundant tail (§6.5) is
-flow's rung 1, needs no sub-communicators or idle-rank branches, and its cost is bounded by the
-coarsest in-place level — 48³ = 110 592 cells at 1536 ranks on 384³, i.e. 0.9 MB per rank per
-V-cycle and a ~1 ms device V-cycle — and (b) it reuses `Multigrid` unchanged. Rung 2 is the
-escalation when the gathered level exceeds ~10⁶ cells.
+(Rewritten 2026-09-23 after the author pointed at flow's telescoping; the first draft deferred it
+on a build-cost premise that is false — core's `BlockDecomposer::agglomerated()` exists, is unit-
+tested, and names AMR as a consumer; flow has run it as the default at 24–1536 ranks.)
+
+One primitive, per `archive/MG_TELESCOPING_PLAN.md` §4.0: **move a level, at its own resolution,
+onto a new decomposition of that level's grid on a sub-communicator, and continue the ladder
+there.** Three instantiations, in the order the trigger tries them:
+
+| stage | target decomposition | data movement | when |
+|---|---|---|---|
+| sibling merge | `agglomerated(d)`, largest `d` whose blocks are all liftable (flow's trigger: *every* axis, fewest merges) | group `Gatherv`/`Scatterv` (or `redistributeGridFields`) | proportional trees: even by construction |
+| **repartition** | a fresh proportional ORB of the level's brick grid on `np_L ≤ np` ranks (`np_L` = ranks whose blocks keep extent ≥ 4) | core `redistributeGridFields` (general A→B, bit-exact, NBX-planned once) | weighted trees, where no `d > 0` is liftable |
+| replicated tail | one block on every rank | `Allgatherv` | the bottom on the last sub-communicator; the fallback |
+
+**Why the second row exists and the first is not enough.** Sibling merging restores parity only
+because a *proportional* ORB's split values halve with tree depth. A *weighted* (brick-granular,
+DEM-shared) tree splits at weight medians; a merged box is bounded by arbitrary ancestor splits, so
+the depth search falls through to `d = 0` — the whole grid on one rank. Aligning the balancer
+instead (the earlier WO7) taxes every step by ~2^a per split over a ~8-brick block extent for a
+couple of levels: the wrong trade. Repartitioning at the blocked level — typically the root brick
+level itself under a weighted partition — moves bricks-per-rank doubles per direction per V-cycle
+(hundreds), and below it the tree is proportional so lifts and sibling merges run to the bottom.
+**The pressure solve therefore imposes no constraint on the load balancer.**
 
 ## 6. The design
 
@@ -319,21 +337,27 @@ Two partitions produce those blocks:
   imbalance ≤ 1.05, falling back to `a = 0` (today's partition). Compatible with the settled
   decision that the weight grid is over root cells (it still is; the split positions are snapped).
 
-**The nesting constraint is an input to the balancer, not a post-hoc filter.** In the intended
-regime (many bricks, shallow octrees, routine rebalancing, the decomposition shared with DEM) a
-weighted partition will generally have odd origins, and without alignment every rebalanced run
-gathers the whole brick grid each V-cycle. Coarse-first keeps whole bricks on ranks and whole
-octrees migrating; the balancer's quantum becomes a `2^a`-brick group. `a` is chosen as the
-*smallest* depth whose gathered level fits the tail budget (`N_bricks / 2^(a·Dim) ≤ ~10⁵`) within
-the imbalance budget 1.05 — with hundreds of bricks per rank that is `a = 2–3` at a few per cent
-imbalance. CFD-DEM sharing is unaffected: alignment constrains split *positions*, the weights stay
-the combined ones. So WO7 belongs in core's `BlockDecomposer` (a weighted coarse-first `init`,
-once), used by `DistributedOctree::init/rebalance` and the coupling's shared factory. **WO7 is
-required for C1 to close** — before any rebalanced production run and before Snellius. Until it
-lands the tail keeps non-nesting partitions correct, and `pressure_mg_bottom` must show the
-gathered size so the cost is visible.
+**The nesting constraint is NOT imposed on the balancer** (reversing the note's earlier text): a
+weighted, brick-granular, DEM-shared partition is expected to block at the root brick level, and
+the repartition stage (§5.6, §6.5) handles that at a per-V-cycle cost of bricks-per-rank doubles.
+Coarse-first alignment of `init`/`rebalance` (WO7) is now *optional* — it keeps a few in-place
+levels above the first stage and reduces that already-tiny volume by 8^a; revisit only if the
+root-level redistribution measures > 5 % of a V-cycle.
 
-### 6.5 The redundant tail (distributed only)
+### 6.5 Stages (distributed only): moving a level onto a new decomposition
+
+At a stage point every rank's level is a uniform brick (lockstep lifting guarantees it), so the
+moved data is a grid field — `redistributeGridFields` applies directly after a Morton↔structured
+permutation computed once — and the level on the target block is `BlockOctree(targetBrick,
+lmax + k, targetOrigin)`, lifted once for the next level. Per plan §4.1 the stage needs no halo:
+residual down at resolution L, restrict on the target (legal: target blocks are liftable),
+continue, prolong on the target, correction up and *added*. Every collective a level performs
+(`removeMeanFvDist`, halo build, the bottom's gather) uses that level's communicator; ranks not in
+the target take part in the movement on the parent communicator and skip the recursion. The
+replicated tail below is the degenerate stage and is written first (WO4) behind the same
+interface, so WO4b instantiates the other two rows of §5.6's table without touching `vcycle`.
+
+#### 6.5.1 The replicated tail
 
 Engaged iff, after the in-place ladder stops, `max_d G_t[d] > bottomExtent`, where `G_t` is the
 coarsest in-place global grid. It replaces the bottom branch of `DistributedFlowMultigrid::vcycle`
@@ -513,10 +537,18 @@ keys where they did before); np = 2/4/8 vs np = 1 ≤ 3e-7 on `amr_distributed_g
 the seam test; ladder == `predict` at np = 1, 2, 4, 8; level counts equal on every rank (assert
 with an Allreduce in debug builds).
 
-**WO4 — the redundant tail.** §6.5, including `Multigrid::buildRaw`. *Accept:* on a 12³-root grid
+**WO4 — the replicated tail, written as a stage.** §6.5: a `Stage` (target decomposition, target communicator / active flag, moved fields, the level-L cells on the target block as a `BlockOctree`, continued ladder) with the replicated instantiation; `Multigrid::buildRaw`; the `Allgatherv` lives behind the stage, never in `vcycle`; per-level communicators in `DistributedFlowMultigrid`. *Accept:* on a 12³-root grid
 at np = 4 (tail engages, 6→3) and np = 1 (no tail) the solutions agree to ≤ 1e-12 after the same
 number of V-cycles and the iteration counts are equal; every rank's tail `x(0)` is bitwise equal
 across ranks (Allreduce of a hash in the test); `predict` reports the tail.
+
+**WO4b — sibling-merge and repartition stages (after WO5).** flow's trigger verbatim for
+`agglomerated(d)`; the fresh-proportional-ORB fallback with `np_L` from the extent-4 rule;
+`redistributeGridFields` movement; sub-communicators and idle ranks; per-level halos on the
+sub-communicator (core's NBX tag rotation — the 1536-rank race of `SCALING_ISSUES.md` §4 is fixed
+in core `10294e6`). *Accept:* a WEIGHTED partition on 24³ bricks at np = 2/4/8 reproduces the
+single-rank ladder and its solution to ≤ 1e-13 (flow's pattern, 2.5e-14) and the iteration count
+is np-independent; with stages disabled the ladders that never block are byte-identical to WO3.
 
 **WO5 — the exact bottom.** §6.6 header, `set_pressure_bottom`, `auto`; host `GraphAMG` for `n_b ≤ 10⁴`, `GraphAMGDevice` above (§5.5). *Accept:* the consistency
 gate ≤ 1e-9 on a 10³-root case (bottom 5³) and on a cut-cell case with a closed pocket (identity
@@ -529,7 +561,7 @@ naming the moved keys (expected: `Poisson`, both `Flow` keys, the distributed `F
 and np=2; NOT the `Octree`/`DistributedOctree` topology keys); ROADMAP C1 closed with the measured
 table; `CLAUDE.md` architecture paragraph gains one sentence on lifted levels.
 
-**WO7 — ORB alignment (coarse-first) for `init` and `rebalance` — REQUIRED for C1 to close (§6.4), in core's `BlockDecomposer`.** *Accept:* power-of-two
+**WO7 — OPTIONAL: ORB alignment (coarse-first) for `init` and `rebalance`** (§6.4; only if the root-level redistribution measures > 5 % of a V-cycle). *Accept:* power-of-two
 grids × power-of-two `np` give the partition of today (bitwise runs); on 384³ `predict` at
 np = 1536 reaches ≥ 4 in-place levels; after `rebalance` on the weighted test case the ladder loses
 at most one in-place level versus the unweighted ladder at imbalance ≤ 1.05.
@@ -558,12 +590,12 @@ gates: `flow_parity` Stokes cases, `amr_two_sphere_gap.py` at cf = 1, momentum i
 
 ## 11. Risks and open questions — each with a default
 
-1. **At-scale gather volume (needs a fact).** The tail's `Allgatherv` grows linearly with `np`
-   under weak scaling (110 k cells at 1536 ranks on 384³; ~10⁶ at ~10⁴ ranks). *Default:* ship
-   the redundant tail; measure on Snellius at 384 and 1536 ranks (packed bed, the D3b prefix
-   rebuild first); escalate to sub-communicator telescoping (flow's rung 2, core's
-   `BlockDecomposer::agglomerated`, merging sibling ORB blocks so lifting continues on 1/8 of the
-   ranks) when the gathered level exceeds ~10⁶ cells or the gather exceeds 10 % of the step.
+1. **Stage costs at scale (needs a fact).** The repartition stage under a weighted partition moves
+   bricks-per-rank doubles per direction per V-cycle; sibling merges move a block per group;
+   the replicated tail moves the whole surviving level. *Default:* ship WO4 (tail) then WO4b;
+   measure on Snellius at 384 and 1536 ranks with a rebalanced bed; the `Gatherv` fast path for
+   sibling merges is a core item (`gatherGroups`/`scatterGroups`, never written — flow's
+   `Telescope` has its own) only if `redistributeGridFields` measures as the cost.
 2. **Determinism of the redundant tail across ranks (needs a fact).** Identical device kernels on
    identical data give identical results on identical hardware; heterogeneous GPUs could differ by
    an ulp, which perturbs the preconditioner by ~1e-16 (harmless to convergence, breaks bitwise
@@ -621,9 +653,10 @@ exact bottom is needed; at 1536 ranks the in-place lift stops where the blocks t
 **Under MPI past one cell per rank?** The in-place levels never go below one cell per rank — the
 lift rule stops at an odd origin or size — and below that the tail continues on every rank with
 the single-rank hierarchy of the gathered level, decomposition-independent by construction. The
-levels are never *split* across ranks: they are either nested in the ORB or replicated. Sub-
-communicator telescoping (idle ranks at the bottom) is the escalation, deferred with a measured
-trigger (§11.1).
+levels are never *split* across ranks: they are either nested in the ORB or replicated. Below
+that the level moves to a new decomposition on fewer ranks (§5.6: sibling merge on proportional
+trees, repartition on weighted ones), so ranks idle at the bottom and the iteration count is a
+property of the problem, not of the rank count — with no constraint on the load balancer.
 
 **The velocity multigrid?** The mechanism generalises mechanically — `VelocityMG` builds through
 the same `AmrMultigrid::build` and its per-level κ classification uses `ancestor(level+1)`, valid on
