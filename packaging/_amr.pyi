@@ -20,11 +20,11 @@ build_toolchain: str = 'GNU 14.2.0 Release x86_64 Kokkos 5.1.1'
 
 def predict_pressure_hierarchy(cells: Sequence[int], lmax: int = 0, num_ranks: int = 1, bottom_extent: int = 4) -> dict:
     """
-    The pressure-multigrid ladder the solver will build on `cells` FINEST cells per axis at tree depth `lmax` over `num_ranks` ranks (docs/amr_mg_depth.md §6.7). A pure function — it builds no mesh and needs no MPI; it re-runs the §6.2 ladder rule on the ORB the DistributedOctree would produce. Returns a dict: `cells` and `extent` per level (finest first), `kind` per level ('octree' above the root brick, 'lifted' below it, 'tail' on the gathered coarsest level), `num_levels`, `num_in_place`, `tail`, and `bottom` ('jacobi' or 'amg', suffixed '+tail').
+    The pressure-multigrid ladder a Flow builds on `cells` FINEST cells per axis at tree depth `lmax` over `num_ranks` ranks (docs/amr_mg_depth.md §6.2, §6.7) — a pre-flight tool. A pure function: it builds no mesh and needs no MPI; it re-runs the ladder rule on the ORB a freshly constructed DistributedOctree would produce (not a partition after `DistributedOctree.rebalance` / `Flow.rebalance_mpi`). Below the root brick the ladder halves the grid while every rank's block stays even; where it stops above `bottom_extent` cells per axis on more than one rank the coarsest level is gathered onto every rank (the replicated tail) and continued there; the coarsest level is then solved by damped-Jacobi sweeps if it has at most `bottom_extent` cells per axis, else by the agglomerated GraphAMG-PCG bottom. The prediction is that of the default `Flow.diagnostics.set_pressure_bottom('auto')`.
 
-    `lmax` is the number of octree coarsenings THE MESH supports, i.e. the tree's lmax for a mesh refined to level 0 somewhere. An UNREFINED Octree(cells, lmax=k>0) is the same mesh as Octree(cells/2**k, lmax=0) — all its leaves are root cells — and must be predicted that way. In general pass depth = tree.lmax - levels().min() and cells = root * 2**depth.
+    Returns a dict, levels finest first: `extent` the level's global grid in CELLS per axis (a count, not a length), `cells` its total cell count as if the mesh were uniform (so it equals `Flow.diagnostics.pressure_mg_levels` leaf for leaf only for a uniform mesh at num_ranks=1), `kind` ('octree' at or above the root brick, 'lifted' below it in place, 'tail' on the gathered grid -- the first tail level is the SAME grid as the last in-place one, moved rather than coarsened, exactly as `pressure_mg_levels` lists it), `num_levels`, `num_in_place` (levels that keep the ORB), `tail` (bool) and `bottom` ('jacobi' or 'amg', suffixed '+tail' when the tail engages) — the spelling `Flow.diagnostics.pressure_mg_bottom` reports.
 
-    The redundant tail and the agglomerated bottom are DESCRIBED here before they are built (work orders WO4 / WO5): this is the ladder of the finished design, which is what makes it the specification `Flow.diagnostics.pressure_mg_levels` is checked against.
+    `lmax` is the number of octree coarsenings THE MESH supports, i.e. the tree's lmax for a mesh refined to level 0 somewhere. An UNREFINED Octree(cells, lmax=k>0) is the same mesh as Octree(cells/2**k, lmax=0) — all its leaves are root cells — and must be predicted that way. In general pass depth = tree.lmax - levels().min() and cells = root * 2**depth. `bottom_extent` (default 4, the solver's default) is the `Flow.diagnostics.pressure_bottom_extent` the run will use; pass the same value.
     """
 
 def spacing_from_extent(extent: Sequence[float], root_cells: Sequence[int], lmax: int) -> float:
@@ -162,7 +162,9 @@ class Poisson:
 
     @property
     def num_levels(self) -> int:
-        """Number of multigrid levels."""
+        """
+        Number of multigrid levels: the octree's own coarsenings down to the root brick, then levels BELOW it (the root lifted, docs/amr_mg_depth.md §6.1-§6.2) for as long as some axis has more than 4 cells and every axis stays even with at least 2 cells after halving. So a uniform lmax=0 mesh has a real hierarchy (64^3: 5 levels).
+        """
 
     def apply(self, u: Annotated[NDArray[numpy.float64], dict(order='C')]) -> NDArray[numpy.float64]:
         """
@@ -179,13 +181,13 @@ class Poisson:
 
 class Flow:
     """
-    Collocated incompressible Stokes/Navier-Stokes step on an Octree with a cut-cell immersed boundary (no-slip on an SDF solid). step() = implicit viscous momentum predictor + Almgren-Bell-Colella rotational projection. Drive with a body force and iterate to steady state; velocities are per-leaf (num_leaves,) in Z-order slots.
+    Collocated incompressible Stokes/Navier-Stokes step on an Octree with a cut-cell immersed boundary (no-slip on an SDF solid). step() = implicit viscous momentum predictor + Almgren-Bell-Colella rotational projection, whose pressure Poisson equation is solved by multigrid-preconditioned CG (the hierarchy continues below the octree's root brick; `diagnostics.pressure_mg_levels`). The box is TRIPLY PERIODIC and the only driving is a uniform body force (set_body_force); a wall is an immersed solid. Any consistent unit system: density [mass/length^3], dynamic viscosity [mass/(length*time)], dt [time], lengths those of the Octree's extent. Iterate step() to a steady state or march in time; velocities and pressure are per-leaf (num_leaves,) arrays in Z-order slots.
     """
 
     @overload
     def __init__(self, octree: Octree, density: float = 1.0, viscosity: float = 1.0, dt: float = 1000000.0) -> None:
         """
-        Create a flow on `octree` with the given density, viscosity and time step. A large dt drives straight to the steady (Stokes) solution. The octree is borrowed by reference.
+        Create a flow on `octree` with the given density, dynamic viscosity and time step (defaults 1, 1 and 1e6). A large dt drives straight to the steady (Stokes) solution. The octree is borrowed by reference and must outlive the Flow's use of it.
         """
 
     @overload
@@ -215,7 +217,7 @@ class Flow:
 
     def set_body_force(self, fx: float, fy: float, fz: float) -> None:
         """
-        Set the per-volume body force (e.g. a pressure gradient) driving the flow.
+        Set the body force per unit volume [force/length^3] driving the flow, e.g. a mean pressure gradient -dp/dx along x. It is the only driving the periodic box has. Default (0, 0, 0).
         """
 
     def set_advection(self, on: bool) -> None:
@@ -253,7 +255,7 @@ class Flow:
 
     def set_cf_scheme(self, scheme: int) -> None:
         """
-        Coarse/fine (2:1) interface scheme. 1 = Martin-Cartwright tangential quadratic, THE DEFAULT since 2026-09-21: second order, applied to the momentum diffusion, the divergence constraint and the pressure gradients (the pressure matrix/MG stays standard, which does not move the steady solution). 0 = the standard two-point flux, first-order at level boundaries, kept only to reproduce pre-2026-09-21 graded results. The default is INERT BY GEOMETRY on a uniform or finest-band mesh -- no C/F faces, no delta -- and matters where a 2:1 interface sees tangential variation, which on a self-similar graded ladder is the difference between order 1.60 and 0.41. Works with both the aperture and the ghost projection. Call before set_solid.
+        Coarse/fine (2:1) interface scheme. 1 = Martin-Cartwright tangential quadratic, THE DEFAULT since 2026-09-21: second order, applied to the momentum diffusion, the divergence constraint and the pressure gradients (the pressure matrix/MG stays standard, which does not move the steady solution). 0 = the standard two-point flux, first-order at level boundaries, kept only to reproduce pre-2026-09-21 graded results. The default is INERT BY GEOMETRY on a uniform or finest-band mesh -- no C/F faces, no delta -- and matters where a 2:1 interface sees tangential variation, which on a self-similar graded ladder is the difference between order 1.60 and 0.41. Works with both the aperture and the ghost projection. The seam reconstruction of the advected value (diagnostics.set_seam_reconstruction) rides on the quadratic scheme: with 0 no seam tables are built. Call before set_solid.
         """
 
     def set_advection_scheme(self, scheme: int) -> None:
@@ -283,7 +285,7 @@ class Flow:
 
     def step(self, mom_iters: int = 100, pres_iters: int = 60) -> None:
         """
-        Advance one collocated projection step on device: `mom_iters` momentum solver iterations (BiCGStab/MG), `pres_iters` pressure MG-PCG iterations.
+        Advance one collocated projection step of length dt on device. `mom_iters` caps the momentum solve (BiCGStab, MG-preconditioned) and `pres_iters` the pressure solve (MG-PCG, or BiCGStab under the ghost projection); each stops earlier at its set_momentum_tolerance / set_pressure_tolerance. Collective on a distributed Flow.
         """
 
     def velocity(self, component: int) -> NDArray[numpy.float64]:
@@ -321,7 +323,7 @@ class Flow:
     @property
     def diagnostics(self) -> FlowDiagnostics:
         """
-        The developer tier: iteration counts of the last step, the face-field divergence, and the solver-internals / ablation switches (FlowDiagnostics). A view onto this Flow.
+        The developer tier (FlowDiagnostics, a view onto this Flow): iteration counts of the last step, the face-field divergence and topology, the C/F and seam-reconstruction censuses, the pressure-multigrid ladder and its bottom solver, and the solver-internals / ablation switches. Nothing here is needed to set up, run or read out a simulation; everything here has a production default.
         """
 
 class FlowDiagnostics:
@@ -350,39 +352,41 @@ class FlowDiagnostics:
     @property
     def num_cf_cut_faces(self) -> int:
         """
-        How many 2:1 C/F sub-face slots of THIS RANK carry the standard two-point face value because the quadratic one is withheld: both incident cells must be REGULAR fluid (fluid and not cut) for set_cf_scheme('quadratic') to apply there, so this counts the sub-faces where a level boundary meets the wall. 0 on every uniform or finest-band mesh; on a graded mesh it measures the size of the set that runs at the standard scheme's local order. Each sub-face contributes two slots (one per incident cell) and the sum over ranks equals the single-rank count.
+        How many 2:1 C/F sub-face slots of THIS RANK carry the standard two-point face value because the quadratic one is withheld: both incident cells must be REGULAR fluid (fluid and not cut) for the quadratic C/F scheme (set_cf_scheme(1), the default) to apply there, so this counts the sub-faces where a level boundary meets the wall (docs/amr_cf_flux_gate.md §6.5). 0 on every uniform or finest-band mesh; on a graded mesh it measures the size of the set that runs at the standard scheme's local order. Each sub-face contributes two slots (one per incident cell) and the sum over ranks equals the single-rank count.
         """
 
     def face_topology(self) -> dict:
         """
-        The face CSR topology face_field() is indexed by, as a dict of four arrays: 'start' (num_leaves+1 row offsets, int64), 'nbr' (neighbour leaf per (sub)face, int64), 'axis' (0/1/2, int32), 'dir' (+1/-1 from the owning cell toward the neighbour, int32), 'raw_area' (the area the ADVECTIVE flux uses -- the FINE area at a 2:1 sub-face, so a coarse face's four sub-faces sum to the coarse area), 'dist' (centre distance, 1.5*h_fine at a 2:1 sub-face), 'alpha' (openness) and 'upup_i' / 'upup_j' (the second upwind probes the SOU/Koren reconstruction samples, -1 where none). A 2:1 sub-face is a slot whose two incident leaves have different Octree.levels(); its centroid is the FINER leaf's face centre. Host-copied on every call -- a diagnostic, not a step-loop read-out. Under MPI a neighbour index >= num_leaves is a ghost slot of this rank's registry, whose world centre (like every slot's) is row `slot` of 'cell_center', an (num_leaves + num_ghost_cells, 3) array. The SEAM RECONSTRUCTION tables of docs/amr_cf_convective.md come with it: 'seam' (one descriptor id per face slot, -1 = a plain slot that takes the ordinary SOU/Koren line), the per-descriptor 'samp_i' / 'samp_j' (the tangential-sample record when i / j is the COARSE cell of a 2:1 sub-face, else -1), 'uu_rec_i' / 'uu_rec_j' (the upstream probe's record when the second upwind cell of i / j crosses a level, else -1) and 'd1_i' / 'd1_j' (half width along the face axis), and the record CSR 'rec_start', 'rec_cell', 'rec_w', 'rec_dist' (the probe distance, used only where a record is an UPSTREAM probe). All empty with set_cf_scheme(0 = standard), which builds no tables.
+        The face CSR topology face_field() is indexed by, as a dict of arrays: 'start' (num_leaves+1 row offsets, int64), 'nbr' (neighbour leaf per (sub)face, int64), 'axis' (0/1/2, int32), 'dir' (+1/-1 from the owning cell toward the neighbour, int32), 'raw_area' (world area the ADVECTIVE flux uses -- the FINE area at a 2:1 sub-face, so a coarse face's four sub-faces sum to the coarse area), 'dist' (world centre distance, 1.5*h_fine at a 2:1 sub-face), 'alpha' (face openness in [0, 1]) and 'upup_i' / 'upup_j' (the second upwind probes the SOU/Koren reconstruction samples, -1 where none). A 2:1 sub-face is a slot whose two incident leaves have different Octree.levels(); its centroid is the FINER leaf's face centre. Host-copied on every call -- a diagnostic, not a step-loop read-out. Under MPI a neighbour index >= num_leaves is a ghost slot of this rank's registry, whose world centre (like every slot's) is row `slot` of 'cell_center', an (num_leaves + num_ghost_cells, 3) array. The SEAM RECONSTRUCTION tables of docs/amr_cf_convective.md come with it: 'seam' (one descriptor id per face slot, -1 = a plain slot that takes the ordinary SOU/Koren line), the per-descriptor 'samp_i' / 'samp_j' (the tangential-sample record when i / j is the COARSE cell of a 2:1 sub-face, else -1), 'uu_rec_i' / 'uu_rec_j' (the upstream probe's record when the second upwind cell of i / j crosses a level, else -1) and 'd1_i' / 'd1_j' (world half width along the face axis), and the record CSR 'rec_start', 'rec_cell', 'rec_w', 'rec_dist' (the world probe distance, used only where a record is an UPSTREAM probe). All empty with set_cf_scheme(0 = standard), which builds no tables. Rank-local under MPI.
         """
 
     @property
     def pressure_mg_levels(self) -> list[int]:
         """
-        Leaf count of every pressure-multigrid level this rank built, level 0 first (docs/amr_mg_depth.md §6.7). Levels below the root brick are LIFTED levels — the same octree with its root halved — so a uniform mesh now has a real hierarchy instead of a single level. Check it against `peclet.amr.predict_pressure_hierarchy`, not against a literal.
+        Leaf count of every pressure-multigrid level, finest first (docs/amr_mg_depth.md §6.7), as a list of int; empty before set_solid, which is where the hierarchy is built. Levels below the root brick are LIFTED levels — the same octree with its root halved — so a uniform mesh has a real hierarchy rather than a single level. Under MPI the in-place levels are THIS RANK's counts and the levels of a replicated tail (appended last) are GLOBAL counts, identical on every rank. Check it against `peclet.amr.predict_pressure_hierarchy` (level count, and leaf for leaf on a uniform mesh at np=1), never against a literal.
         """
 
     @property
     def pressure_mg_bottom(self) -> str:
         """
-        What solves the coarsest pressure level: 'jacobi' (60 damped-Jacobi sweeps, exact at extent <= 4) or 'amg' (the agglomerated GraphAMG-PCG solve), with the suffix '+tail' when the coarsest level is moved by the replicated stage. Which one runs follows `set_pressure_bottom` (default 'auto': the exact bottom engages only where the ladder ran out above `pressure_bottom_extent`).
+        What solves the coarsest pressure level of the hierarchy AS BUILT: 'jacobi' (60 damped-Jacobi sweeps, effectively exact at <= 4 cells per axis: the slowest mode falls by 8e-9) or 'amg' (the agglomerated GraphAMG-PCG solve), with the suffix '+tail' when the coarsest level was gathered onto every rank by the replicated stage (docs/amr_mg_depth.md §6.5-§6.7). Which one runs follows `set_pressure_bottom` (default 'auto': the exact bottom engages only where the ladder ran out above `pressure_bottom_extent` cells per axis). 'jacobi' before set_solid.
         """
 
     def set_pressure_bottom(self, kind: str) -> None:
         """
-        What solves the coarsest pressure level (docs/amr_mg_depth.md §6.6): 'auto' (default -- the agglomerated GraphAMG-PCG bottom engages iff the coarsest global extent exceeds `pressure_bottom_extent`, which is where 60 damped-Jacobi sweeps stop being a solve), 'smoother' (always the sweeps), 'agglomerated' (always the exact solve). Flow's three spellings. Call BEFORE set_solid -- that is where the hierarchy is built. On a DISTRIBUTED run the exact bottom lives in the stage's continued ladder; without a stage the coarsest level is already at or below the bottom extent, where the sweeps are exact.
+        What solves the coarsest pressure level (docs/amr_mg_depth.md §6.6). A V-cycle is mesh-independent only if its coarsest level is effectively solved, and 60 damped-Jacobi sweeps solve a level only up to ~4 cells per axis (8e-9 at 4, 8e-3 at 8, 0.6 at 25). 'auto' (THE DEFAULT, the production setting) engages the agglomerated GraphAMG-PCG bottom iff the coarsest level still has more than `pressure_bottom_extent` cells on some axis -- i.e. where the ladder ran out on an odd or badly factored grid -- and keeps the sweeps otherwise; 'smoother' always sweeps; 'agglomerated' always solves exactly. The choice changes the preconditioner, not the converged pressure (to the solve tolerance), and at the default extent it does not change the iteration count either (§11.4(a): identical counts in all nine measured 'smoother'/'agglomerated' pairs). Exists to A/B the bottom; the three strings are flow's `set_pressure_bottom` spellings. Takes effect at once on the hierarchy already built and is kept for later set_solid calls. On a DISTRIBUTED Flow call it on every rank: the exact bottom lives in the replicated stage's continued ladder, which the call may build. Raises on any other string.
         """
 
     def set_pressure_bottom_extent(self, extent: int) -> None:
         """
-        Where the pressure ladder stops lifting the root and hands over to the bottom (docs/amr_mg_depth.md §6.2/§11.4). The shipped default is measured, not preferred -- see tests/study/amr_pressure_depth.py --sweep. Call BEFORE set_solid.
+        Where the pressure ladder stops coarsening below the root brick and hands over to the bottom solve, in CELLS PER AXIS of the coarsest level (a count, not a length; docs/amr_mg_depth.md §6.2/§11.4): the ladder stops once no axis has more than `extent` cells, and set_pressure_bottom('auto') engages the exact bottom where it stopped above it. Default 4, the value at which the 60 bottom sweeps are exact; it is measured rather than preferred (§11.4: 8 moves the iteration count by ~1 on one case in three; tests/study/amr_pressure_depth.py --sweep). Changes the preconditioner, not the converged pressure (to the solve tolerance). Takes effect at the NEXT set_solid, where the ladder is built. Raises if extent < 1.
         """
 
     @property
     def pressure_bottom_extent(self) -> int:
-        """The bottom extent in force (docs/amr_mg_depth.md §6.8)."""
+        """
+        The bottom extent, in cells per axis, that set_pressure_bottom_extent last stored (default 4) -- the one the next set_solid builds the ladder with (docs/amr_mg_depth.md §6.8).
+        """
 
     @property
     def num_seam_sample_records(self) -> int:
@@ -433,7 +437,7 @@ class FlowDiagnostics:
 
     def set_seam_reconstruction(self, on: bool) -> None:
         """
-        ABLATION. Reconstruct the ADVECTED value with level-aware probes at every face whose upwind-side stencil crosses a 2:1 coarse/fine seam (default ON, docs/amr_cf_convective.md): the coarse upwind cell is tangentially sampled at the sub-face's own column, and an upstream probe at another octree level is taken at its TRUE distance (a coarser one as the same tangential sample, a finer one as the mean of the four face-layer children). Without it the sub-face value carries the coarse column's tangential offset -- an O(h) face error, so an O(1) local truncation on the fine side of the seam. on=False restores that, bit for bit, and may be flipped between steps; the tables are built in set_solid either way. Inert with advection off, with set_cf_scheme(0 = standard), and on any mesh with no 2:1 face.
+        ABLATION. Reconstruct the ADVECTED value with level-aware probes at every face whose upwind-side stencil crosses a 2:1 coarse/fine seam (default ON, docs/amr_cf_convective.md): the coarse upwind cell is tangentially sampled at the sub-face's own column, and an upstream probe at another octree level is taken at its TRUE distance (a coarser one as the same tangential sample, a finer one as the mean of the four face-layer children). Without it the sub-face value carries the coarse column's tangential offset -- an O(h) face error, so an O(1) local truncation on the fine side of the seam. on=False restores that, bit for bit, and may be flipped between steps; the tables are built in set_solid either way. Inert with advection off, with set_cf_scheme(0 = standard), and on any mesh with no 2:1 face. Leave it on in production: the switch exists for the A/B of docs/amr_cf_convective.md §12, where it cuts the one-step seam truncation 7.9e-3 -> 2.0e-3 at no measurable cost.
         """
 
 class DistributedOctree:
