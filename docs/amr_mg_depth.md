@@ -567,6 +567,44 @@ in core `10294e6`). *Accept:* a WEIGHTED partition on 24³ bricks at np = 2/4/8 
 single-rank ladder and its solution to ≤ 1e-13 (flow's pattern, 2.5e-14) and the iteration count
 is np-independent; with stages disabled the ladders that never block are byte-identical to WO3.
 
+*WO4b as built (S3, 2026-09-24).* Target, communicators and movement are core's
+(`amr_mg_core_boundary.md` §5, §11): the spec's "`redistributeGridFields` movement" and "`np_L`
+from the extent-4 rule" are superseded by core's planned `RedistributeTopology` and §11.2's `np_L`.
+(1) `ReplicatedTailStage` moves through a `Replicated` `RedistributeTopology` — bitwise the old
+gid-keyed `Allgatherv` (the fields of fixed V-cycles, the tail solution and the MG-PCG solution on
+the 12³ and 10³ roots at np = 1, 2, 4, 8 against the unmodified tree: 22 arrays, `np.array_equal`
+on all). (2) The sibling-merge and repartition rows are one class, `DistributedStage`
+(`distributed_flow_mg.hpp`): `chooseStageTarget` with §6.2's rule as the predicate (grid halves
+into a cube level, every block even on every axis) → `makeStageComm` →
+`DistributedOctree::initDecomposed` on the stage's `sub` → one `RedistributeTopology` for the
+residual up / correction down and, once, the α rows → `DistributedFlowMultigrid::buildRaw` as the
+continued ladder, which lifts, halos and stages again on `sub`. Idle ranks take part in the
+movement only. (3) The policy is `DistributedFlowMultigrid::StagePolicy`, **off by default** (the
+replicated tail only — every existing ladder and byte-gate key unchanged) until the two inputs
+`amr_mg_core_boundary.md` §9.6–§9.7 leave open are decided. (4) `rebalance` goes through
+`chooseAlignedWeighted` (§11.5's consumer half).
+
+The gate (`tests/test_amr_mg_stages_mpi.cpp`, policy on with `maxBlockCells` = the largest
+finest-level block, `minExtent` 0 and 4 — identical results): a heap-weighted 24³ root partition
+(odd blocks from level 0), and the 12³ root of the tail test with the policy on.
+
+| case (host-openmp, 2 threads/rank, unbound) | np | stages met | ladder (global cells) | 5 V-cycles vs 1 rank | MG-PCG it (1 rank) | solution vs 1 rank |
+|---|---|---|---|---|---|---|
+| heap-weighted 24³, plain weighted ORB | 2, 4, 8 | repartition at L0, then sibling | 13824 1728 216 27 (= 1 rank) | 1.6e-16 rel | 15 (15) | 3.5e-16 rel |
+| same weights, `chooseAlignedWeighted` | 2, 4 | a = 2 (imb. 1.042): two in-place lifts, then sibling onto 1 rank | same | **bitwise** | 15 (15) | 3.5e-16 rel |
+| same weights, `chooseAlignedWeighted` | 8 | a = 0 (plain ORB, imb. 1.052): as the first row | same | 1.6e-16 rel | 15 (15) | 3.5e-16 rel |
+| 12³ proportional (the tail test's root) | 2, 4, 8 | sibling onto 1 rank at 6³ (below L0) | 1728 216 27 (= 1 rank) | **bitwise** | 13 (13) | ≤ 3.9e-16 rel |
+
+Three runs at every np, every line identical (the counts are deterministic here: fixed V-cycles and
+one fixed rhs, not the moving-rhs `last_pres_iters` of §11.10). `minExtent` 0 and 4 give identical
+rows. Where the stage fires at level 0 the difference is the correction-scheme reassociation of
+§6.5.1, 1.6e-16 against the gate's 1e-13; where it fires below level 0 the cycle is bitwise, as the
+replicated tail's was. **What remains before the policy can be the default:**
+`amr_mg_core_boundary.md` §9.6 (`maxBlockCells`: leaf count or fine-cell count — the two differ on
+graded meshes, where a pure-policy probe shows repartition vs a whole-level sibling merge onto one
+rank) and §9.7 (`minExtent`), then `predictPressureLadder` must learn the sibling / repartition
+rows so the tests' `ladder == predict` assertions keep holding with the policy on.
+
 **WO5 — the exact bottom.** §6.6 header, `set_pressure_bottom`, `auto`; host `GraphAMG` for `n_b ≤ 10⁴`, `GraphAMGDevice` above (§5.5). *Accept:* the consistency
 gate ≤ 1e-9 on a 10³-root case (bottom 5³) and on a cut-cell case with a closed pocket (identity
 rows + two components); a 100³-root uniform Poisson (bottom 25³) converges in the same iteration

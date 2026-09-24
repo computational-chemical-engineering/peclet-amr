@@ -252,7 +252,7 @@ WO4b has not started. Aim it at core:
 |---|---|---|---|
 | S1 | core | `chooseStageTarget`, `makeStageComm`, `RedistributePlan` (Replicated + SiblingMerge kinds), `gatherByGlobalId`; unit tests np = 1…8 with **flow's inline code and amr's `ReplicatedTailStage` as the two reference implementations the tests must reproduce bitwise** (a Kokkos-free host test: box grids, random fields, `backward(forward(x)) == x`, nested == `Gatherv` values, replicated == `Allgatherv` values) | core ctests green; core tagged before any consumer (directive) |
 | S2 | core | `RedistributePlan` general kind (planned point-to-point) + aligned weighted `init` | plan test on a weighted partition; `init(w, align=1)` bit-identical to `init(w)`; `coarsened()` nests for `log2(align)` levels on a weighted tree |
-| S3 | amr (WO4b) | `ReplicatedTailStage` movement → plan (bitwise vs WO4's tail test); sibling + repartition stages on `sub`-comm `DistributedFlowMultigrid` | `amr_mg_depth.md` WO4b gate: weighted 24³-brick partition, np = 2/4/8, single-rank ladder and solution to ≤ 1e-13, np-independent iterations |
+| S3 | amr (WO4b) | `ReplicatedTailStage` movement → plan (bitwise vs WO4's tail test); sibling + repartition stages on `sub`-comm `DistributedFlowMultigrid` | `amr_mg_depth.md` WO4b gate: weighted 24³-brick partition, np = 2/4/8, single-rank ladder and solution to ≤ 1e-13, np-independent iterations. **Built 2026-09-24, gate passed** (`amr_mg_depth.md` WO4b as built: ladder = single-rank, 1.6e-16 at L0 / bitwise below, 15 = 15 iterations at np = 2/4/8); `rebalance` through `chooseAlignedWeighted`. The sibling/repartition policy is **opt-in** until §9.6–§9.7 are decided. |
 | S4 | flow | `Telescope` delegates to S1 (policy + comms + movement) | byte-identical (§7) |
 | S5 | flow + coupling | `Repartition` kind for weighted `dec0`; `rebalanceByWeights` and `coupling.rebalance()` through the aligned weighted `init` | the CFD-DEM MPI tests; iteration count after `rebalance()` equal to before it ± 1; the §9.1 measurement closed |
 | S6 | suite | register entry (§10), `ARCHITECTURE.md` core-module list gains the stage line, `MG_TELESCOPING_PLAN.md` status note | — |
@@ -281,7 +281,25 @@ delete-and-include, not a rewrite.
    would follow it).
 5. **Does `MgStage`'s interface survive S3? (preference.)** *Default:* yes — it is the right
    consumer-side shape (target + comms + movement composed with a continued ladder); only its
-   movement bodies change.
+   movement bodies change. **Held at S3:** the interface is unchanged; the replicated tail and the
+   new `DistributedStage` are its two implementations.
+6. **amr's `maxBlockCells`: the largest finest-level block's LEAF count, or its FINE-CELL count
+   `Π blockBrick · 2^(lmax·Dim)`? (needs a decision — raised by S3, no default.)** §11.1 names both
+   and calls it "the method's choice". On a uniform `lmax = 0` mesh they coincide (the WO4b gate is
+   one). On a graded mesh they do not, and the difference is the one §11.1 exists to prevent: a
+   pure-policy probe on a 24³-root, `lmax = 2` mesh refined around an off-centre sphere (93 904
+   leaves, plain weighted ORB, blocked at the root level) gives, at np = 8 / 16 / 32 / 64, **leaf
+   count → Repartition on 2 / 4 / 4 / 8 ranks; fine-cell count → SiblingMerge onto ONE rank** (the
+   whole 13 824-cell root level) at every np up to 64, because the fine-cell bound is 8^lmax looser
+   inside the refined region. `chooseAlignedWeighted` returned `a = 0` for every np there.
+7. **amr's `minExtent` (needs a decision — raised by S3, no default).** amr's §6.2 ladder has no
+   economic trigger; WO4b says "flow's trigger verbatim" (flow's default `teleMinExtent` is 4) and
+   "`np_L` from the extent-4 rule", which in core's §11.2 terms is `minExtent` = 4 (blocks of ≥ 8,
+   extent ≥ 4 after the halving) or 2 (blocks of ≥ 4). As wired, `chooseStageTarget` is asked only
+   where §6.2's lift has already stopped, so `minExtent` reaches only the fat-candidate rule and the
+   `np_L` cap, not step 1's `tooSmall` (which would stage a level the §6.2 rule can still lift —
+   a change to the in-place ladder that the notes do not ask for). Measured: 0 and 4 give identical
+   targets, ladders and numbers on every configuration of the WO4b gate and of the probe in 6.
 
 ## 10. Register entry (proposed text)
 

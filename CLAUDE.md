@@ -52,11 +52,13 @@ PYTHONPATH=$PWD/build_q OMP_NUM_THREADS=1 python python/state_hash.py --check py
 export PATH=/usr/local/cuda-13.2/bin:$PATH                 # for the nvidia-cuda prefix
 ```
 
-**Counts** (host-openmp): **111** C++ ctests (31 single-rank + 20 distributed binaries × np = 1, 2,
+**Counts** (host-openmp): **115** C++ ctests (31 single-rank + 21 distributed binaries × np = 1, 2,
 4, 8) + 5 `bench` (four `study_amr_*` + `bench_amr_flow`) + 8 `python` (`python_amr`,
 `python_amr_np2`, `python_amr_seam_records` ×3 at np = 1, 2, 4, `python_state_hash`,
-`python_flow_parity`, `python_amr_tg_graded` — the last also carries the `bench` label) = **124**;
-`-LE 'bench|np8'` runs 98 of them and `-L np8` the remaining 20. (92 / 101 until 2026-09-21,
+`python_flow_parity`, `python_amr_tg_graded` — the last also carries the `bench` label) = **128**;
+`-LE 'bench|np8'` runs 101 of them and `-L np8` the remaining 21. (111 / 124 until 2026-09-24,
+when WO4b's `amr_mg_stages` — the sibling-merge and repartition stages — added a 21st distributed
+binary; 92 / 101 until 2026-09-21,
 when `amr_distributed_cf` — the distributed C/F quadratic scheme — added a 17th distributed
 binary; 96 / 106 until 2026-09-23, when ROADMAP C1 added `amr_mg_lift`, `amr_mg_predict` and
 `amr_mg_bottom` single-rank and `amr_mg_lift_dist`, `amr_mg_tail` and `amr_mg_bottom_dist`
@@ -150,7 +152,13 @@ Header-only under `include/peclet/amr/` (namespace `peclet::amr`; `common.hpp` c
   have (64³: 1 → 5 levels, 1941.8 → ~300 ms/step). Distributed, the lift is lockstep (the depth is
   Allreduced before any level is built) and the ORB follows by `BlockDecomposer::coarsened`; where
   the blocks turn odd a `MgStage` (`mg_stage.hpp`) moves the level onto a new decomposition of its
-  own grid — only the replicated instantiation exists today — and where the ladder runs out above
+  own grid, with target, communicators and movement from core (`peclet::core::decomp`:
+  `chooseStageTarget`, `makeStageComm`, `RedistributeTopology`; `docs/amr_mg_core_boundary.md`) —
+  the replicated tail, or, with `DistributedFlowMultigrid::StagePolicy` enabled (OFF by default
+  until `amr_mg_core_boundary.md` §9.6–9.7 are decided), a sibling merge or repartition onto fewer
+  ranks whose continued ladder is a `DistributedFlowMultigrid` on the stage's sub-communicator
+  (`DistributedStage`, WO4b) — and `rebalance` aligns its weighted ORB coarse-first
+  (`chooseAlignedWeighted`, 1.05 budget) — and where the ladder runs out above
   `bottomExtent` the bottom is an agglomerated `GraphAMG`-PCG solve (`amg_bottom.hpp`,
   `Flow.set_pressure_bottom`). The momentum path is NOT lifted (`liftRoot = false`,
   guarded by `minCoarse`) until WO8 of `amr_mg_depth.md` §9 lands. `predictPressureLadder`
