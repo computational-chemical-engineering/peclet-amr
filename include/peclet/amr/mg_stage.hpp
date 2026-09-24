@@ -23,6 +23,7 @@
 #define PECLET_AMR_MG_STAGE_HPP
 
 #include <algorithm>
+#include <array>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -36,6 +37,9 @@
 #include "peclet/core/common/mpi.hpp"
 #include "peclet/core/common/view.hpp"
 #include "peclet/core/decomp/block_decomposer.hpp"
+#include "peclet/core/decomp/redistribute_topology.hpp"
+#include "peclet/core/decomp/stage_comm.hpp"
+#include "peclet/core/decomp/stage_target.hpp"
 
 namespace peclet::amr {
 
@@ -116,11 +120,16 @@ class MgStage {
 };
 
 /// The REPLICATED stage (docs/amr_mg_depth.md §6.5.1): the target decomposition is one block —
-/// the whole level — on every rank, the movement is an `Allgatherv` keyed by global cell id, and
-/// the continued ladder is a single-rank `Multigrid` on the gathered grid, running its own §6.2
-/// lifts down to its own §6.6 bottom. Every rank is active and every rank computes the identical
-/// tail, so `moveDown` is a local pick with no communication and the result is
-/// decomposition-independent by construction.
+/// the whole level — on every rank, and the continued ladder is a single-rank `Multigrid` on the
+/// gathered grid, running its own §6.2 lifts down to its own §6.6 bottom. Every rank is active and
+/// every rank computes the identical tail, so `moveDown` is a local pick with no communication and
+/// the result is decomposition-independent by construction.
+///
+/// The movement is core's (`peclet::core::decomp`, amr_mg_core_boundary.md §5): a
+/// `StageKind::Replicated` target, its `StageComm`, and one `RedistributeTopology` — an
+/// `Allgatherv` in parent-rank order, each rank's block x-fastest, unpacked through the tail's own
+/// leaf index. Pure copies, so the tail sees bitwise the values the former hand-written gid-keyed
+/// `Allgatherv` delivered.
 template <int Dim, unsigned Bits = (Dim == 2 ? 32u : (Dim == 3 ? 21u : 16u))>
 class ReplicatedTailStage final : public MgStage<Dim, Bits> {
  public:
@@ -130,33 +139,25 @@ class ReplicatedTailStage final : public MgStage<Dim, Bits> {
   using DO = DistributedOctree<Dim, Bits>;             ///< the level the stage fires at
   using Poisson = AmrPoisson<Dim, Bits>;               ///< that level's FV operator
 
-  /// Global cell id (x-fastest, CONVENTIONS.md) of a coordinate on the moved level's grid.
-  static long long gidOf(const IVec<Dim>& g, const IVec<Dim>& G) {
-    long long id = 0;
-    for (int d = Dim - 1; d >= 0; --d)
-      id = id * static_cast<long long>(G[d]) + static_cast<long long>(g[d]);
-    return id;
-  }
-
   /// Build the stage from the level it fires at: `d` is that level's distributed octree (lifted,
-  /// so `rootSpan()` is the W of §6.5's `g_i = (blockFineOrigin + lo_i)/W`), `ap` its `AmrPoisson`
-  /// — whose `opennessRaw()` rows are the DISTRIBUTED openness ladder's own output and are carried
-  /// over rather than re-sampled — and `n` its local cell count. Collective on `comm`.
+  /// so its decomposition and `globalRootSize()` are in the level's own cell units), `ap` its
+  /// `AmrPoisson` — whose `opennessRaw()` rows are the DISTRIBUTED openness ladder's own output and
+  /// are carried over rather than re-sampled — and `n` its local cell count. Collective on `comm`
+  /// (the communicator `d` is decomposed over).
   ///
   /// Every rank then holds the whole level (`G = d.globalRootSize()` cells) and a single-rank
   /// `Multigrid` on it, lifted down to `bottomExtent` with its own §6.6 bottom (default selection
-  /// `auto`; the owner re-sets it). `nExt` is unused (the extended size of the caller's views,
-  /// kept for the WO4b stages' signature). Memory: O(G) doubles and one host `Multigrid` per rank.
+  /// `auto`; the owner re-sets it). `nExt` is unused (the extended size of the caller's views).
+  /// Memory: O(G) doubles and one host `Multigrid` per rank.
   ///
   /// @pre `d` is nested (every local leaf is a root cell of the lifted grid) and periodic on
   ///      every axis.
-  /// @throws std::runtime_error if an axis is not periodic, if the ranks' leaves do not tile the
-  ///         global grid (the lift was not nested), or on a global id out of range.
+  /// @throws std::runtime_error if an axis is not periodic, or if this rank's leaves are not the
+  ///         root cells of its block (the lift was not nested) — both before any communication;
+  ///         core's `RedistributeTopology` throws if the blocks do not tile the level grid.
   void build(const DO& d, const Vec<Dim>& h0, const Poisson& ap, Index n, Index nExt,
              Index bottomExtent, MPI_Comm comm) {
-    comm_ = comm;
-    int size = 1;
-    MPI_Comm_size(comm_, &size);
+    namespace cd = core::decomp;
     G_ = d.globalRootSize();
     nt_ = 1;
     for (int a = 0; a < Dim; ++a)
@@ -166,89 +167,69 @@ class ReplicatedTailStage final : public MgStage<Dim, Bits> {
         throw std::runtime_error(
             "amr::ReplicatedTailStage: periodic-only (as the whole distributed pressure path is); "
             "a non-periodic bottom must be gated the way flow gates its anchored path");
-    dec_.init(1, G_);  // the target decomposition: ONE block, the whole level, on every rank
+    Index blockCells = 1;
+    for (int a = 0; a < Dim; ++a)
+      blockCells *= d.blockBrick()[a];
+    if (n != blockCells || n != d.local().numLeaves())
+      throw std::runtime_error(
+          "amr::ReplicatedTailStage: the moved level does not tile its block with root cells (the "
+          "lift is not nested)");
+    target_.kind = cd::StageKind::Replicated;  // ONE block, the whole level, on every rank
+    target_.dec.init(1, G_);
+    target_.ownerOf = {0};
+    target_.groupOf.clear();
     oct_.init(G_, d.lmax(), IVec<Dim>{});
     const Index W = d.rootSpan();
 
-    // This rank's rows, keyed by global cell id. Every leaf of the moved level is a root cell of
-    // the lifted root grid, so the division by W is exact (that is what nesting buys).
-    std::vector<long long> gid(static_cast<std::size_t>(n));
-    for (Index i = 0; i < n; ++i) {
-      auto b = d.local().bounds(i);
-      IVec<Dim> g{};
+    // The two index maps core's topology calls once per cell: a global cell of the moved level's
+    // grid → this rank's leaf holding it, and → the tail octree's row. Every leaf of the moved
+    // level is a root cell of the lifted root grid, which is what nesting buys.
+    auto srcIndex = [&](const IVec<Dim>& g) -> Index {
+      const Index i = d.findGlobalRoot(g);
+      if (i < 0 || d.local().level(i) != d.lmax())
+        throw std::runtime_error(
+            "amr::ReplicatedTailStage: a cell of this rank's block is not one of its root leaves "
+            "(the lift is not nested)");
+      return i;
+    };
+    auto dstIndex = [&](const IVec<Dim>& g) -> Index {
+      std::array<typename Octree::Coord, Dim> f{};
       for (int a = 0; a < Dim; ++a)
-        g[a] = (static_cast<Index>(b[0][a]) + d.blockFineOrigin()[a]) / W;
-      gid[static_cast<std::size_t>(i)] = gidOf(g, G_);
-    }
+        f[a] = static_cast<typename Octree::Coord>(g[a] * W);
+      return oct_.find(f);
+    };
+    comm_ = cd::makeStageComm<Dim>(comm, target_);
+    topo_.build(d.decomposition(), target_, comm_, srcIndex, dstIndex);
 
-    counts_.assign(static_cast<std::size_t>(size), 0);
-    int ni = static_cast<int>(n);
-    MPI_Allgather(&ni, 1, MPI_INT, counts_.data(), 1, MPI_INT, comm_);
-    displs_.assign(static_cast<std::size_t>(size), 0);
-    int tot = 0;
-    for (int r = 0; r < size; ++r) {
-      displs_[static_cast<std::size_t>(r)] = tot;
-      tot += counts_[static_cast<std::size_t>(r)];
-    }
-    if (tot != static_cast<int>(nt_))
-      throw std::runtime_error(
-          "amr::ReplicatedTailStage: the moved level does not tile its global grid (the lift is "
-          "not nested)");
-    std::vector<long long> gidAll(static_cast<std::size_t>(tot));
-    MPI_Allgatherv(gid.data(), ni, MPI_LONG_LONG, gidAll.data(), counts_.data(), displs_.data(),
-                   MPI_LONG_LONG, comm_);
-
-    std::vector<Index> rowOfGid(static_cast<std::size_t>(nt_), -1);
-    for (Index r = 0; r < nt_; ++r) {
-      auto b = oct_.bounds(r);
-      IVec<Dim> g{};
-      for (int a = 0; a < Dim; ++a)
-        g[a] = static_cast<Index>(b[0][a]) / W;
-      rowOfGid[static_cast<std::size_t>(gidOf(g, G_))] = r;
-    }
-    rowOfGathered_.resize(static_cast<std::size_t>(tot));
-    for (int k = 0; k < tot; ++k) {
-      const long long id = gidAll[static_cast<std::size_t>(k)];
-      if (id < 0 || id >= static_cast<long long>(nt_))
-        throw std::runtime_error("amr::ReplicatedTailStage: gid out of range");
-      rowOfGathered_[static_cast<std::size_t>(k)] = rowOfGid[static_cast<std::size_t>(id)];
-    }
-    rowOfLocal_.resize(static_cast<std::size_t>(n));
-    for (Index i = 0; i < n; ++i)
-      rowOfLocal_[static_cast<std::size_t>(i)] =
-          rowOfGid[static_cast<std::size_t>(gid[static_cast<std::size_t>(i)])];
-
-    // The moved level's α rows, gathered and permuted into target leaf order.
+    // The moved level's α rows, one field per face, gathered into target leaf order.
     const int F = 2 * Dim;
     const std::vector<double>& aloc = ap.opennessRaw();
-    std::vector<double> aSend(static_cast<std::size_t>(n) * F, 1.0);
+    std::vector<std::vector<double>> aCol(static_cast<std::size_t>(F),
+                                          std::vector<double>(static_cast<std::size_t>(n), 1.0));
     if (!aloc.empty())
-      std::copy(aloc.begin(), aloc.begin() + static_cast<std::ptrdiff_t>(n) * F, aSend.begin());
-    std::vector<int> cF(static_cast<std::size_t>(size)), dF(static_cast<std::size_t>(size));
-    for (int r = 0; r < size; ++r) {
-      cF[static_cast<std::size_t>(r)] = counts_[static_cast<std::size_t>(r)] * F;
-      dF[static_cast<std::size_t>(r)] = displs_[static_cast<std::size_t>(r)] * F;
+      for (Index i = 0; i < n; ++i)
+        for (int f = 0; f < F; ++f)
+          aCol[static_cast<std::size_t>(f)][static_cast<std::size_t>(i)] =
+              aloc[static_cast<std::size_t>(i) * F + static_cast<std::size_t>(f)];
+    std::vector<std::vector<double>> tCol(static_cast<std::size_t>(F),
+                                          std::vector<double>(static_cast<std::size_t>(nt_), 1.0));
+    std::vector<const double*> aSrc(static_cast<std::size_t>(F));
+    std::vector<double*> aDst(static_cast<std::size_t>(F));
+    for (int f = 0; f < F; ++f) {
+      aSrc[static_cast<std::size_t>(f)] = aCol[static_cast<std::size_t>(f)].data();
+      aDst[static_cast<std::size_t>(f)] = tCol[static_cast<std::size_t>(f)].data();
     }
-    std::vector<double> aAll(static_cast<std::size_t>(tot) * F);
-    MPI_Allgatherv(aSend.data(), ni * F, MPI_DOUBLE, aAll.data(), cF.data(), dF.data(), MPI_DOUBLE,
-                   comm_);
-    std::vector<double> aTail(static_cast<std::size_t>(nt_) * F, 1.0);
-    for (int k = 0; k < tot; ++k) {
-      const std::size_t dst =
-          static_cast<std::size_t>(rowOfGathered_[static_cast<std::size_t>(k)]) *
-          static_cast<std::size_t>(F);
-      const std::size_t src = static_cast<std::size_t>(k) * static_cast<std::size_t>(F);
+    topo_.forward(aSrc, aDst);
+    std::vector<double> aTail(static_cast<std::size_t>(nt_) * F);
+    for (Index r = 0; r < nt_; ++r)
       for (int f = 0; f < F; ++f)
-        aTail[dst + static_cast<std::size_t>(f)] = aAll[src + static_cast<std::size_t>(f)];
-    }
+        aTail[static_cast<std::size_t>(r) * F + static_cast<std::size_t>(f)] =
+            tCol[static_cast<std::size_t>(f)][static_cast<std::size_t>(r)];
 
     mg_ = std::make_unique<Multigrid<Dim, Bits>>();
     mg_->buildRaw(oct_, h0, std::move(aTail), /*periodic=*/true, /*liftRoot=*/true, bottomExtent);
 
     (void)nExt;
-    sendBuf_.assign(static_cast<std::size_t>(n), 0.0);
-    recvBuf_.assign(static_cast<std::size_t>(tot), 0.0);
-    host_.assign(static_cast<std::size_t>(nt_), 0.0);
     // Sized by the level's OWN cell count, and staged through device scratch, so the caller may
     // hand in a longer view (the distributed levels carry a ghost tail) without a subview.
     dSrc_ = View<double>("stage_dsrc", static_cast<std::size_t>(n));
@@ -261,8 +242,8 @@ class ReplicatedTailStage final : public MgStage<Dim, Bits> {
 
   const char* kind() const override { return "replicated"; }
   const char* diagnosticSuffix() const override { return "+tail"; }
-  const Decomposition& targetDecomposition() const override { return dec_; }
-  MPI_Comm targetComm() const override { return comm_; }
+  const Decomposition& targetDecomposition() const override { return target_.dec; }
+  MPI_Comm targetComm() const override { return comm_.sub; }
   bool active() const override { return true; }  // replicated: every rank owns the whole level
   const Octree& targetOctree() const override { return oct_; }
 
@@ -280,14 +261,7 @@ class ReplicatedTailStage final : public MgStage<Dim, Bits> {
     auto ds = dSrc_;
     Kokkos::parallel_for("amr::stage_pack", nSrc, KOKKOS_LAMBDA(const Index i) { ds(i) = src(i); });
     Kokkos::deep_copy(srcMirror_, dSrc_);
-    for (Index i = 0; i < nSrc; ++i)
-      sendBuf_[static_cast<std::size_t>(i)] = srcMirror_(i);
-    MPI_Allgatherv(sendBuf_.data(), static_cast<int>(nSrc), MPI_DOUBLE, recvBuf_.data(),
-                   counts_.data(), displs_.data(), MPI_DOUBLE, comm_);
-    for (std::size_t k = 0; k < recvBuf_.size(); ++k)
-      host_[static_cast<std::size_t>(rowOfGathered_[k])] = recvBuf_[k];
-    for (Index r = 0; r < nt_; ++r)
-      tbMirror_(r) = host_[static_cast<std::size_t>(r)];
+    topo_.forward({srcMirror_.data()}, {tbMirror_.data()});
     Kokkos::deep_copy(mg_->b(0), tbMirror_);
     Kokkos::deep_copy(mg_->x(0), 0.0);
   }
@@ -298,8 +272,7 @@ class ReplicatedTailStage final : public MgStage<Dim, Bits> {
 
   void moveDown(View<double> dst, Index nDst) override {
     Kokkos::deep_copy(txMirror_, mg_->x(0));
-    for (Index i = 0; i < nDst; ++i)
-      dstMirror_(i) = txMirror_(rowOfLocal_[static_cast<std::size_t>(i)]);
+    topo_.backward({txMirror_.data()}, {dstMirror_.data()});  // a local pick: no communication
     Kokkos::deep_copy(dDst_, dstMirror_);
     auto dd = dDst_;
     Kokkos::parallel_for(
@@ -307,15 +280,13 @@ class ReplicatedTailStage final : public MgStage<Dim, Bits> {
   }
 
  private:
-  MPI_Comm comm_ = MPI_COMM_NULL;
   IVec<Dim> G_{};
   Index nt_ = 0;
-  Decomposition dec_;
+  core::decomp::StageTarget<Dim> target_;
+  core::decomp::StageComm comm_;  // owns its communicators; must outlive topo_'s use of them
+  core::decomp::RedistributeTopology<Dim, double> topo_;
   Octree oct_;
   std::unique_ptr<Multigrid<Dim, Bits>> mg_;
-  std::vector<int> counts_, displs_;
-  std::vector<Index> rowOfLocal_, rowOfGathered_;
-  std::vector<double> sendBuf_, recvBuf_, host_;
   View<double> dSrc_, dDst_;
   /// Persistent host staging for the device↔host round trip (one allocation per build, not one per
   /// V-cycle). Explicitly HostSpace so this compiles on a device backend as well as on a host one.

@@ -97,6 +97,12 @@ class DistributedOctree {
   const IVec<Dim>& globalFineSize() const { return globalFineSize_; }
   const std::array<bool, Dim>& periodic() const { return periodic_; }
   Index rootSpan() const { return rootSpan_; }
+  /// The ORB over the global ROOT grid in the CURRENT root units — rank r owns block r. It follows
+  /// every `liftRoot` (by `BlockDecomposer::coarsened`) and every `rebalance`, so it is always the
+  /// decomposition of `globalRootSize()`: what core's coarse-level stage machinery
+  /// (`peclet::core::decomp::chooseStageTarget`, `RedistributeTopology`) takes as the level's
+  /// current decomposition. Replicated on every rank.
+  const decomp::BlockDecomposer<Dim>& decomposition() const { return dec_; }
   /// Phase 3: the FINEST spacing per axis (`docs/amr_anisotropic.md` §2).
   const Vec<Dim>& h0() const { return globalGeo_.h0; }
   /// The single spacing of a CUBIC global grid.
