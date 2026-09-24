@@ -462,6 +462,13 @@ forces Jacobi; `agglomerated` forces the exact bottom. Same three spellings as f
   `test_amr_fv_openness.cpp:71` (`mg.numLevels() == hmg.numLevels()`) stays valid because both
   sides lift.
 
+- *Stage suffixes (S3, 2026-09-24).* A sibling-merge stage appends `"+sibling"` and a repartition
+  stage `"+repartition"` to `pressure_mg_bottom`, as the replicated tail appends `"+tail"`; nested
+  stages append innermost first (`"jacobi+sibling+repartition"`: a repartition whose continued
+  ladder sibling-merges). `flow` names no telescope stage in its diagnostics (its
+  `predict_hierarchy` rows carry a boolean "telescopes-out"), so there is no spelling to follow;
+  these are the `MgStage::kind()` strings with the tail's `+` convention.
+
 ### 6.8 Parameters (all with today's behaviour reachable)
 
 | parameter | default | where | changes a result? |

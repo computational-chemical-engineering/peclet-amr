@@ -283,23 +283,24 @@ delete-and-include, not a rewrite.
    consumer-side shape (target + comms + movement composed with a continued ladder); only its
    movement bodies change. **Held at S3:** the interface is unchanged; the replicated tail and the
    new `DistributedStage` are its two implementations.
-6. **amr's `maxBlockCells`: the largest finest-level block's LEAF count, or its FINE-CELL count
-   `Π blockBrick · 2^(lmax·Dim)`? (needs a decision — raised by S3, no default.)** §11.1 names both
-   and calls it "the method's choice". On a uniform `lmax = 0` mesh they coincide (the WO4b gate is
-   one). On a graded mesh they do not, and the difference is the one §11.1 exists to prevent: a
-   pure-policy probe on a 24³-root, `lmax = 2` mesh refined around an off-centre sphere (93 904
-   leaves, plain weighted ORB, blocked at the root level) gives, at np = 8 / 16 / 32 / 64, **leaf
-   count → Repartition on 2 / 4 / 4 / 8 ranks; fine-cell count → SiblingMerge onto ONE rank** (the
-   whole 13 824-cell root level) at every np up to 64, because the fine-cell bound is 8^lmax looser
-   inside the refined region. `chooseAlignedWeighted` returned `a = 0` for every np there.
-7. **amr's `minExtent` (needs a decision — raised by S3, no default).** amr's §6.2 ladder has no
-   economic trigger; WO4b says "flow's trigger verbatim" (flow's default `teleMinExtent` is 4) and
-   "`np_L` from the extent-4 rule", which in core's §11.2 terms is `minExtent` = 4 (blocks of ≥ 8,
-   extent ≥ 4 after the halving) or 2 (blocks of ≥ 4). As wired, `chooseStageTarget` is asked only
-   where §6.2's lift has already stopped, so `minExtent` reaches only the fat-candidate rule and the
-   `np_L` cap, not step 1's `tooSmall` (which would stage a level the §6.2 rule can still lift —
-   a change to the in-place ladder that the notes do not ask for). Measured: 0 and 4 give identical
-   targets, ladders and numbers on every configuration of the WO4b gate and of the probe in 6.
+6. **amr's `maxBlockCells`: the LEAF count of the largest finest-level block — DECIDED 2026-09-24.**
+   Not the fine-cell count `Π blockBrick · 2^(lmax·Dim)`. The rule exists so that no coarse level
+   becomes the bottleneck: a rank never holds more cells of a coarse level than its REAL
+   finest-level work, and a rank's work is its leaves (its unknowns). On a graded mesh the
+   fine-cell count overstates that work by up to 8^lmax inside the refined region: the S3 probe
+   (24³ root, `lmax = 2`, off-centre sphere, 93 904 leaves) shows the fine-cell bound merging the
+   whole 13 824-cell root level onto ONE rank at np = 64, where each rank's finest work is ~1 500
+   leaves; the leaf count repartitions it onto 8. Rejected: the fine-cell count. Built (next commit) as
+   `StagePolicy::maxBlockCells < 0` = derive it, the `Allreduce(MAX)` of level 0's local leaf
+   count; a stage's continued ladder inherits the resolved value (its own level 0 is not the
+   finest level). `predictPressureLadder` uses the uniform-mesh leaf count, which is exact for the
+   meshes it describes.
+7. **amr's `minExtent` = 4, flow's trigger verbatim — DECIDED 2026-09-24, and INERT in the current
+   wiring.** `chooseStageTarget` is consulted only where §6.2's lift has already stopped, so step
+   1's `tooSmall` never fires and the in-place ladder is unchanged (it must stay so); 4 reaches only
+   the fat-candidate rule and the `np_L` cap, and 0 and 4 were measured identical on every
+   configuration of the WO4b gate and the §9.6 probe. Record, not lever: if the policy is ever
+   consulted before the lift stops, this becomes live and needs its own decision.
 
 ## 10. Register entry (proposed text)
 
