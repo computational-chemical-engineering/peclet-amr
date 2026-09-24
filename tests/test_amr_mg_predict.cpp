@@ -90,6 +90,52 @@ void run() {
     PECLET_AMR_CHECK_EQ((long long)p.levels[L].extent[0],
                         (long long)(p.levels[L - 1].extent[0] / 2));
   }
+  // WO4b's stage policy ON (docs/amr_mg_depth.md WO4b; amr_mg_core_boundary.md §9.6/§9.7): where
+  // the in-place lift blocks, core's chooseStageTarget with amr's lift rule picks a sibling merge
+  // or a repartition, whose continued ladder lifts again (and may stage again). The built ladder is
+  // checked against these at np > 1 by amr_mg_tail, amr_mg_bottom_dist and amr_mg_stages.
+  {
+    PressureStagePolicy on;
+    on.enabled = true;
+    const Row onRows[] = {
+        {"12^3 root, np=4, sibling", {12, 12, 12}, 0, 4, 4, 2, "jacobi+sibling", false},
+        {"10^3 root, np=2, repartition", {10, 10, 10}, 0, 2, 3, 1, "amg+repartition", false},
+        {"24^3 root, np=8, sibling", {24, 24, 24}, 0, 8, 5, 3, "jacobi+sibling", false},
+        {"384^3, np=1536, two siblings",
+         {384, 384, 384},
+         0,
+         1536,
+         10,
+         4,
+         "jacobi+sibling+sibling",
+         false},
+        {"48x32x16, np=6, repartition then tail",
+         {48, 32, 16},
+         0,
+         6,
+         6,
+         1,
+         "amg+tail+repartition",
+         false},
+        {"16^3 root, np=8, never blocks", {16, 16, 16}, 0, 8, 3, 3, "jacobi", false},
+    };
+    for (const Row& r : onRows) {
+      const auto q = predictPressureLadder<3>(r.G, r.lmax, r.np, 4, on);
+      if ((int)q.levels.size() != r.levels || (int)q.numInPlace() != r.inPlace ||
+          q.bottomName() != std::string(r.bottom))
+        std::fprintf(stderr, "on-row '%s': levels %d (want %d), in place %d (want %d), bottom %s\n",
+                     r.what, (int)q.levels.size(), r.levels, (int)q.numInPlace(), r.inPlace,
+                     q.bottomName().c_str());
+      PECLET_AMR_CHECK_EQ((long long)q.levels.size(), (long long)r.levels);
+      PECLET_AMR_CHECK_EQ((long long)q.numInPlace(), (long long)r.inPlace);
+      PECLET_AMR_CHECK(q.bottomName() == std::string(r.bottom));
+      // A stage moves a level; it never coarsens it: its first level repeats the one above.
+      for (std::size_t L = q.numInPlace(); L < q.levels.size(); ++L)
+        if (L == q.numInPlace())
+          PECLET_AMR_CHECK_EQ(q.levels[L].cells, q.levels[L - 1].cells);
+    }
+  }
+
   // liftRoot = false is the pre-C1 ladder, which the prediction deliberately does NOT describe.
   AmrMultigrid<3, kBits> off;
   off.build(uniformMeshOf(IVec<3>{64, 64, 64}, 0), 1.0, /*liftRoot=*/false);

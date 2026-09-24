@@ -27,6 +27,7 @@
 #include <cstdio>
 #include <cstring>
 #include <Kokkos_Core.hpp>
+#include <string>
 #include <vector>
 
 #include "peclet/amr/distributed_flow_mg.hpp"
@@ -84,7 +85,7 @@ std::uint64_t bitHash(const std::vector<double>& v) {
   return h;
 }
 
-void run() {
+void runPolicy(const PressureStagePolicy& pol) {
   const double h0 = 1.0 / static_cast<double>(kNr);
   AmrGeometry<3> geo;
   geo.setIsotropic(h0);
@@ -106,14 +107,16 @@ void run() {
   const Index ns = self.local().numLeaves();
 
   DistributedFlowMultigrid<3, kBits> dmg;
+  dmg.setStagePolicy(pol);
   dmg.build(world, h0, openFn);
   Multigrid<3, kBits> smg;
   smg.build(self.local(), h0, openFn, /*periodic=*/true);
 
   // (1) the built ladder == the prediction.
-  const auto p = predictPressureLadder<3>(IVec<3>{kNr, kNr, kNr}, 0u, size);
+  const auto p = predictPressureLadder<3>(IVec<3>{kNr, kNr, kNr}, 0u, size, 4, pol);
   PECLET_AMR_CHECK_EQ((long)dmg.numInPlaceLevels(), (long)p.numInPlace());
-  PECLET_AMR_CHECK_EQ((long)dmg.hasStage(), (long)p.tail);
+  PECLET_AMR_CHECK_EQ((long)dmg.hasStage(), (long)p.hasStage());
+  PECLET_AMR_CHECK(dmg.bottomName() == p.bottomName());
   PECLET_AMR_CHECK_EQ((long)(dmg.numInPlaceLevels() + dmg.numStageLevels()), (long)p.levels.size());
   PECLET_AMR_CHECK_EQ((long)smg.numLevels(), 3L);  // 12 -> 6 -> 3, no tail on one rank
   if (size > 1) {
@@ -156,7 +159,7 @@ void run() {
     PECLET_AMR_CHECK(gdmax == 0.0);
 
     // (3) every rank's tail solution is bit-identical.
-    if (dmg.hasStage()) {
+    if (dmg.hasStage() && std::string(dmg.stageKind()) == "replicated") {
       const std::vector<double> tx = down(dmg.stageSolution());
       PECLET_AMR_CHECK_EQ((long)tx.size(), (long)(6 * 6 * 6));
       long long h = (long long)(bitHash(tx) >> 1), lo = 0, hi = 0;
@@ -206,10 +209,23 @@ void run() {
     else
       PECLET_AMR_CHECK(gdmax <= 1e-7 * umax);
     if (rank == 0)
-      std::printf("[tail] np=%d levels %zu+%zu tail=%d pcg it %d (self %d) dmax %.3e\n", size,
-                  dmg.numInPlaceLevels(), dmg.numStageLevels(), (int)dmg.hasStage(), rw.iters,
-                  rs.iters, gdmax);
+      std::printf("[tail] np=%d policy %s stage %s levels %zu+%zu pcg it %d (self %d) dmax %.3e\n",
+                  size, pol.enabled ? "on" : "off", dmg.stageKind(), dmg.numInPlaceLevels(),
+                  dmg.numStageLevels(), rw.iters, rs.iters, gdmax);
   }
+}
+
+void run() {
+  // The policy OFF is WO4's replicated tail — the reference the core-machinery replicated
+  // movement was proved bitwise against; ON is WO4b's sibling-merge / repartition policy
+  // (docs/amr_mg_depth.md WO4b). The prediction reads the same policy, so ladder == predict under
+  // both.
+  PressureStagePolicy off;
+  off.enabled = false;
+  PressureStagePolicy on;
+  on.enabled = true;
+  runPolicy(off);
+  runPolicy(on);
 }
 
 }  // namespace

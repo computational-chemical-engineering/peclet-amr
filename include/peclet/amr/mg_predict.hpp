@@ -33,14 +33,51 @@
 
 #include "peclet/amr/common.hpp"
 #include "peclet/core/decomp/block_decomposer.hpp"
+#include "peclet/core/decomp/stage_target.hpp"
 
 namespace peclet::amr {
 
+/// Which stage the distributed pressure ladder uses where its in-place lift blocks
+/// (docs/amr_mg_depth.md §5.6, WO4b; docs/amr_mg_core_boundary.md §11.1, §9.6, §9.7). With
+/// `enabled == false` every stage is the replicated tail (WO4). With `enabled`, core's
+/// `chooseStageTarget` chooses between a sibling merge, a repartition and the replicated tail.
+/// `DistributedFlowMultigrid::StagePolicy` is this type, and `predictPressureLadder` takes it, so
+/// the prediction and the built ladder read the same policy.
+struct PressureStagePolicy {
+  bool enabled = false;  ///< false: the replicated tail only (WO4)
+  /// Core's economic trigger / extent cap. 4, flow's trigger verbatim (§9.7) — INERT here, because
+  /// the policy is consulted only where the §6.2 lift has already stopped.
+  int minExtent = 4;
+  /// Core's bound on a target block's cells. NEGATIVE (the default) = derive it: the LEAF count of
+  /// the largest finest-level block (§9.6 — the rank's real unknowns, not its fine-cell count). 0 =
+  /// no repartition (flow's byte-identical mode). A stage's continued ladder inherits the resolved
+  /// value, since its own level 0 is not the finest level.
+  Index maxBlockCells = -1;
+};
+
+/// amr's lift rule (docs/amr_mg_depth.md §6.2) as core's stage predicate: the level grid halves
+/// into a cube level with at least two cells per axis, and every block is even in origin and size
+/// on EVERY axis. Pure; replicated whenever `dec` is.
+template <int Dim>
+bool amrStageLiftable(const core::decomp::BlockDecomposer<Dim>& dec) {
+  const IVec<Dim>& G = dec.globalSize();
+  for (int a = 0; a < Dim; ++a)
+    if ((G[a] % 2) != 0 || (G[a] / 2) < 2)
+      return false;
+  for (std::size_t b = 0; b < dec.numBlocks(); ++b)
+    for (int a = 0; a < Dim; ++a)
+      if ((dec.origins()[b][a] % 2) != 0 || (dec.sizes()[b][a] % 2) != 0)
+        return false;
+  return true;
+}
+
 /// Where a predicted level comes from.
 enum class MgLevelKind {
-  Octree,  ///< a coarsening of the octree itself (at or above the root brick)
-  Lifted,  ///< below the root brick, in place: the ORB blocks nest, transfers stay local
-  Tail     ///< below the in-place ladder: the gathered grid, solved redundantly on every rank
+  Octree,       ///< a coarsening of the octree itself (at or above the root brick)
+  Lifted,       ///< below the root brick, in place: the ORB blocks nest, transfers stay local
+  Tail,         ///< below the in-place ladder: the gathered grid, solved redundantly on every rank
+  Sibling,      ///< the continued ladder of a sibling-merge stage (fewer ranks, `agglomerated(d)`)
+  Repartition,  ///< the continued ladder of a repartition stage (a fresh ORB on np_L ranks)
 };
 
 /// What solves the coarsest level.
@@ -50,7 +87,19 @@ enum class MgBottomKind {
 };
 
 inline const char* toString(MgLevelKind k) {
-  return k == MgLevelKind::Octree ? "octree" : (k == MgLevelKind::Lifted ? "lifted" : "tail");
+  switch (k) {
+    case MgLevelKind::Octree:
+      return "octree";
+    case MgLevelKind::Lifted:
+      return "lifted";
+    case MgLevelKind::Tail:
+      return "tail";
+    case MgLevelKind::Sibling:
+      return "sibling";
+    case MgLevelKind::Repartition:
+      return "repartition";
+  }
+  return "?";
 }
 inline const char* toString(MgBottomKind k) {
   return k == MgBottomKind::Jacobi ? "jacobi" : "amg";
@@ -69,24 +118,36 @@ struct MgLevelPrediction {
 /// against it level by level (`AmrFlow::pressureMgLevels`, `DistributedFlowMultigrid`).
 template <int Dim>
 struct MgLadderPrediction {
-  /// Finest first; tail levels appended. The first tail level is the SAME grid as the last
-  /// in-place one (moved, not coarsened), as `AmrFlow::pressureMgLevels` also lists it.
+  /// Finest first; each stage's levels appended after the ladder it continues. A stage's first
+  /// level is the SAME grid as the last level above it (moved, not coarsened), as
+  /// `AmrFlow::pressureMgLevels` also lists it; its kind is the stage's.
   std::vector<MgLevelPrediction<Dim>> levels;
-  bool tail = false;                           ///< the redundant tail engages
-  IVec<Dim> tailFrom{};                        ///< the coarsest in-place grid the tail gathers
+  /// The stages met on the way down, outermost first (`Tail`, `Sibling`, `Repartition`).
+  std::vector<MgLevelKind> stages;
+  bool tail = false;                           ///< a replicated tail engages (at any depth)
+  IVec<Dim> tailFrom{};                        ///< the grid the (first) stage moves
   MgBottomKind bottom = MgBottomKind::Jacobi;  ///< what solves the coarsest level under `auto`
 
-  /// Levels that keep the ORB (kinds `Octree` and `Lifted`); compare against
+  /// Whether any stage fires — compare against `DistributedFlowMultigrid::hasStage()`.
+  bool hasStage() const { return !stages.empty(); }
+  /// The levels ABOVE the first stage (kinds `Octree` and `Lifted`); compare against
   /// `DistributedFlowMultigrid::numInPlaceLevels()`.
   std::size_t numInPlace() const {
     std::size_t k = 0;
-    for (const auto& lv : levels)
-      if (lv.kind != MgLevelKind::Tail)
-        ++k;
+    while (k < levels.size() &&
+           (levels[k].kind == MgLevelKind::Octree || levels[k].kind == MgLevelKind::Lifted))
+      ++k;
     return k;
   }
-  /// `"jacobi"` / `"amg"`, with the `"+tail"` suffix when the tail engages (§6.7's spelling).
-  std::string bottomName() const { return std::string(toString(bottom)) + (tail ? "+tail" : ""); }
+  /// `"jacobi"` / `"amg"`, suffixed by every stage innermost first (§6.7's spelling:
+  /// `"+tail"`, `"+sibling"`, `"+repartition"`) — what `DistributedFlowMultigrid::bottomName`
+  /// reports.
+  std::string bottomName() const {
+    std::string s = toString(bottom);
+    for (auto it = stages.rbegin(); it != stages.rend(); ++it)
+      s += std::string("+") + toString(*it);
+    return s;
+  }
 };
 
 namespace detail {
@@ -149,7 +210,8 @@ void pushLevel(MgLadderPrediction<Dim>& p, const IVec<Dim>& G, MgLevelKind kind)
 /// throw.
 template <int Dim>
 MgLadderPrediction<Dim> predictPressureLadder(IVec<Dim> G, unsigned lmax, int numRanks,
-                                              Index bottomExtent = 4) {
+                                              Index bottomExtent = 4,
+                                              const PressureStagePolicy& policy = {}) {
   MgLadderPrediction<Dim> p;
   if (numRanks < 1)
     numRanks = 1;
@@ -162,43 +224,48 @@ MgLadderPrediction<Dim> predictPressureLadder(IVec<Dim> G, unsigned lmax, int nu
     detail::pushLevel<Dim>(p, e, MgLevelKind::Octree);
   }
 
-  // --- the in-place lifted levels: lockstep while the grid halves and every block stays even.
-  core::decomp::BlockDecomposer<Dim> dec(static_cast<std::size_t>(numRanks), G);
-  std::vector<IVec<Dim>> origin(static_cast<std::size_t>(numRanks)),
-      brick(static_cast<std::size_t>(numRanks));
-  for (int r = 0; r < numRanks; ++r) {
-    const auto b = dec.block(static_cast<std::size_t>(r));
-    origin[static_cast<std::size_t>(r)] = b.origin;
-    brick[static_cast<std::size_t>(r)] = b.size;
+  // --- the in-place lifted levels: lockstep while the grid halves and every block stays even —
+  //     then, where they block above `bottomExtent`, a STAGE, whose continued ladder lifts again on
+  //     its own decomposition and may stage again (the same loop, on the target decomposition).
+  namespace cd = core::decomp;
+  cd::BlockDecomposer<Dim> dec(static_cast<std::size_t>(numRanks), G);
+  Index maxBlockCells = policy.maxBlockCells;
+  if (maxBlockCells < 0) {  // the leaf count of the largest finest block, uniform mesh (§9.6)
+    maxBlockCells = static_cast<Index>(cd::largestBlockCells(dec));
+    for (unsigned j = 0; j < lmax; ++j)
+      maxBlockCells <<= Dim;
   }
   IVec<Dim> cur = G;
+  MgLevelKind liftKind = MgLevelKind::Lifted;
   for (;;) {
-    if (!detail::gridCanHalve<Dim>(cur, bottomExtent))
-      break;  // grid-limited
-    bool blocksEven = true;
-    for (int r = 0; r < numRanks && blocksEven; ++r)
+    while (detail::gridCanHalve<Dim>(cur, bottomExtent) && amrStageLiftable<Dim>(dec)) {
+      IVec<Dim> two{};
       for (int d = 0; d < Dim; ++d)
-        if ((brick[static_cast<std::size_t>(r)][d] % 2) != 0 ||
-            (origin[static_cast<std::size_t>(r)][d] % 2) != 0) {
-          blocksEven = false;  // decomposition-limited (the Allreduce(MIN) of §6.2)
-          break;
-        }
-    if (!blocksEven)
-      break;
-    for (int d = 0; d < Dim; ++d)
-      cur[d] /= 2;
-    for (int r = 0; r < numRanks; ++r)
-      for (int d = 0; d < Dim; ++d) {
-        brick[static_cast<std::size_t>(r)][d] /= 2;
-        origin[static_cast<std::size_t>(r)][d] /= 2;
+        two[d] = 2;
+      dec = dec.coarsened(two);
+      cur = dec.globalSize();
+      detail::pushLevel<Dim>(p, cur, liftKind);
+    }
+    if (dec.numBlocks() <= 1 || detail::maxExtent<Dim>(cur) <= bottomExtent)
+      break;  // one rank: its bottom solves the level whole; or the Jacobi bottom is exact here
+    if (!p.hasStage())
+      p.tailFrom = cur;
+    if (policy.enabled) {
+      const cd::StageTarget<Dim> t = cd::chooseStageTarget(
+          dec, cur, [](const cd::BlockDecomposer<Dim>& c) { return amrStageLiftable<Dim>(c); },
+          policy.minExtent, maxBlockCells);
+      if (t.kind == cd::StageKind::SiblingMerge || t.kind == cd::StageKind::Repartition) {
+        liftKind =
+            t.kind == cd::StageKind::SiblingMerge ? MgLevelKind::Sibling : MgLevelKind::Repartition;
+        p.stages.push_back(liftKind);
+        detail::pushLevel<Dim>(p, cur, liftKind);  // the continued ladder's level 0: moved
+        dec = t.dec;
+        continue;
       }
-    detail::pushLevel<Dim>(p, cur, MgLevelKind::Lifted);
-  }
-
-  // --- the redundant tail: the gathered coarsest in-place grid, continued on one rank.
-  if (numRanks > 1 && detail::maxExtent<Dim>(cur) > bottomExtent) {
+    }
+    // --- the redundant tail: the gathered grid, continued on one rank.
     p.tail = true;
-    p.tailFrom = cur;
+    p.stages.push_back(MgLevelKind::Tail);
     detail::pushLevel<Dim>(p, cur,
                            MgLevelKind::Tail);  // the tail's own level 0 == the gathered grid
     while (detail::gridCanHalve<Dim>(cur, bottomExtent)) {
@@ -206,6 +273,7 @@ MgLadderPrediction<Dim> predictPressureLadder(IVec<Dim> G, unsigned lmax, int nu
         cur[d] /= 2;
       detail::pushLevel<Dim>(p, cur, MgLevelKind::Tail);
     }
+    break;
   }
 
   p.bottom = detail::maxExtent<Dim>(cur) > bottomExtent ? MgBottomKind::Amg : MgBottomKind::Jacobi;

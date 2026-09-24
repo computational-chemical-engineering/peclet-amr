@@ -84,10 +84,10 @@ void run() {
   const auto p12 = predictPressureLadder<3>(IVec<3>{12, 12, 12}, 0u, size);
   if (size == 1) {
     PECLET_AMR_CHECK_EQ((long)p12.numInPlace(), 3L);  // 12 -> 6 -> 3, no tail
-    PECLET_AMR_CHECK(!p12.tail);
+    PECLET_AMR_CHECK(!p12.hasStage());
   } else {
     PECLET_AMR_CHECK_EQ((long)p12.numInPlace(), 2L);  // 12 -> 6, then an odd block origin
-    PECLET_AMR_CHECK(p12.tail);
+    PECLET_AMR_CHECK(p12.hasStage());
   }
 }
 

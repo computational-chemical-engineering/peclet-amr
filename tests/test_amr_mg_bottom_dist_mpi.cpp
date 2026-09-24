@@ -70,7 +70,7 @@ std::vector<double> down(const View<double>& d) {
   return h;
 }
 
-void run() {
+void runPolicy(const PressureStagePolicy& pol) {
   const double h0 = 1.0 / (double)kNr;
   AmrGeometry<3> geo;
   geo.setIsotropic(h0);
@@ -92,13 +92,15 @@ void run() {
   const Index ns = self.local().numLeaves();
 
   DistributedFlowMultigrid<3, kBits> dmg;
+  dmg.setStagePolicy(pol);
   dmg.build(world, h0, openFn);
   Multigrid<3, kBits> smg;
   smg.build(self.local(), h0, openFn, /*periodic=*/true);
 
-  const auto p = predictPressureLadder<3>(IVec<3>{kNr, kNr, kNr}, 0u, size);
+  const auto p = predictPressureLadder<3>(IVec<3>{kNr, kNr, kNr}, 0u, size, 4, pol);
   PECLET_AMR_CHECK_EQ((long)dmg.numInPlaceLevels(), (long)p.numInPlace());
-  PECLET_AMR_CHECK_EQ((long)dmg.hasStage(), (long)p.tail);
+  PECLET_AMR_CHECK_EQ((long)dmg.hasStage(), (long)p.hasStage());
+  PECLET_AMR_CHECK(dmg.bottomName() == p.bottomName());
   PECLET_AMR_CHECK(p.bottomName().substr(0, 3) == std::string("amg"));  // predict says amg
   PECLET_AMR_CHECK(dmg.bottomName().substr(0, 3) == std::string("amg"));
   PECLET_AMR_CHECK(smg.bottomName() == std::string("amg"));
@@ -106,7 +108,9 @@ void run() {
   if (size > 1) {
     PECLET_AMR_CHECK_EQ((long)dmg.numInPlaceLevels(), 1L);  // odd ORB blocks: nothing lifts
     PECLET_AMR_CHECK_EQ((long)dmg.numStageLevels(), 2L);    // the gathered 10^3, then 5^3
-    PECLET_AMR_CHECK(dmg.bottomName() == std::string("amg+tail"));
+    // policy off: the replicated tail; on: a repartition onto one rank (no liftable merge fits
+    // one finest block, and no proportional ORB on more ranks lifts a 10^3 grid).
+    PECLET_AMR_CHECK(dmg.bottomName() == std::string(pol.enabled ? "amg+repartition" : "amg+tail"));
   }
 
   std::vector<double> bw((std::size_t)dmg.extendedSize(0), 0.0), bs((std::size_t)ns);
@@ -145,7 +149,8 @@ void run() {
     else
       PECLET_AMR_CHECK(gdmax <= 1e-12 * umax);  // §9's number; the header says why not bitwise
     if (rank == 0)
-      std::printf("[bottom-dist] np=%d vcycle dmax/|x| %.3e\n", size, gdmax / umax);
+      std::printf("[bottom-dist] np=%d policy %s vcycle dmax/|x| %.3e\n", size,
+                  pol.enabled ? "on" : "off", gdmax / umax);
   }
 
   // MG-PCG: the same iteration count, the same solution (<= 1e-12 of §9).
@@ -190,6 +195,19 @@ void run() {
           dmg.numInPlaceLevels(), dmg.numStageLevels(), dmg.bottomName().c_str(), rw.iters,
           rs.iters, gdmax / umax);
   }
+}
+
+void run() {
+  // The policy OFF is WO4's replicated tail — the reference the core-machinery replicated
+  // movement was proved bitwise against; ON is WO4b's sibling-merge / repartition policy
+  // (docs/amr_mg_depth.md WO4b). The prediction reads the same policy, so ladder == predict under
+  // both.
+  PressureStagePolicy off;
+  off.enabled = false;
+  PressureStagePolicy on;
+  on.enabled = true;
+  runPolicy(off);
+  runPolicy(on);
 }
 
 }  // namespace

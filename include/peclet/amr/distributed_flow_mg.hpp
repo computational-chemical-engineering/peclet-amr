@@ -55,6 +55,7 @@
 #include "peclet/amr/distributed_octree.hpp"
 #include "peclet/amr/fv_op.hpp"
 #include "peclet/amr/leaf_halo.hpp"
+#include "peclet/amr/mg_predict.hpp"  // PressureStagePolicy, amrStageLiftable (shared with predict)
 #include "peclet/amr/mg_stage.hpp"   // the telescoping primitive (docs/amr_mg_depth.md §5.6/§6.5)
 #include "peclet/amr/multigrid.hpp"  // restrictField / prolongAdd (shared transfer kernels)
 #include "peclet/amr/poisson.hpp"
@@ -165,16 +166,12 @@ class DistributedFlowMultigrid {
     buildStage();
   }
 
-  /// Which stage fires where the in-place ladder blocks (docs/amr_mg_core_boundary.md §11.1). With
-  /// `enabled == false` — the default — every stage is the replicated tail, exactly as WO4 built
-  /// it. With `enabled`, core's `chooseStageTarget` decides between a sibling merge, a repartition
-  /// and the replicated tail, with `minExtent` and `maxBlockCells` passed through verbatim; a
-  /// stage's continued ladder inherits the policy. Takes effect at the next `build`.
-  struct StagePolicy {
-    bool enabled = false;     ///< false: the replicated tail only (WO4)
-    int minExtent = 0;        ///< core's economic trigger / extent cap; 0 disables it
-    Index maxBlockCells = 0;  ///< core's bound on a target block's cells; 0 = no repartition
-  };
+  /// Which stage fires where the in-place ladder blocks (docs/amr_mg_core_boundary.md §11.1,
+  /// §9.6, §9.7; the type and its defaults live in mg_predict.hpp so `predictPressureLadder` reads
+  /// the same policy). A negative `maxBlockCells` is resolved at `build` to the Allreduce(MAX) of
+  /// level 0's local LEAF count; a stage's continued ladder inherits the resolved policy. Takes
+  /// effect at the next `build`.
+  using StagePolicy = PressureStagePolicy;
   void setStagePolicy(const StagePolicy& p) { stagePolicy_ = p; }
   const StagePolicy& stagePolicy() const { return stagePolicy_; }
 
@@ -370,30 +367,19 @@ class DistributedFlowMultigrid {
       bottomAmg_->build(lt.ap, singular);
       return;
     }
-    if (stagePolicy_.enabled && mx > bottomExtent_) {
+    if (resolved_.enabled && mx > bottomExtent_) {
       namespace cd = core::decomp;
-      // amr's lift rule (§6.2) as core's predicate: the level grid halves into a cube level with at
-      // least two cells per axis, and every block is even in origin and size on EVERY axis.
       auto liftable = [](const cd::BlockDecomposer<Dim>& dec) {
-        const IVec<Dim>& G = dec.globalSize();
-        for (int a = 0; a < Dim; ++a)
-          if ((G[a] % 2) != 0 || (G[a] / 2) < 2)
-            return false;
-        for (std::size_t b = 0; b < dec.numBlocks(); ++b)
-          for (int a = 0; a < Dim; ++a)
-            if ((dec.origins()[b][a] % 2) != 0 || (dec.sizes()[b][a] % 2) != 0)
-              return false;
-        return true;
+        return amrStageLiftable<Dim>(dec);
       };
-      const cd::StageTarget<Dim> t =
-          cd::chooseStageTarget(lt.d.decomposition(), stageFrom_, liftable, stagePolicy_.minExtent,
-                                stagePolicy_.maxBlockCells);
+      const cd::StageTarget<Dim> t = cd::chooseStageTarget(
+          lt.d.decomposition(), stageFrom_, liftable, resolved_.minExtent, resolved_.maxBlockCells);
       if (t.kind == cd::StageKind::SiblingMerge || t.kind == cd::StageKind::Repartition) {
         using Topo = cd::RedistributeTopology<Dim, double>;
         const int id =
             static_cast<int>((levels_.size() - 1) % static_cast<std::size_t>(Topo::kTagSpan));
         auto st = std::make_unique<DistributedStage<Dim, Bits>>();
-        st->build(lt.d, h0_, lt.ap, lt.n, t, id, bottomExtent_, stagePolicy_, bottomKind_,
+        st->build(lt.d, h0_, lt.ap, lt.n, t, id, bottomExtent_, resolved_, bottomKind_,
                   removeMean_);
         stage_ = std::move(st);
         return;
@@ -436,6 +422,12 @@ class DistributedFlowMultigrid {
     h0_ = h0;
     bottomExtent_ = bottomExtent;
     levels_.clear();
+    resolved_ = stagePolicy_;
+    if (resolved_.maxBlockCells < 0) {  // §9.6: the largest finest block's LEAF count
+      long long nl = static_cast<long long>(finest.local().numLeaves()), mx = 0;
+      MPI_Allreduce(&nl, &mx, 1, MPI_LONG_LONG, MPI_MAX, comm_);
+      resolved_.maxBlockCells = static_cast<Index>(mx);
+    }
     // Ladder of coarsened copies of the SAME distributed octree (decomposition preserved).
     {
       auto l0 = std::make_unique<Level>();
@@ -707,6 +699,7 @@ class DistributedFlowMultigrid {
   std::vector<std::unique_ptr<Level>> levels_;
   bool removeMean_ = false;
   StagePolicy stagePolicy_{};
+  StagePolicy resolved_{};  // stagePolicy_ with maxBlockCells resolved at the last build
 };
 
 /// A SIBLING-MERGE or REPARTITION stage (docs/amr_mg_depth.md §5.6, WO4b;

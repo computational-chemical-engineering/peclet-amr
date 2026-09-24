@@ -979,6 +979,10 @@ NB_MODULE(_amr, m) {
         d["num_levels"] = (long)p.levels.size();
         d["num_in_place"] = (long)p.numInPlace();
         d["tail"] = p.tail;
+        nb::list stagesL;
+        for (auto k : p.stages)
+          stagesL.append(peclet::amr::toString(k));
+        d["stages"] = stagesL;
         d["bottom"] = p.bottomName();
         return d;
       },
@@ -990,8 +994,10 @@ NB_MODULE(_amr, m) {
       "a freshly constructed DistributedOctree would produce (not a partition after "
       "`DistributedOctree.rebalance` / `Flow.rebalance_mpi`). Below the root brick the ladder "
       "halves the grid while every rank's block stays even; where it stops above "
-      "`bottom_extent` cells per axis on more than one rank the coarsest level is gathered onto "
-      "every rank (the replicated tail) and continued there; the coarsest level is then solved "
+      "`bottom_extent` cells per axis on more than one rank the level MOVES (a stage): onto fewer "
+      "ranks by a sibling merge or a repartition when the Flow's stage policy is on "
+      "(docs/amr_mg_depth.md WO4b), where the ladder lifts again, else gathered onto every rank "
+      "(the replicated tail) and continued there; the coarsest level is then solved "
       "by damped-Jacobi sweeps if it has at most `bottom_extent` cells per axis, else by the "
       "agglomerated GraphAMG-PCG bottom. The prediction is that of the default "
       "`Flow.set_pressure_bottom('auto')`.\n\n"
@@ -999,11 +1005,13 @@ NB_MODULE(_amr, m) {
       "(a count, not a length), `cells` its total cell count as if the mesh were uniform (so it "
       "equals `Flow.diagnostics.pressure_mg_levels` leaf for leaf only for a uniform mesh at "
       "num_ranks=1), `kind` ('octree' at or above the root brick, 'lifted' below it in place, "
-      "'tail' on the gathered grid -- the first tail level is the SAME grid as the last in-place "
-      "one, moved rather than coarsened, exactly as `pressure_mg_levels` lists it), `num_levels`, "
-      "`num_in_place` (levels that keep the ORB), "
-      "`tail` (bool) and `bottom` ('jacobi' or 'amg', suffixed '+tail' when the tail engages) — "
-      "the spelling `Flow.diagnostics.pressure_mg_bottom` reports.\n\n"
+      "'tail' / 'sibling' / 'repartition' on a stage's continued ladder -- a stage's first level "
+      "is the SAME grid as the level above it, moved rather than coarsened, exactly as "
+      "`pressure_mg_levels` lists it), `num_levels`, `num_in_place` (levels above the first "
+      "stage), `stages` (the stage kinds, outermost first), `tail` (bool: a replicated tail "
+      "engages) and `bottom` ('jacobi' or 'amg', suffixed '+tail' / '+sibling' / '+repartition' "
+      "per stage, innermost first) — the spelling `Flow.diagnostics.pressure_mg_bottom` "
+      "reports.\n\n"
       "`lmax` is the number of octree coarsenings THE MESH supports, i.e. the tree's lmax for a "
       "mesh refined to level 0 somewhere. An UNREFINED Octree(cells, lmax=k>0) is the same mesh "
       "as Octree(cells/2**k, lmax=0) — all its leaves are root cells — and must be predicted that "
@@ -1399,8 +1407,10 @@ NB_MODULE(_amr, m) {
                    "is where the hierarchy is built. Levels below the root brick are LIFTED levels "
                    "— the same octree with its root halved — so a uniform mesh has a real "
                    "hierarchy rather than a single level. Under MPI the in-place levels are THIS "
-                   "RANK's counts and the levels of a replicated tail (appended last) are GLOBAL "
-                   "counts, identical on every rank. Check it against "
+                   "RANK's counts, the levels of a replicated tail (appended last) are GLOBAL "
+                   "counts, identical on every rank, and the levels of a sibling-merge or "
+                   "repartition stage are this rank's counts on its target block (0 on a rank "
+                   "that owns none). Check it against "
                    "`peclet.amr.predict_hierarchy` (level count, and leaf for leaf on a "
                    "uniform mesh at np=1), never against a literal.")
       .def_prop_ro("pressure_mg_bottom", &FlowDiagnostics::pressure_mg_bottom,
@@ -1408,7 +1418,9 @@ NB_MODULE(_amr, m) {
                    "(60 damped-Jacobi sweeps, effectively exact at <= 4 cells per axis: the "
                    "slowest mode falls by 8e-9) or 'amg' (the agglomerated GraphAMG-PCG solve), "
                    "with the suffix '+tail' when the coarsest level was gathered onto every rank "
-                   "by the replicated stage (docs/amr_mg_depth.md §6.5-§6.7). Which one runs "
+                   "by the replicated stage, '+sibling' / '+repartition' when a level moved onto "
+                   "fewer ranks (one suffix per stage, innermost first; docs/amr_mg_depth.md "
+                   "§6.5-§6.7, WO4b). Which one runs "
                    "follows `Flow.set_pressure_bottom` (default 'auto': the exact bottom engages "
                    "only where the ladder ran out above `Flow.pressure_bottom_extent` cells per "
                    "axis). 'jacobi' before set_solid.")
