@@ -39,12 +39,14 @@ namespace peclet::amr {
 
 /// Which stage the distributed pressure ladder uses where its in-place lift blocks
 /// (docs/amr_mg_depth.md §5.6, WO4b; docs/amr_mg_core_boundary.md §11.1, §9.6, §9.7). With
-/// `enabled == false` every stage is the replicated tail (WO4). With `enabled`, core's
-/// `chooseStageTarget` chooses between a sibling merge, a repartition and the replicated tail.
+/// `enabled` — the DEFAULT since 2026-09-24, on timings that measured it no slower anywhere and up
+/// to 1.9x faster (amr_mg_depth.md WO4b) — core's `chooseStageTarget` chooses between a sibling
+/// merge, a repartition and the replicated tail. With `enabled == false` every stage is the
+/// replicated tail (WO4), kept as the reference and an ablation.
 /// `DistributedFlowMultigrid::StagePolicy` is this type, and `predictPressureLadder` takes it, so
 /// the prediction and the built ladder read the same policy.
 struct PressureStagePolicy {
-  bool enabled = false;  ///< false: the replicated tail only (WO4)
+  bool enabled = true;  ///< false: the replicated tail only (WO4)
   /// Core's economic trigger / extent cap. 4, flow's trigger verbatim (§9.7) — INERT here, because
   /// the policy is consulted only where the §6.2 lift has already stopped.
   int minExtent = 4;

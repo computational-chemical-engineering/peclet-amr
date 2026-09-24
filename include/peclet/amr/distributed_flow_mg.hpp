@@ -196,9 +196,9 @@ class DistributedFlowMultigrid {
   /// Whether a STAGE fires below the in-place ladder (docs/amr_mg_depth.md §5.6/§6.5): the
   /// coarsest in-place level is still larger than `bottomExtent` on some axis, so that level moves
   /// onto a new decomposition of its own grid and the ladder continues there: the REPLICATED tail
-  /// (one block on every rank), or — with the stage policy enabled (`setStagePolicy`) — a sibling
-  /// merge or a repartition onto fewer ranks (`DistributedStage`), as core's `chooseStageTarget`
-  /// decides.
+  /// (one block on every rank), or — with the stage policy enabled (the default; `setStagePolicy`)
+  /// — a sibling merge or a repartition onto fewer ranks (`DistributedStage`), as core's
+  /// `chooseStageTarget` decides.
   bool hasStage() const { return stage_ != nullptr; }
   /// `"replicated"`, `"sibling"` or `"repartition"`, or `"none"` without a stage.
   const char* stageKind() const { return stage_ ? stage_->kind() : "none"; }
@@ -326,11 +326,11 @@ class DistributedFlowMultigrid {
   /// §6.5, once per build. Below the in-place ladder the coarsest level does not just get
   /// smoothed: if its global grid is still larger than `bottomExtent` on some axis, it MOVES onto
   /// a new decomposition of its own grid and the ladder continues there. With the stage policy
-  /// disabled (the default) that is the REPLICATED tail — one block on every rank — exactly as WO4
-  /// built it. With it enabled, core's `chooseStageTarget` (amr's all-axes lift rule as the
-  /// predicate, the policy's `minExtent` / `maxBlockCells` verbatim) picks a sibling merge or a
-  /// repartition (`DistributedStage`), falling back to the replicated tail where nothing lifts
-  /// (a grid-limited level, whose grid is odd). A forced `Agglomerated` bottom on a ladder that
+  /// enabled (the default), core's `chooseStageTarget` (amr's all-axes lift rule as the predicate,
+  /// the policy's `minExtent` / resolved `maxBlockCells`) picks a sibling merge or a repartition
+  /// (`DistributedStage`), falling back to the REPLICATED tail — one block on every rank — where
+  /// nothing lifts (a grid-limited level, whose grid is odd). With it disabled every stage is the
+  /// replicated tail, exactly as WO4 built it. A forced `Agglomerated` bottom on a ladder that
   /// already reached `bottomExtent` keeps the replicated tail, as before.
   ///
   /// It runs AFTER the openness ladder, because what the stage carries over is that ladder's own α

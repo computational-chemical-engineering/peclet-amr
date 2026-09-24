@@ -60,8 +60,12 @@ BO uniformMeshOf(const IVec<3>& G, unsigned lmax) {
 }
 
 void run() {
+  // §6.2's table is the ladder WITHOUT sibling-merge / repartition stages (WO4: every stage the
+  // replicated tail), so it is read with the stage policy OFF; the policy-on rows follow below.
+  PressureStagePolicy wo4;
+  wo4.enabled = false;
   for (const Row& r : kRows) {
-    const auto p = predictPressureLadder<3>(r.G, r.lmax, r.np);
+    const auto p = predictPressureLadder<3>(r.G, r.lmax, r.np, 4, wo4);
     if ((int)p.levels.size() != r.levels || (int)p.numInPlace() != r.inPlace ||
         p.bottomName() != std::string(r.bottom))
       std::fprintf(stderr, "row '%s': levels %d (want %d), in place %d (want %d), bottom %s\n",
@@ -121,6 +125,8 @@ void run() {
     };
     for (const Row& r : onRows) {
       const auto q = predictPressureLadder<3>(r.G, r.lmax, r.np, 4, on);
+      // The default policy is ON (docs/amr_mg_depth.md WO4b, flipped on measured timings).
+      PECLET_AMR_CHECK(predictPressureLadder<3>(r.G, r.lmax, r.np).bottomName() == q.bottomName());
       if ((int)q.levels.size() != r.levels || (int)q.numInPlace() != r.inPlace ||
           q.bottomName() != std::string(r.bottom))
         std::fprintf(stderr, "on-row '%s': levels %d (want %d), in place %d (want %d), bottom %s\n",
