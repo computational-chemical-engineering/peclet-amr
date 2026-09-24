@@ -254,7 +254,7 @@ WO4b has not started. Aim it at core:
 | S2 | core | `RedistributePlan` general kind (planned point-to-point) + aligned weighted `init` | plan test on a weighted partition; `init(w, align=1)` bit-identical to `init(w)`; `coarsened()` nests for `log2(align)` levels on a weighted tree |
 | S3 | amr (WO4b) | `ReplicatedTailStage` movement → plan (bitwise vs WO4's tail test); sibling + repartition stages on `sub`-comm `DistributedFlowMultigrid` | `amr_mg_depth.md` WO4b gate: weighted 24³-brick partition, np = 2/4/8, single-rank ladder and solution to ≤ 1e-13, np-independent iterations. **Built 2026-09-24, gate passed** (`amr_mg_depth.md` WO4b as built: ladder = single-rank, 1.6e-16 at L0 / bitwise below, 15 = 15 iterations at np = 2/4/8); `rebalance` through `chooseAlignedWeighted`. §9.6–§9.7 decided the same day and the policy is **ON by default** (measured no slower anywhere, up to 1.9× faster at np = 8). |
 | S4 | flow | `Telescope` delegates to S1 (policy + comms + movement) | byte-identical (§7) — **DONE 2026-09-24** (§11.9) |
-| S5 | flow + coupling | `Repartition` kind for weighted `dec0`; `rebalanceByWeights` and `coupling.rebalance()` through the aligned weighted `init` | the CFD-DEM MPI tests; iteration count after `rebalance()` equal to before it ± 1; the §9.1 measurement closed — **Repartition half DONE; aligned half BLOCKED on a dem API** (§11.9) |
+| S5 | flow + coupling | `Repartition` kind for weighted `dec0`; `rebalanceByWeights` and `coupling.rebalance()` through the aligned weighted `init` | the CFD-DEM MPI tests; iteration count after `rebalance()` equal to before it ± 1; the §9.1 measurement closed — **DONE 2026-09-25**: Repartition half (flow `d907c57`) and aligned half (flow `fa3178f`, dem `9c93253` `migrate_to_weights(w, align=)`, coupling `455150e`); remaining: `a` in `check_decomposition.py --predict` (§11.9) |
 | S6 | suite | register entry (§10), `ARCHITECTURE.md` core-module list gains the stage line, `MG_TELESCOPING_PLAN.md` status note | — |
 
 S1 is small (~300–400 lines plus tests) and unblocks S3 and S4 in parallel. Ownership: S1/S2 are
@@ -630,10 +630,59 @@ which deadlocks inside dem (ranks split between `MPI_Waitall` and `MPI_Allreduce
 unmodified flow and with a dem build of 2026-09-12 alike — pre-existing, not this work. Not
 measured: np ≥ 16, GPU.
 
-**The aligned half is blocked, not built into main.** `rebalanceByWeights` through
-`chooseAlignedWeighted` is on flow branch `s5-aligned-rebalance` (measured above) and cannot land
-alone: `CfdDem.rebalance()` and every moving step hand dem the same weights
-(`dem.migrate_to_weights(w)`), and dem builds the plain weighted ORB from them, so flow and dem would
-own different blocks. dem needs to build the same aligned partition — an `align` (or split-position)
-argument on its migration call, a public dem name — and `check_decomposition.py --predict` needs the
-weights to log `a` (a `weights=` keyword on `predict_hierarchy`). Both are decisions for the owner.
+**The aligned half — LANDED 2026-09-25** (flow `fa3178f`, `413e75a`; dem `9c93253`; coupling
+`d4fc2e2`, `455150e`, `664484c`). `rebalanceByWeights` builds `chooseAlignedWeighted(np, G, w)` at the
+1.05 budget and **returns `2^a`** (1 when not distributed) — the route by which the alignment reaches
+coupling without a new public name (`diagnostics.rebalance_by_weights` returned None). dem gained
+`migrate_to_weights(w, align=1)` (user-approved keyword), which builds core's `init(n, G, w, {align,…})`;
+`align = 1` is the old call, and dem's own `rebalance()` stays unaligned. `CfdDem.rebalance()` passes the
+returned alignment on and keeps it for the per-step migration. Co-location is **asserted**: after every
+rebalance and once at the first moving step, every particle dem owns must lie in flow's block (dem
+exposes no block; this checks what the deposit relies on), else `RuntimeError` on every rank.
+
+Gates (host-openmp). dem: `test_align_mpi` np = 1/2/4/8 — dem's partition equals flow's call
+cell for cell over four weight fields (a = 0…3); `migrate_to_weights(w)` and `(w, align=1)` leave the
+owned set byte-identical to dem `832b844` at np = 1/2/4/8; battery 77/78, the one failure
+`ghost_band_margin_np4`, which fails intermittently on main too (5 of 8 runs). flow: `state_hash` 13/13 byte-identical; battery 166/166;
+G-B4 re-taken on the rebased tree (96³, 15 steps, 5 interleaved repeats, pinned rank r → cores 8+2r,
+9+2r), projection ÷ momentum after the rebalance, median (min–max), unweighted of the same runs:
+
+| np, levels, tilt | unweighted | aligned + Repartition (landed) | `a`, imbalance |
+|---|---|---|---|
+| 4, 8, 0.5 | 0.99 (0.97–1.00) | 1.07 (1.04–1.09) | 2, 1.016 |
+| 4, 4, 0.5 | 1.05 (1.02–1.06) | 1.10 (1.07–1.15) | 2, 1.016 |
+| 8, 8, 0.5 | 0.99 (0.95–1.04) | 1.05 (1.03–1.05) | 2, 1.036 |
+| 8, 4, 0.5 | 1.07 (1.03–1.09) | 1.09 (1.03–1.11) | 2, 1.036 |
+| 8, 8, 0.3 | 0.98 (0.97–1.01) | 1.06 (0.99–1.06) | 1, 1.041 |
+
+≤ 1.15 in every row; iterations 8 → 8. coupling: MPI tests np = 1/2/4 all pass,
+`test_mpi_moving_suspension` 10/10 at np = 4 (1.94e-08 each), new `test_mpi_rebalance` (32³ heap,
+`rebalance(gamma=4)` → align 2; reproduces np = 1 to 0 / 1.6e-16; the assertion fires when dem is
+moved back onto the equal-cell ORB).
+
+**Two defects found on the way, both on main before this work.** (1) `redistribute` re-seeded the
+porous eps^n inside `resizeForBlock`, before the migrated fields were scattered, so any size-changing
+rebalance zeroed it and the next projection saw d(eps)/dt = eps/dt (pressure off by 2.2e+02 in a
+CfdDem rebalance); fixed in flow `413e75a`, gated by `test_porous_redistribute_mpi` (4.45e-03 →
+4.9e-16). (2) flow's `init_mpi` ORB snaps splits to powers of two while dem's `init_mpi` /
+`migrate_to_weights(ones)` builds the equal-cell ORB: they differ on 48³ at np = 4 (32|16 vs 24|24),
+so the coupled probe above ran its pre-rebalance phase with ~7.5k particles coupled into cells their
+rank does not own. The first-step assertion now raises there; the remedy is `rebalance()` before the
+first step. **The earlier coupled numbers are superseded:** 0.33/0.34 "unweighted" came from that
+mis-co-located phase, and 0.41/0.37 "with Repartition" were taken after a size-changing
+redistribute with defect (1) in force.
+
+**Coupled CFD-DEM, re-measured** (same probe, `rebalance(gamma=0)` before the first step so both phases
+are co-located; 8 steps before and after `rebalance()`, pinned as above, no-rebalance controls). 48³,
+5 seeds: the budget picks `a = 0` for this heap at np = 4 and 8 (the aligned candidates exceed 1.05),
+so this measures the Repartition half; iteration sequences after `rebalance()` are **identical** to the
+controls' in every seed (np = 4: 9.00 → 10.00 settled in both; np = 8: 10.72 → 9.28 in both);
+projection ÷ momentum after 0.42 (0.39–0.43) vs control 0.41 (0.40–0.47) at np = 4, 0.48 (0.42–0.53)
+vs 0.43 (0.38–0.45) at np = 8. 64³, 3 seeds: again `a = 0`; 0.39 vs 0.40 (np = 4), 0.35 vs 0.37
+(np = 8), iterations identical to the controls. A coupled `a > 0` is exercised by `test_mpi_rebalance`,
+not timed. Not measured: np ≥ 16, GPU.
+
+**Remaining:** `check_decomposition.py --predict` cannot log `a` — the weights would have to reach
+`predict_hierarchy` (a `weights=` keyword, a new public name, not decided). And the init-partition
+mismatch (2) wants a real fix — dem building flow's `init_mpi` partition, or coupling co-rebalancing
+at construction — also a decision.
