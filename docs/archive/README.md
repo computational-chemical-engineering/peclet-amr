@@ -6,10 +6,8 @@ deleted; D7: docs describe the code that exists, so history lives here). They ca
 when it was relocated out of `peclet-core` on 2026-09-10, git history included. Each one steered a
 piece of work that has since landed, been superseded, or been folded into a reference document;
 the authority on how `peclet-amr` behaves today is the code plus [README.md](../../README.md),
-[CLAUDE.md](../../CLAUDE.md) and the four reference notes in the parent directory
-([amr_collocated_projection](../amr_collocated_projection.md),
-[amr_mixed_level_cut_band_plan](../amr_mixed_level_cut_band_plan.md),
-[amr_setup_parallel_plan](../amr_setup_parallel_plan.md), [amr_anisotropic](../amr_anisotropic.md)).
+[CLAUDE.md](../../CLAUDE.md) and the reference and validation notes in the parent directory, which
+[../README.md](../README.md) indexes.
 
 Nothing here is maintained: `file:line` citations, status lines and "next step" sections are
 snapshots of their date — re-read the source before acting on any of them. Paths inside them are

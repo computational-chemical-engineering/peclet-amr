@@ -788,7 +788,7 @@ environment, not code):**
   `cudaErrorLaunchTimeout`: at 7M leaves a single kernel exceeds the driver's launch limit.
 
 Those limits were cleared on a Snellius H100 (95 GB, no watchdog): the recipe is
-`tools/snellius_amr_bed.md`. Depth 9 (R/h₀ = 48, where M1 measured 2.9× and the offset picture
+`docs/archive/snellius_amr_bed.md`. Depth 9 (R/h₀ = 48, where M1 measured 2.9× and the offset picture
 of observation 2 gets its next data point) is a straightforward rerun of the same recipe —
 worth doing AFTER the scene layer lands, since setup dominates the bill.
 
