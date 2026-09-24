@@ -325,8 +325,17 @@ class DistributedOctree {
     MPI_Allreduce(localWeight.data(), weight.data(), static_cast<int>(ncells), MPI_DOUBLE, MPI_SUM,
                   comm_);
 
-    // 2. Weighted re-decomposition over the same global root grid.
-    decomp::BlockDecomposer<Dim> newDec(static_cast<std::size_t>(size_), globalRootSize_, weight);
+    // 2. Weighted re-decomposition over the same global root grid, COARSE-FIRST ALIGNED to the
+    //    largest 2^a the 1.05 weight-imbalance budget allows (core's chooseAlignedWeighted,
+    //    docs/amr_mg_core_boundary.md §11.4 / §11.5): every split, origin and size is then a
+    //    multiple of 2^a, so the pressure ladder keeps a in-place lifts before a stage has to move
+    //    the level. a = 0 is today's plain weighted ORB bit for bit. A pure function of the
+    //    replicated weight grid, so every rank chooses the same partition without communicating.
+    auto choice =
+        decomp::chooseAlignedWeighted(static_cast<std::size_t>(size_), globalRootSize_, weight);
+    rebalanceAlign_ = choice.a;
+    rebalanceImbalance_ = choice.imbalance;
+    decomp::BlockDecomposer<Dim> newDec = std::move(choice.dec);
     auto nblk = newDec.block(static_cast<std::size_t>(rank_));
     const IVec<Dim> newOriginRoot = nblk.origin;
     const IVec<Dim> newBrick = nblk.size;
@@ -420,6 +429,13 @@ class DistributedOctree {
       fields[c].swap(sortedCols[static_cast<std::size_t>(c)]);
     return migratedOut;
   }
+
+  /// The alignment exponent the last `rebalance` chose (align = 2^a on every axis; 0 = the plain
+  /// weighted ORB, and before any rebalance) and that partition's weight imbalance (max block
+  /// weight over the mean; 0 before any rebalance) — the two numbers
+  /// docs/amr_mg_core_boundary.md §11.4 asks to be logged. Replicated.
+  int rebalanceAlignment() const { return rebalanceAlign_; }
+  double rebalanceImbalance() const { return rebalanceImbalance_; }
 
   // ---- owner-based face-neighbour gather (the halo) ---------------------
 
@@ -952,6 +968,8 @@ class DistributedOctree {
   std::array<bool, Dim> periodic_{};
   unsigned lmax_ = 0;
   Index rootSpan_ = 1;
+  int rebalanceAlign_ = 0;
+  double rebalanceImbalance_ = 0.0;
 };
 
 }  // namespace peclet::amr

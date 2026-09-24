@@ -13,6 +13,9 @@
 //      is a correction at level 0, so the same linear map in a different order of operations —
 //      the bottom_dist test's argument), and the MG-PCG iteration count must equal the
 //      single-rank one;
+//   A' the same weights through `chooseAlignedWeighted` — the partition `rebalance` builds — which
+//      keeps `a` in-place lifts before the level blocks (bit-exact once a >= 1: the stage is then
+//      below level 0);
 //   B  the 12^3 root of the replicated-tail test with the policy on: the level blocks at 6^3,
 //      BELOW level 0, where the incoming iterate is zero, so the V-cycle stays BIT-EXACT against
 //      the single-rank one (as the replicated tail was).
@@ -258,6 +261,16 @@ void run() {
     const long nr = 24;
     const decomp::BlockDecomposer<3> heap((std::size_t)size, IVec<3>{nr, nr, nr}, heapWeights(nr));
     runArm("weighted24", nr, heap, 0.3, me, /*expectBitwise=*/false);
+    // A': the same weights through the balancer's own chooser (what `rebalance` now builds): the
+    // coarse-first aligned ORB keeps `a` in-place lifts before the level blocks.
+    const auto al =
+        decomp::chooseAlignedWeighted((std::size_t)size, IVec<3>{nr, nr, nr}, heapWeights(nr));
+    int rank = 0;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    if (rank == 0 && me == 0)
+      std::printf("[aligned24] np=%d chooseAlignedWeighted: a=%d imbalance %.4f\n", size, al.a,
+                  al.imbalance);
+    runArm("aligned24", nr, al.dec, 0.3, me, /*expectBitwise=*/al.a >= 1 || size == 1);
     // B: the replicated-tail test's 12^3 root, blocked BELOW level 0 (bit-exact).
     const decomp::BlockDecomposer<3> prop((std::size_t)size, IVec<3>{12, 12, 12});
     runArm("root12", 12, prop, 0.25, me, /*expectBitwise=*/true);
