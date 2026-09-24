@@ -252,7 +252,7 @@ WO4b has not started. Aim it at core:
 |---|---|---|---|
 | S1 | core | `chooseStageTarget`, `makeStageComm`, `RedistributePlan` (Replicated + SiblingMerge kinds), `gatherByGlobalId`; unit tests np = 1…8 with **flow's inline code and amr's `ReplicatedTailStage` as the two reference implementations the tests must reproduce bitwise** (a Kokkos-free host test: box grids, random fields, `backward(forward(x)) == x`, nested == `Gatherv` values, replicated == `Allgatherv` values) | core ctests green; core tagged before any consumer (directive) |
 | S2 | core | `RedistributePlan` general kind (planned point-to-point) + aligned weighted `init` | plan test on a weighted partition; `init(w, align=1)` bit-identical to `init(w)`; `coarsened()` nests for `log2(align)` levels on a weighted tree |
-| S3 | amr (WO4b) | `ReplicatedTailStage` movement → plan (bitwise vs WO4's tail test); sibling + repartition stages on `sub`-comm `DistributedFlowMultigrid` | `amr_mg_depth.md` WO4b gate: weighted 24³-brick partition, np = 2/4/8, single-rank ladder and solution to ≤ 1e-13, np-independent iterations. **Built 2026-09-24, gate passed** (`amr_mg_depth.md` WO4b as built: ladder = single-rank, 1.6e-16 at L0 / bitwise below, 15 = 15 iterations at np = 2/4/8); `rebalance` through `chooseAlignedWeighted`. The sibling/repartition policy is **opt-in** until §9.6–§9.7 are decided. |
+| S3 | amr (WO4b) | `ReplicatedTailStage` movement → plan (bitwise vs WO4's tail test); sibling + repartition stages on `sub`-comm `DistributedFlowMultigrid` | `amr_mg_depth.md` WO4b gate: weighted 24³-brick partition, np = 2/4/8, single-rank ladder and solution to ≤ 1e-13, np-independent iterations. **Built 2026-09-24, gate passed** (`amr_mg_depth.md` WO4b as built: ladder = single-rank, 1.6e-16 at L0 / bitwise below, 15 = 15 iterations at np = 2/4/8); `rebalance` through `chooseAlignedWeighted`. §9.6–§9.7 decided the same day and the policy is **ON by default** (measured no slower anywhere, up to 1.9× faster at np = 8). |
 | S4 | flow | `Telescope` delegates to S1 (policy + comms + movement) | byte-identical (§7) |
 | S5 | flow + coupling | `Repartition` kind for weighted `dec0`; `rebalanceByWeights` and `coupling.rebalance()` through the aligned weighted `init` | the CFD-DEM MPI tests; iteration count after `rebalance()` equal to before it ± 1; the §9.1 measurement closed |
 | S6 | suite | register entry (§10), `ARCHITECTURE.md` core-module list gains the stage line, `MG_TELESCOPING_PLAN.md` status note | — |
@@ -290,7 +290,7 @@ delete-and-include, not a rewrite.
    fine-cell count overstates that work by up to 8^lmax inside the refined region: the S3 probe
    (24³ root, `lmax = 2`, off-centre sphere, 93 904 leaves) shows the fine-cell bound merging the
    whole 13 824-cell root level onto ONE rank at np = 64, where each rank's finest work is ~1 500
-   leaves; the leaf count repartitions it onto 8. Rejected: the fine-cell count. Built (next commit) as
+   leaves; the leaf count repartitions it onto 8. Rejected: the fine-cell count. Built as
    `StagePolicy::maxBlockCells < 0` = derive it, the `Allreduce(MAX)` of level 0's local leaf
    count; a stage's continued ladder inherits the resolved value (its own level 0 is not the
    finest level). `predictPressureLadder` uses the uniform-mesh leaf count, which is exact for the

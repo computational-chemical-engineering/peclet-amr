@@ -586,10 +586,12 @@ into a cube level, every block even on every axis) → `makeStageComm` →
 `DistributedOctree::initDecomposed` on the stage's `sub` → one `RedistributeTopology` for the
 residual up / correction down and, once, the α rows → `DistributedFlowMultigrid::buildRaw` as the
 continued ladder, which lifts, halos and stages again on `sub`. Idle ranks take part in the
-movement only. (3) The policy is `DistributedFlowMultigrid::StagePolicy`, **off by default** (the
-replicated tail only — every existing ladder and byte-gate key unchanged) until the two inputs
-`amr_mg_core_boundary.md` §9.6–§9.7 leave open are decided. (4) `rebalance` goes through
-`chooseAlignedWeighted` (§11.5's consumer half).
+movement only. (3) The policy is `PressureStagePolicy` (`mg_predict.hpp`;
+`DistributedFlowMultigrid::StagePolicy` is an alias), **ON by default since 2026-09-24**, with
+`minExtent` 4 (inert, `amr_mg_core_boundary.md` §9.7) and `maxBlockCells` derived as the LEAF count
+of the largest finest-level block (§9.6); `enabled = false` is WO4's replicated tail, kept as the
+reference. `predictPressureLadder` reads the same policy and predicts the sibling / repartition
+rows. (4) `rebalance` goes through `chooseAlignedWeighted` (§11.5's consumer half).
 
 The gate (`tests/test_amr_mg_stages_mpi.cpp`, policy on with `maxBlockCells` = the largest
 finest-level block, `minExtent` 0 and 4 — identical results): a heap-weighted 24³ root partition
@@ -606,11 +608,26 @@ Three runs at every np, every line identical (the counts are deterministic here:
 one fixed rhs, not the moving-rhs `last_pres_iters` of §11.10). `minExtent` 0 and 4 give identical
 rows. Where the stage fires at level 0 the difference is the correction-scheme reassociation of
 §6.5.1, 1.6e-16 against the gate's 1e-13; where it fires below level 0 the cycle is bitwise, as the
-replicated tail's was. **What remains before the policy can be the default:**
-`amr_mg_core_boundary.md` §9.6 (`maxBlockCells`: leaf count or fine-cell count — the two differ on
-graded meshes, where a pure-policy probe shows repartition vs a whole-level sibling merge onto one
-rank) and §9.7 (`minExtent`), then `predictPressureLadder` must learn the sibling / repartition
-rows so the tests' `ladder == predict` assertions keep holding with the policy on.
+replicated tail's was.
+
+*The flip to default-on, measured (2026-09-24).* MG-PCG to 1e-10 and bare V-cycles, policy on vs
+off, ranks pinned by `taskset` to physical cores 4–19 (+ hyperthreads), 2 cores and 2 OpenMP
+threads per rank — on a host carrying load ~45 of 48 CPUs from other sessions, so read the
+spreads. Median of 10 solves per run, 3 runs; median [min–max] of the run medians, ms per solve:
+
+| case | np = 2 off / on | np = 4 off / on | np = 8 off / on |
+|---|---|---|---|
+| weighted24 (plain weighted ORB) | 15.5 [14.0–15.5] / 13.1 [12.9–13.2] | 14.1 [13.3–15.2] / 12.6 [8.6–14.1] | 14.6 [13.3–16.1] / 22.6 [12.4–25.3] † |
+| aligned24 | 11.0 [9.6–11.8] / 11.2 [10.4–11.7] | 9.7 [8.7–11.7] / 8.6 [8.2–9.0] | 14.7 [13.2–19.5] / 7.6 [7.5–8.4] |
+| root12 | 4.5 [3.5–4.5] / 4.1 [4.0–4.8] | 4.9 [4.3–5.1] / 4.5 [3.6–5.4] | 8.4 [5.3–8.5] / 4.7 [3.7–5.1] |
+| graded24 (lmax 2, rebalanced) | 54.2 [44.7–58.5] / 55.1 [49.3–56.5] † | 41.1 [34.4–41.2] / 33.3 [32.9–33.8] | 31.7 [25.6–34.1] / 27.0 [22.8–34.5] |
+
+† re-measured with 7 runs each: weighted24 np = 8 off 18.8 [13.5–31.5] / on 10.0 [7.4–20.1] (bare
+V-cycle 0.79 / 0.43 ms, which the first sample already showed); graded24 np = 2 off 54.9
+[49.1–59.3] / on 52.2 [50.5–57.3]. Iterations are identical on and off everywhere (15 / 15 / 13 /
+15). Policy on is nowhere more than 10 % slower and up to 1.9× faster at np = 8, so it is the
+default; the stages are meant to pay off at scale, which these np ≤ 8 numbers do not yet measure.
+The byte gate did not move: no recorded configuration fires a stage.
 
 **WO5 — the exact bottom.** §6.6 header, `set_pressure_bottom`, `auto`; host `GraphAMG` for `n_b ≤ 10⁴`, `GraphAMGDevice` above (§5.5). *Accept:* the consistency
 gate ≤ 1e-9 on a 10³-root case (bottom 5³) and on a cut-cell case with a closed pocket (identity

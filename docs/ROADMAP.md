@@ -295,11 +295,12 @@ refined mesh, which is the entire point of the package.
   - **the exact bottom's host/device threshold** (§11.11): the host CG is ~16 % *faster* than 60
     Jacobi sweeps at a 64-cell bottom and ~28 % *slower* at 4096 rows, so §5.5's 10⁴-row threshold
     is about an order of magnitude too high. Numbers waiting for whoever builds the device path.
-  - **WO4b is BUILT (S3, 2026-09-24) but OPT-IN**: the sibling-merge and repartition stages run on
-    core's stage machinery and pass their gate (`amr_mg_depth.md` WO4b as built); making them the
-    default waits on two policy inputs the notes leave open, `amr_mg_core_boundary.md` §9.6
-    (`maxBlockCells`: leaf or fine-cell count) and §9.7 (`minExtent`), and then on
-    `predictPressureLadder` learning those rows. **WO7** (coarse-first alignment) landed for
+  - **WO4b is DONE and the DEFAULT (S3, 2026-09-24)**: where the lockstep lift blocks, a sibling
+    merge or repartition onto fewer ranks (core's stage machinery) continues the ladder, the
+    replicated tail only where nothing lifts; gate passed, `predictPressureLadder` predicts the
+    new rows, and the pinned on/off timing (`amr_mg_depth.md` WO4b) is no slower anywhere at
+    np ≤ 8 and up to 1.9× faster. Open: the at-scale measurement the stages exist for (384 / 1536
+    ranks on a rebalanced bed — billed Snellius time). **WO7** (coarse-first alignment) landed for
     `rebalance` (`chooseAlignedWeighted`); `init`'s unweighted ORB is unchanged. **WO8** (the
     velocity multigrid, `liftRoot = false` until then).
 

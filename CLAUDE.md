@@ -154,10 +154,11 @@ Header-only under `include/peclet/amr/` (namespace `peclet::amr`; `common.hpp` c
   the blocks turn odd a `MgStage` (`mg_stage.hpp`) moves the level onto a new decomposition of its
   own grid, with target, communicators and movement from core (`peclet::core::decomp`:
   `chooseStageTarget`, `makeStageComm`, `RedistributeTopology`; `docs/amr_mg_core_boundary.md`) —
-  the replicated tail, or, with `DistributedFlowMultigrid::StagePolicy` enabled (OFF by default
-  until `amr_mg_core_boundary.md` §9.6–9.7 are decided), a sibling merge or repartition onto fewer
+  by default (`PressureStagePolicy`, ON since 2026-09-24) a sibling merge or repartition onto fewer
   ranks whose continued ladder is a `DistributedFlowMultigrid` on the stage's sub-communicator
-  (`DistributedStage`, WO4b) — and `rebalance` aligns its weighted ORB coarse-first
+  (`DistributedStage`, WO4b; `maxBlockCells` = the largest finest block's LEAF count, `minExtent` 4
+  and inert — `amr_mg_core_boundary.md` §9.6–9.7), the replicated tail where nothing lifts or
+  with the policy off — and `rebalance` aligns its weighted ORB coarse-first
   (`chooseAlignedWeighted`, 1.05 budget) — and where the ladder runs out above
   `bottomExtent` the bottom is an agglomerated `GraphAMG`-PCG solve (`amg_bottom.hpp`,
   `Flow.set_pressure_bottom`). The momentum path is NOT lifted (`liftRoot = false`,
