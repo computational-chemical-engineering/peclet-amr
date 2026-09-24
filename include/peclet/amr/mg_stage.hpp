@@ -10,15 +10,19 @@
 // instantiations, in the order the trigger tries them:
 //
 //   * sibling merge — target `BlockDecomposer::agglomerated(d)`, group gather; proportional trees;
-//   * repartition   — target a fresh proportional ORB on np_L <= np ranks, moved by core's
-//                     `redistributeGridFields`; weighted trees, where no d > 0 is liftable;
+//   * repartition   — target a fresh proportional ORB on np_L <= np ranks, moved point-to-point
+//                     over the box intersections; weighted trees, where no d > 0 is liftable;
 //   * REPLICATED    — target one block on every rank, moved by `Allgatherv`; the bottom on the
 //                     last sub-communicator, and the fallback. THIS FILE implements this one.
 //
-// The other two are WO4b. They are why this is an interface rather than a function: what differs
-// between them is only the target decomposition and the two movement steps (`moveUp` / `moveDown`);
-// the continued ladder, the per-level communicator and the way `vcycle` calls the stage are shared.
-// `DistributedFlowMultigrid::vcycle` never sees a message — it calls `apply` at the stage point.
+// All three take their target, communicators and movement from core (`peclet::core::decomp`:
+// `chooseStageTarget`, `makeStageComm`, `RedistributeTopology`; docs/amr_mg_core_boundary.md). The
+// other two are WO4b's `DistributedStage` (distributed_flow_mg.hpp, since its continued ladder is
+// a `DistributedFlowMultigrid`). They are why this is an interface rather than a function: what
+// differs between them is only the target decomposition and the two movement steps (`moveUp` /
+// `moveDown`); the continued ladder, the per-level communicator and the way `vcycle` calls the
+// stage are shared. `DistributedFlowMultigrid::vcycle` never sees a message — it calls `apply` at
+// the stage point.
 #ifndef PECLET_AMR_MG_STAGE_HPP
 #define PECLET_AMR_MG_STAGE_HPP
 
@@ -61,7 +65,7 @@ class MgStage {
   virtual ~MgStage() = default;
 
   // ---- what the stage is ---------------------------------------------------------------------
-  /// `"replicated"` | (WO4b) `"sibling"` | `"repartition"`.
+  /// `"replicated"` | `"sibling"` | `"repartition"`.
   virtual const char* kind() const = 0;
   /// What `pressure_mg_bottom` appends for this stage — `"+tail"` for the replicated one, which is
   /// the spelling docs/amr_mg_depth.md §6.7 fixes.

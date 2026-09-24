@@ -28,8 +28,10 @@
 //     (parents never cross blocks), Allreduce'd volume-weighted mean removal (removeMean).
 //   * Below the in-place ladder: a STAGE (mg_stage.hpp, docs/amr_mg_depth.md §5.6/§6.5) moves the
 //     coarsest level onto a new decomposition of its own grid and continues the ladder there. The
-//     V-cycle contains no MPI of its own for this — every message lives behind MgStage::apply, so
-//     WO4b's sibling-merge and repartition stages need no change here.
+//     V-cycle contains no MPI of its own for this — every message lives behind MgStage::apply:
+//     the replicated tail (mg_stage.hpp) and the sibling-merge / repartition `DistributedStage`
+//     below, whose continued ladder is another DistributedFlowMultigrid on the stage's
+//     sub-communicator (WO4b; the movement is core's RedistributeTopology).
 //
 // Bit-exactness: at np=1 every probe resolves locally (zero ghosts) and the whole cycle is
 // the single-rank Multigrid arithmetic verbatim. Across ranks the smoother/transfers are
@@ -58,6 +60,9 @@
 #include "peclet/amr/poisson.hpp"
 #include "peclet/core/common/mpi.hpp"
 #include "peclet/core/common/view.hpp"
+#include "peclet/core/decomp/redistribute_topology.hpp"
+#include "peclet/core/decomp/stage_comm.hpp"
+#include "peclet/core/decomp/stage_target.hpp"
 
 namespace peclet::amr {
 
@@ -95,6 +100,9 @@ inline void removeMeanFvDist(const FvOp& op, View<double> u, MPI_Comm comm) {
           u(i) -= m;
       });
 }
+
+template <int Dim, unsigned Bits>
+class DistributedStage;  // the sibling-merge / repartition stage, defined below the multigrid
 
 template <int Dim, unsigned Bits = (Dim == 2 ? 32u : (Dim == 3 ? 21u : 16u))>
 class DistributedFlowMultigrid {
@@ -141,6 +149,35 @@ class DistributedFlowMultigrid {
     buildStage();  // §6.5: below the in-place ladder the level MOVES to a new decomposition
   }
 
+  /// Build on `finest` with its level-0 openness GIVEN as raw rows (`AmrPoisson::opennessRaw()`
+  /// layout, the `numLeaves()` LOCAL rows only) instead of sampled from a geometry — the
+  /// distributed counterpart of `Multigrid::buildRaw`, and how a sibling-merge or repartition stage
+  /// continues the ladder on its target (docs/amr_mg_depth.md §6.5): the moved level's α rows are
+  /// carried over, never re-sampled. The ghost rows are exchanged from their owners through the
+  /// level-0 halo, as every coarser level's are. Collective on `finest.comm()`.
+  void buildRaw(const DO& finest, const Vec<Dim>& h0, const std::vector<double>& alphaLocal,
+                bool liftRoot = true, Index bottomExtent = 4) {
+    buildImpl(finest, h0, nullptr, liftRoot, bottomExtent);
+    setOpennessLocalRows(0, alphaLocal);
+    for (std::size_t L = 0; L + 1 < levels_.size(); ++L)
+      coarsenOpennessTo(L);
+    finishOps();
+    buildStage();
+  }
+
+  /// Which stage fires where the in-place ladder blocks (docs/amr_mg_core_boundary.md §11.1). With
+  /// `enabled == false` — the default — every stage is the replicated tail, exactly as WO4 built
+  /// it. With `enabled`, core's `chooseStageTarget` decides between a sibling merge, a repartition
+  /// and the replicated tail, with `minExtent` and `maxBlockCells` passed through verbatim; a
+  /// stage's continued ladder inherits the policy. Takes effect at the next `build`.
+  struct StagePolicy {
+    bool enabled = false;     ///< false: the replicated tail only (WO4)
+    int minExtent = 0;        ///< core's economic trigger / extent cap; 0 disables it
+    Index maxBlockCells = 0;  ///< core's bound on a target block's cells; 0 = no repartition
+  };
+  void setStagePolicy(const StagePolicy& p) { stagePolicy_ = p; }
+  const StagePolicy& stagePolicy() const { return stagePolicy_; }
+
   /// Per-level nullspace projection for the singular (periodic pure-Neumann) pressure. The stage's
   /// continued ladder follows this flag rather than being pinned on: on the production path flow
   /// sets it true, which is docs/amr_mg_depth.md §6.5.1 step 4's `setRemoveMean(true)`, and with it
@@ -161,11 +198,12 @@ class DistributedFlowMultigrid {
   Index liftDepth() const { return liftDepth_; }
   /// Whether a STAGE fires below the in-place ladder (docs/amr_mg_depth.md §5.6/§6.5): the
   /// coarsest in-place level is still larger than `bottomExtent` on some axis, so that level moves
-  /// onto a new decomposition of its own grid and the ladder continues there. Only the REPLICATED
-  /// instantiation exists today (one block on every rank, moved by `Allgatherv`); the sibling-merge
-  /// and repartition stages are WO4b and slot in behind the same `MgStage` interface.
+  /// onto a new decomposition of its own grid and the ladder continues there: the REPLICATED tail
+  /// (one block on every rank), or — with the stage policy enabled (`setStagePolicy`) — a sibling
+  /// merge or a repartition onto fewer ranks (`DistributedStage`), as core's `chooseStageTarget`
+  /// decides.
   bool hasStage() const { return stage_ != nullptr; }
-  /// `"replicated"` (today's only stage), or `"none"` without one.
+  /// `"replicated"`, `"sibling"` or `"repartition"`, or `"none"` without a stage.
   const char* stageKind() const { return stage_ ? stage_->kind() : "none"; }
   /// Levels of the continued ladder (its level 0 IS the moved level, so the full ladder is
   /// `numInPlaceLevels() + numStageLevels()` — the convention `predictPressureLadder` reports).
@@ -278,10 +316,10 @@ class DistributedFlowMultigrid {
     LeafHaloExchange ex;
     FvOp op;
     Index n = 0, nExt = 0;
-    /// THIS level's communicator. Every level shares the parent's today; a stage on a
-    /// sub-communicator (WO4b) is where they start to differ, and every per-level collective
-    /// (`removeMeanFvDist`, the halo build) already reads it from here rather than from the
-    /// multigrid (docs/amr_mg_depth.md §6.5).
+    /// THIS level's communicator — the one the octree is decomposed over, so a continued ladder
+    /// below a sibling-merge or repartition stage runs every per-level collective
+    /// (`removeMeanFvDist`, the halo build) on the stage's sub-communicator (docs/amr_mg_depth.md
+    /// §6.5).
     MPI_Comm comm = MPI_COMM_NULL;
     View<double> x, b, res, tmp;  // x/b sized nExt (PCG deep_copies match); res/tmp local
     View<Index> c2p, childStart, childIdx;
@@ -290,10 +328,13 @@ class DistributedFlowMultigrid {
 
   /// §6.5, once per build. Below the in-place ladder the coarsest level does not just get
   /// smoothed: if its global grid is still larger than `bottomExtent` on some axis, it MOVES onto
-  /// a new decomposition of its own grid and the ladder continues there. Only the REPLICATED
-  /// instantiation exists today — one block on every rank, `Allgatherv` — which is the degenerate
-  /// stage and the fallback; the sibling-merge and repartition stages of §5.6 are WO4b and land
-  /// behind the same interface without touching `vcycle`.
+  /// a new decomposition of its own grid and the ladder continues there. With the stage policy
+  /// disabled (the default) that is the REPLICATED tail — one block on every rank — exactly as WO4
+  /// built it. With it enabled, core's `chooseStageTarget` (amr's all-axes lift rule as the
+  /// predicate, the policy's `minExtent` / `maxBlockCells` verbatim) picks a sibling merge or a
+  /// repartition (`DistributedStage`), falling back to the replicated tail where nothing lifts
+  /// (a grid-limited level, whose grid is odd). A forced `Agglomerated` bottom on a ladder that
+  /// already reached `bottomExtent` keeps the replicated tail, as before.
   ///
   /// It runs AFTER the openness ladder, because what the stage carries over is that ladder's own α
   /// rows for the moved level — re-sampling the geometry at a coarsened cut face is not the same
@@ -329,11 +370,64 @@ class DistributedFlowMultigrid {
       bottomAmg_->build(lt.ap, singular);
       return;
     }
+    if (stagePolicy_.enabled && mx > bottomExtent_) {
+      namespace cd = core::decomp;
+      // amr's lift rule (§6.2) as core's predicate: the level grid halves into a cube level with at
+      // least two cells per axis, and every block is even in origin and size on EVERY axis.
+      auto liftable = [](const cd::BlockDecomposer<Dim>& dec) {
+        const IVec<Dim>& G = dec.globalSize();
+        for (int a = 0; a < Dim; ++a)
+          if ((G[a] % 2) != 0 || (G[a] / 2) < 2)
+            return false;
+        for (std::size_t b = 0; b < dec.numBlocks(); ++b)
+          for (int a = 0; a < Dim; ++a)
+            if ((dec.origins()[b][a] % 2) != 0 || (dec.sizes()[b][a] % 2) != 0)
+              return false;
+        return true;
+      };
+      const cd::StageTarget<Dim> t =
+          cd::chooseStageTarget(lt.d.decomposition(), stageFrom_, liftable, stagePolicy_.minExtent,
+                                stagePolicy_.maxBlockCells);
+      if (t.kind == cd::StageKind::SiblingMerge || t.kind == cd::StageKind::Repartition) {
+        using Topo = cd::RedistributeTopology<Dim, double>;
+        const int id =
+            static_cast<int>((levels_.size() - 1) % static_cast<std::size_t>(Topo::kTagSpan));
+        auto st = std::make_unique<DistributedStage<Dim, Bits>>();
+        st->build(lt.d, h0_, lt.ap, lt.n, t, id, bottomExtent_, stagePolicy_, bottomKind_,
+                  removeMean_);
+        stage_ = std::move(st);
+        return;
+      }
+    }
     auto tail = std::make_unique<ReplicatedTailStage<Dim, Bits>>();
     tail->build(lt.d, h0_, lt.ap, lt.n, lt.nExt, bottomExtent_, lt.comm);
     tail->setRemoveMean(removeMean_);
     tail->setBottom(bottomKind_);
     stage_ = std::move(tail);
+  }
+
+  /// Level `L`'s openness from its LOCAL rows (`numLeaves(L)·2·Dim`, face-major per leaf), the
+  /// ghost rows exchanged from their owners through that level's halo — the same one-time exchange
+  /// `coarsenOpennessTo` does for every coarser level. Collective on the level's communicator.
+  void setOpennessLocalRows(std::size_t L, const std::vector<double>& alphaLocal) {
+    Level& lv = *levels_[L];
+    const int F = 2 * Dim;
+    const Index nl = lv.n;
+    const Index ng = lv.hp->numGhosts();
+    if (static_cast<Index>(alphaLocal.size()) != nl * F)
+      throw std::invalid_argument(
+          "amr::DistributedFlowMultigrid::buildRaw: alpha must hold numLeaves()*2*Dim local rows");
+    std::vector<double> ca(static_cast<std::size_t>(nl + ng) * F, 1.0);
+    std::copy(alphaLocal.begin(), alphaLocal.end(), ca.begin());
+    std::vector<double> col(static_cast<std::size_t>(lv.nExt), 0.0);
+    for (int fi = 0; fi < F; ++fi) {
+      for (Index i = 0; i < nl; ++i)
+        col[static_cast<std::size_t>(i)] = ca[static_cast<std::size_t>(i) * F + fi];
+      lv.hp->exchangeHost(col);
+      for (Index g = 0; g < ng; ++g)
+        ca[static_cast<std::size_t>(nl + g) * F + fi] = col[static_cast<std::size_t>(nl + g)];
+    }
+    lv.ap.setOpennessRaw(std::move(ca));
   }
 
   void buildImpl(const DO& finest, const Vec<Dim>& h0, const LeafHalo<Dim, Bits>* shared0,
@@ -411,7 +505,7 @@ class DistributedFlowMultigrid {
     bool first = true;
     for (auto& lvp : levels_) {
       Level& lv = *lvp;
-      lv.comm = comm_;  // every level shares the parent's communicator until WO4b's sub-comms
+      lv.comm = comm_;  // the octree's communicator: a stage's sub-communicator for a continuation
       lv.n = lv.d.local().numLeaves();
       lv.ap.init(lv.d.local(), h0_);
       lv.ap.setOrigin(gorigin);
@@ -612,6 +706,231 @@ class DistributedFlowMultigrid {
   std::array<long, Dim> shift_{};
   std::vector<std::unique_ptr<Level>> levels_;
   bool removeMean_ = false;
+  StagePolicy stagePolicy_{};
+};
+
+/// A SIBLING-MERGE or REPARTITION stage (docs/amr_mg_depth.md §5.6, WO4b;
+/// docs/amr_mg_core_boundary.md §5): the moved level lands on a decomposition of its own grid on
+/// FEWER ranks — `agglomerated(d)` for a sibling merge, a fresh proportional ORB on the first np_L
+/// ranks for a repartition, both chosen by core's `chooseStageTarget` — and the ladder continues
+/// there as a `DistributedFlowMultigrid` on the stage's sub-communicator, with its own lockstep
+/// lifts, its own halos and, where it blocks again, its own stage.
+///
+/// Everything that moves is core's: `makeStageComm` for the communicators, one
+/// `RedistributeTopology` for the level's rows (group `Gatherv`/`Scatterv` for a sibling merge, a
+/// planned `Isend`/`Irecv` over the box intersections for a repartition). What stays here is what
+/// a level IS on the target — the octree (`DistributedOctree::initDecomposed`), its α rows carried
+/// over from the moved level rather than re-sampled, and the continued ladder built from them
+/// (`DistributedFlowMultigrid::buildRaw`).
+///
+/// Ranks that own no target block take part in the movement on the parent communicator and skip
+/// the recursion; they report the continued ladder's LEVEL COUNT and bottom (broadcast from parent
+/// rank 0, which always owns target block 0) and zero cells on every level.
+template <int Dim, unsigned Bits>
+class DistributedStage final : public MgStage<Dim, Bits> {
+ public:
+  using Base = MgStage<Dim, Bits>;                     ///< the stage interface
+  using Octree = typename Base::Octree;                ///< a level's cells on one block
+  using Decomposition = typename Base::Decomposition;  ///< the target partition's type
+  using DO = DistributedOctree<Dim, Bits>;             ///< the level the stage fires at
+  using Poisson = AmrPoisson<Dim, Bits>;               ///< that level's FV operator
+  using MG = DistributedFlowMultigrid<Dim, Bits>;      ///< the continued ladder
+  using Policy = typename MG::StagePolicy;             ///< inherited by the continued ladder
+
+  /// Build the stage from the level it fires at (`d`, `ap`, `n` as for `ReplicatedTailStage`)
+  /// onto `target`, a `SiblingMerge` or `Repartition` result of `chooseStageTarget` on
+  /// `d.decomposition()`. `id` is the per-topology tag offset core's point-to-point movement needs
+  /// (in `[0, RedistributeTopology::kTagSpan)`). The continued ladder inherits `policy`, `bottom`
+  /// and `removeMean`. Collective on `d.comm()`.
+  ///
+  /// @throws std::runtime_error if an axis is not periodic or this rank's leaves are not the root
+  ///         cells of its block (the lift is not nested) — before any communication; core's
+  ///         `makeStageComm` / `RedistributeTopology::build` throw on a malformed target.
+  void build(const DO& d, const Vec<Dim>& h0, const Poisson& ap, Index n,
+             const core::decomp::StageTarget<Dim>& target, int id, Index bottomExtent,
+             const Policy& policy, typename Multigrid<Dim, Bits>::Bottom bottom, bool removeMean) {
+    namespace cd = core::decomp;
+    if (target.kind != cd::StageKind::SiblingMerge && target.kind != cd::StageKind::Repartition)
+      throw std::invalid_argument(
+          "amr::DistributedStage: only sibling-merge and repartition targets continue a "
+          "distributed ladder");
+    for (int a = 0; a < Dim; ++a)
+      if (!d.periodic()[a])
+        throw std::runtime_error(
+            "amr::DistributedStage: periodic-only (as the whole distributed pressure path is)");
+    Index blockCells = 1;
+    for (int a = 0; a < Dim; ++a)
+      blockCells *= d.blockBrick()[a];
+    if (n != blockCells || n != d.local().numLeaves())
+      throw std::runtime_error(
+          "amr::DistributedStage: the moved level does not tile its block with root cells (the "
+          "lift is not nested)");
+    parent_ = d.comm();
+    target_ = target;
+    n_ = n;
+    comm_ = cd::makeStageComm<Dim>(parent_, target_);
+    if (comm_.active)
+      tdo_.initDecomposed(target_.dec, d.lmax(), d.globalGeometry(), d.periodic(), comm_.sub);
+    nT_ = comm_.active ? tdo_.local().numLeaves() : 0;
+
+    auto srcIndex = [&](const IVec<Dim>& g) -> Index {
+      const Index i = d.findGlobalRoot(g);
+      if (i < 0 || d.local().level(i) != d.lmax())
+        throw std::runtime_error(
+            "amr::DistributedStage: a cell of this rank's block is not one of its root leaves (the "
+            "lift is not nested)");
+      return i;
+    };
+    auto dstIndex = [&](const IVec<Dim>& g) -> Index { return tdo_.findGlobalRoot(g); };
+    topo_.build(d.decomposition(), target_, comm_, srcIndex, dstIndex, id);
+
+    // The moved level's α rows, one field per face, onto the target block.
+    const int F = 2 * Dim;
+    const std::vector<double>& aloc = ap.opennessRaw();
+    std::vector<std::vector<double>> aCol(static_cast<std::size_t>(F),
+                                          std::vector<double>(static_cast<std::size_t>(n), 1.0));
+    if (!aloc.empty())
+      for (Index i = 0; i < n; ++i)
+        for (int f = 0; f < F; ++f)
+          aCol[static_cast<std::size_t>(f)][static_cast<std::size_t>(i)] =
+              aloc[static_cast<std::size_t>(i) * F + static_cast<std::size_t>(f)];
+    std::vector<std::vector<double>> tCol(static_cast<std::size_t>(F),
+                                          std::vector<double>(static_cast<std::size_t>(nT_), 1.0));
+    std::vector<const double*> aSrc(static_cast<std::size_t>(F));
+    std::vector<double*> aDst;
+    for (int f = 0; f < F; ++f)
+      aSrc[static_cast<std::size_t>(f)] = aCol[static_cast<std::size_t>(f)].data();
+    if (comm_.active)
+      for (int f = 0; f < F; ++f)
+        aDst.push_back(tCol[static_cast<std::size_t>(f)].data());
+    topo_.forward(aSrc, aDst);
+
+    cont_.reset();
+    if (comm_.active) {
+      std::vector<double> aT(static_cast<std::size_t>(nT_) * F);
+      for (Index r = 0; r < nT_; ++r)
+        for (int f = 0; f < F; ++f)
+          aT[static_cast<std::size_t>(r) * F + static_cast<std::size_t>(f)] =
+              tCol[static_cast<std::size_t>(f)][static_cast<std::size_t>(r)];
+      cont_ = std::make_unique<MG>();
+      cont_->setStagePolicy(policy);
+      cont_->setBottom(bottom);  // before build: only stored
+      cont_->buildRaw(tdo_, h0, aT, /*liftRoot=*/true, bottomExtent);
+      cont_->setRemoveMean(removeMean);
+    }
+    publish();
+
+    dSrc_ = View<double>("dstage_src", static_cast<std::size_t>(n));
+    dDst_ = View<double>("dstage_dst", static_cast<std::size_t>(n));
+    dT_ = View<double>("dstage_t", static_cast<std::size_t>(nT_));
+    srcMirror_ = Kokkos::View<double*, Kokkos::HostSpace>("dstage_hs", static_cast<std::size_t>(n));
+    dstMirror_ = Kokkos::View<double*, Kokkos::HostSpace>("dstage_hd", static_cast<std::size_t>(n));
+    tMirror_ = Kokkos::View<double*, Kokkos::HostSpace>("dstage_ht", static_cast<std::size_t>(nT_));
+  }
+
+  const char* kind() const override {
+    return target_.kind == core::decomp::StageKind::SiblingMerge ? "sibling" : "repartition";
+  }
+  const char* diagnosticSuffix() const override {
+    return target_.kind == core::decomp::StageKind::SiblingMerge ? "+sibling" : "+repartition";
+  }
+  const Decomposition& targetDecomposition() const override { return target_.dec; }
+  MPI_Comm targetComm() const override { return comm_.sub; }
+  bool active() const override { return comm_.active; }
+  const Octree& targetOctree() const override { return tdo_.local(); }
+
+  std::size_t numLevels() const override { return numLevels_; }
+  Index numLeaves(std::size_t L) const override {
+    if (!cont_)
+      return 0;
+    const std::size_t k = cont_->numInPlaceLevels();
+    return L < k ? cont_->numLeaves(L) : cont_->stageLeaves(L - k);
+  }
+  std::string bottomName() const override { return bottomName_; }
+  void setRemoveMean(bool on) override {
+    if (cont_)
+      cont_->setRemoveMean(on);
+  }
+  /// Collective on the PARENT communicator (it re-publishes the continued ladder's shape, which a
+  /// bottom change may alter by building or dropping the continuation's own stage).
+  void setBottom(typename Multigrid<Dim, Bits>::Bottom b) override {
+    if (cont_)
+      cont_->setBottom(b);
+    publish();
+  }
+  View<double> targetX() override { return cont_ ? cont_->x(0) : View<double>(); }
+
+  /// The continued ladder (active ranks only). @pre `active()`.
+  MG& multigrid() { return *cont_; }
+
+  void moveUp(View<const double> src, Index nSrc) override {
+    auto ds = dSrc_;
+    Kokkos::parallel_for(
+        "amr::dstage_pack", nSrc, KOKKOS_LAMBDA(const Index i) { ds(i) = src(i); });
+    Kokkos::deep_copy(srcMirror_, dSrc_);
+    std::vector<double*> to;
+    if (comm_.active)
+      to.push_back(tMirror_.data());
+    topo_.forward({srcMirror_.data()}, to);
+    if (comm_.active) {
+      Kokkos::deep_copy(dT_, tMirror_);
+      auto b = cont_->b(0);
+      auto t = dT_;
+      Kokkos::parallel_for("amr::dstage_b", nT_, KOKKOS_LAMBDA(const Index i) { b(i) = t(i); });
+      Kokkos::deep_copy(cont_->x(0), 0.0);
+    }
+  }
+
+  void cycle(int pre, int post, int bottom, double omega) override {
+    cont_->vcycle(pre, post, bottom, omega);
+  }
+
+  void moveDown(View<double> dst, Index nDst) override {
+    std::vector<const double*> from;
+    if (comm_.active) {
+      auto x = cont_->x(0);
+      auto t = dT_;
+      Kokkos::parallel_for("amr::dstage_x", nT_, KOKKOS_LAMBDA(const Index i) { t(i) = x(i); });
+      Kokkos::deep_copy(tMirror_, dT_);
+      from.push_back(tMirror_.data());
+    }
+    topo_.backward(from, {dstMirror_.data()});
+    Kokkos::deep_copy(dDst_, dstMirror_);
+    auto dd = dDst_;
+    Kokkos::parallel_for(
+        "amr::dstage_scatter", nDst, KOKKOS_LAMBDA(const Index i) { dst(i) = dd(i); });
+  }
+
+ private:
+  /// The continued ladder's level count and bottom name, from parent rank 0 (always active) to
+  /// every rank, so the diagnostics read alike everywhere. Collective on the parent communicator.
+  void publish() {
+    long long nl = 0;
+    std::string nm;
+    if (cont_) {
+      nl = static_cast<long long>(cont_->numInPlaceLevels() + cont_->numStageLevels());
+      nm = cont_->bottomName();
+    }
+    MPI_Bcast(&nl, 1, MPI_LONG_LONG, 0, parent_);
+    int len = static_cast<int>(nm.size());
+    MPI_Bcast(&len, 1, MPI_INT, 0, parent_);
+    nm.resize(static_cast<std::size_t>(len));
+    MPI_Bcast(nm.data(), len, MPI_CHAR, 0, parent_);
+    numLevels_ = static_cast<std::size_t>(nl);
+    bottomName_ = nm;
+  }
+
+  MPI_Comm parent_ = MPI_COMM_NULL;
+  core::decomp::StageTarget<Dim> target_;
+  core::decomp::StageComm comm_;  // owns group/sub; outlives topo_'s use and cont_'s halos
+  core::decomp::RedistributeTopology<Dim, double> topo_;
+  DO tdo_;                    // the moved level on this rank's target block (active only)
+  std::unique_ptr<MG> cont_;  // the continued ladder on comm_.sub (active only)
+  Index n_ = 0, nT_ = 0;
+  std::size_t numLevels_ = 0;
+  std::string bottomName_;
+  View<double> dSrc_, dDst_, dT_;
+  Kokkos::View<double*, Kokkos::HostSpace> srcMirror_, dstMirror_, tMirror_;
 };
 
 }  // namespace peclet::amr

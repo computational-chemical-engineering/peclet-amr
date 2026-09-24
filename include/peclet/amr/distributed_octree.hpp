@@ -32,6 +32,7 @@
 #include <cstdint>
 #include <cstring>
 #include <map>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -72,6 +73,39 @@ class DistributedOctree {
     rootSpan_ = Index(1) << lmax_;
 
     dec_.init(static_cast<std::size_t>(size_), globalRootSize_);
+    auto blk = dec_.block(static_cast<std::size_t>(rank_));
+    blockOriginRoot_ = blk.origin;
+    blockBrick_ = blk.size;
+    for (int d = 0; d < Dim; ++d) {
+      blockFineOrigin_[d] = blockOriginRoot_[d] * rootSpan_;
+      blockFineSize_[d] = blockBrick_[d] * rootSpan_;
+      globalFineSize_[d] = globalRootSize_[d] * rootSpan_;
+    }
+    local_.init(blockBrick_, lmax_, blockOriginRoot_);
+  }
+
+  /// As `init`, but on a GIVEN decomposition of the global root grid `dec.globalSize()` instead of
+  /// the proportional ORB `init` builds: rank r of `comm` owns block r of `dec`, and its local
+  /// octree is that block's root cells, uniform at level `lmax`. This is how a multigrid stage
+  /// (docs/amr_mg_depth.md §6.5) builds the moved level on its target decomposition — a sibling
+  /// merge's `agglomerated(d)` or a repartition's fresh ORB — on the stage's sub-communicator.
+  /// Collective-free; `comm` is only queried for rank and size.
+  ///
+  /// @throws std::invalid_argument if `dec` does not have one block per rank of `comm`.
+  void initDecomposed(const decomp::BlockDecomposer<Dim>& dec, unsigned lmax,
+                      AmrGeometry<Dim> globalGeo, std::array<bool, Dim> periodic, MPI_Comm comm) {
+    comm_ = comm;
+    MPI_Comm_rank(comm_, &rank_);
+    MPI_Comm_size(comm_, &size_);
+    if (dec.numBlocks() != static_cast<std::size_t>(size_))
+      throw std::invalid_argument(
+          "amr::DistributedOctree::initDecomposed: the decomposition needs one block per rank");
+    globalRootSize_ = dec.globalSize();
+    lmax_ = lmax;
+    globalGeo_ = globalGeo;
+    periodic_ = periodic;
+    rootSpan_ = Index(1) << lmax_;
+    dec_ = dec;
     auto blk = dec_.block(static_cast<std::size_t>(rank_));
     blockOriginRoot_ = blk.origin;
     blockBrick_ = blk.size;
