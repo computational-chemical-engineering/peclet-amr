@@ -96,12 +96,17 @@ across the suite:
   'multigrid' | 'chebyshev')`. `amr`: four booleans that interact — `set_momentum_mg`,
   `set_momentum_gs`, `set_velocity_mg_staircase`, `set_momentum_mg_solver` — where some
   combinations are meaningless. Collapse them the way `flow` did.
-- **A′2 — the pressure DRIVER is not selectable from Python.** `setPressurePCG` exists in C++
-  (`flow.hpp:551`) and is **unbound**. `flow` exposes `set_pressure_pcg / set_pressure_fcg /
-  set_pressure_chebyshev / set_pressure_bottom`. The tolerances are bound since §A4
-  (`set_pressure_tolerance`, `set_momentum_tolerance`) and the bottom since C1 — public, with
-  `flow`'s spellings, since 2026-09-24 (`Flow.set_pressure_bottom(mode=)`,
-  `set_pressure_bottom_extent(cells=)`, `predict_hierarchy`; `amr_mg_depth.md` §11.6).
+- **A′2 — the pressure DRIVER is selectable from Python** — **DONE 2026-09-24.**
+  `Flow.set_pressure_pcg(on)`, public as in `flow`: `True` (default) the MG-PCG, `False` the
+  bounded stationary V-cycle (`setPressurePCG`). Inert under the ghost projection (BiCGStab).
+  `python/test_amr.py` projects one field with each driver on a graded mesh and requires the same
+  velocity. Two differences from `flow`'s `set_pressure_pcg(on, max_iter, rtol)` remain, both
+  because `amr` has what `flow` lacks: `on=False` selects the V-cycle where `flow` raises (it has
+  no stationary driver), and the cap and tolerance stay `pres_iters` / `set_pressure_tolerance`.
+  The tolerances are bound since §A4 and the bottom since C1 — public, with `flow`'s spellings,
+  since 2026-09-24 (`Flow.set_pressure_bottom(mode=)`, `set_pressure_bottom_extent(cells=)`,
+  `predict_hierarchy`; `amr_mg_depth.md` §11.6). `flow`'s FCG and Chebyshev drivers have no `amr`
+  counterpart.
 - **A′3 — condition-number auto-selection.** `flow` picks RB-GS vs V-cycle from
   κ = 1 + 4·dt·µ·Σw/ρ. `amr` always runs the MG-preconditioned BiCGStab, which is the right default
   at large dt and probably over-solves at small dt — that is plausibly part of the §C1 cost. Worth

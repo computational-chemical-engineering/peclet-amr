@@ -278,6 +278,55 @@ if rank == 0:
     rel2 = np.abs(uy2[inside] - u_par).max() / u_par.max()
     check(rel2 < 1e-6, f"Poiseuille with advection off parabola (rel err {rel2:.2e})")
 
+    # ---- The pressure DRIVER (Flow.set_pressure_pcg): MG-PCG vs the stationary V-cycle ----
+    # Both drivers solve the SAME pressure equation of the aperture projection, so the aperture
+    # scheme is pinned (the ghost projection solves its operator by BiCGStab whatever the flag
+    # says). One non-solenoidal field is projected by each on a GRADED periodic octree (2:1
+    # interfaces in the pressure operator), all fluid, so the right-hand side is compatible and
+    # the V-cycle converges too (~10x per cycle; stationary at round-off by 40 cycles). The
+    # velocities must agree to the solve tolerance: PCG stops at set_pressure_tolerance's default
+    # 1e-10, and the measured difference is 1.3e-11 of max|u0| -- the gate is 1e-9.
+    def driver_case(pcg, ghost=False):
+        t = core_amr.Octree(cells=[16, 16, 16], lmax=1, origin=[0, 0, 0], extent=[1.0, 1.0, 1.0])
+        t.refine_to_sphere([0.5, 0.5, 0.5], 0.25, 0, 1.0)
+        f = core_amr.Flow(t, density=1.0, viscosity=1.0, dt=1e6)
+        f.set_ghost_projection(ghost)
+        if pcg is not None:
+            f.set_pressure_pcg(pcg)
+        f.set_solid(lambda x, y, z: 1.0)  # no solid: every leaf is fluid
+        c = t.centers()
+        tp = 2.0 * np.pi
+        u0 = np.stack([np.sin(tp * c[:, 0]) * np.cos(tp * c[:, 1]),
+                       np.sin(tp * c[:, 1]) * np.cos(tp * c[:, 2]) + 0.5 * np.cos(tp * c[:, 0]),
+                       np.sin(tp * c[:, 2]) * np.cos(tp * c[:, 0])], axis=1)
+        for k in range(3):
+            f.set_velocity(k, np.ascontiguousarray(u0[:, k]))
+        f.project(pres_iters=60)
+        return t, f, u0
+
+    tP, fP, u0 = driver_case(True)
+    _, fV, _ = driver_case(False)
+    _, fD, _ = driver_case(None)                      # the default must be MG-PCG
+    check(np.unique(tP.levels()).size == 2, "driver case: the octree is not graded")
+    itP, itV = fP.diagnostics.last_pres_iters(), fV.diagnostics.last_pres_iters()
+    check(itP < 60, f"MG-PCG did not converge within the cap ({itP} iterations)")
+    check(itV == 60, f"the stationary V-cycle ran {itV} cycles, not exactly pres_iters = 60")
+    uP, uV = fP.velocities(), fV.velocities()
+    dP = np.abs(uP - uV).max() / np.abs(u0).max()
+    print(f"    pressure driver: MG-PCG {itP} it, V-cycle {itV} cycles -> max|u_pcg - u_vc| / "
+          f"max|u0| = {dP:.2e}; face divergence {fP.diagnostics.divergence_norm_face():.1e} / "
+          f"{fV.diagnostics.divergence_norm_face():.1e}")
+    check(dP < 1e-9, f"MG-PCG and the V-cycle disagree on the projected velocity ({dP:.2e})")
+    for name, fx in (("MG-PCG", fP), ("V-cycle", fV)):
+        check(fx.diagnostics.divergence_norm_face() < 1e-6,
+              f"{name}: the projected face field is not divergence-free")
+    check(np.array_equal(fD.velocities(), uP), "the default driver is not MG-PCG")
+    # Under the ghost projection the flag is inert: bit-identical results either way.
+    _, gP, _ = driver_case(True, ghost=True)
+    _, gV, _ = driver_case(False, ghost=True)
+    check(np.array_equal(gP.velocities(), gV.velocities()),
+          "set_pressure_pcg changed a ghost-projection result")
+
     # ------------------------------------------------------------------------------------------
     # Solution-adaptive AMR: a planar tanh front. The Löhner indicator localizes the front; adapt
     # refines there and coarsens the (flat) far field, conserving the field under the remap.

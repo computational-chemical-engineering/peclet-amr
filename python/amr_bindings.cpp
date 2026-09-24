@@ -556,6 +556,9 @@ class Flow : public Releasable {
 
   void set_outer_iterations(int n, double tol) { flow_.setOuterIterations(n, tol); }
   void set_pressure_tolerance(double rtol) { flow_.setPressureTol(rtol); }
+  // The pressure DRIVER of the aperture projection: MG-PCG (true, the default) or the bounded
+  // stationary V-cycle (false) -- flow's `set_pressure_pcg` spelling and tier (ROADMAP A'2).
+  void set_pressure_pcg(bool on) { flow_.setPressurePCG(on); }
   void set_momentum_tolerance(double rtol) { flow_.setMomentumTol(rtol); }
   // §6.6/§11.4: what solves the coarsest pressure level, and where the ladder hands over to it --
   // flow's spellings and tier (NAMING.md §1.8). The MODE takes effect at once (the bottom is
@@ -1243,6 +1246,25 @@ NB_MODULE(_amr, m) {
            "2026-09-21, so leaving it alone reproduces every earlier result. The iteration CAP is "
            "step()'s `pres_iters`; this is the accuracy it works to, and loosening it is the "
            "cheapest cost knob in the step.")
+      .def("set_pressure_pcg", &Flow::set_pressure_pcg, nb::arg("on"),
+           "The pressure-solve DRIVER of the aperture projection. on=True (THE DEFAULT) is "
+           "MG-preconditioned conjugate gradients: one V-cycle of the pressure multigrid "
+           "preconditions CG, the fluid-mean component of the residual is removed every iteration "
+           "(an aperture cut-cell right-hand side is incompatible by exactly that component), and "
+           "the solve stops at set_pressure_tolerance or at step()'s / project()'s `pres_iters`. "
+           "on=False is the bounded stationary V-cycle: exactly `pres_iters` V-cycles, with no "
+           "tolerance test and no mean removal, so on cut-cell geometry its residual STALLS at "
+           "the incompatible component instead of converging. Both solve the same pressure "
+           "equation, so where both converge they give the same projected velocity to the solve "
+           "tolerance; the choice moves cost and robustness, not the answer. Leave it on: "
+           "on=False exists to A/B the driver on a compatible problem. It has NO effect under the "
+           "ghost projection -- the default scheme -- whose nonsymmetric operator is always "
+           "solved by MG-preconditioned BiCGStab; it acts with set_ghost_projection(False) or "
+           "where the default fell back to the aperture projection. flow's "
+           "`Solver.set_pressure_pcg` is the same selector, but flow has no stationary driver "
+           "(on=False raises there) and takes the cap and tolerance as its max_iter / rtol "
+           "arguments. Takes effect at the next step()/project(); on a DISTRIBUTED Flow pass "
+           "the same value on every rank.")
       .def("set_momentum_tolerance", &Flow::set_momentum_tolerance, nb::arg("rtol"),
            "Relative tolerance of the per-component MOMENTUM solve (BiCGStab, MG-preconditioned "
            "by default). Default 1e-8. At the large dt used for steady drag the momentum operator "

@@ -209,7 +209,10 @@ Header-only under `include/peclet/amr/` (namespace `peclet::amr`; `common.hpp` c
   `kind=` / `extent=`, and `predict_pressure_hierarchy`). `cells=` there is a count of cells per
   axis on the coarsest grid, the one exemption from "never add cell-unit API" (`../docs/NAMING.md`
   §1.8). `predict_hierarchy` keeps amr's canonical arguments (`cells`, `lmax`, `num_ranks`,
-  `bottom_extent`); `flow`'s `gnx, gny, gnz, np, …` are flow's own open NAMING row. The two int
+  `bottom_extent`); `flow`'s `gnx, gny, gnz, np, …` are flow's own open NAMING row. The pressure
+  DRIVER is `flow`'s public `set_pressure_pcg(on)`, but `on=False` selects amr's stationary
+  V-cycle (flow has none and raises) and the cap / tolerance stay `pres_iters` /
+  `set_pressure_tolerance` rather than flow's `max_iter` / `rtol` arguments. The two int
   selectors are NAMING items; do not copy either side's spelling into a third code without reading
   `../docs/NAMING.md`.
 - Design notes (`docs/`, indexed by `docs/README.md`): `ROADMAP.md` (the one page of live items —
