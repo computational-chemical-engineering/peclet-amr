@@ -253,8 +253,8 @@ WO4b has not started. Aim it at core:
 | S1 | core | `chooseStageTarget`, `makeStageComm`, `RedistributePlan` (Replicated + SiblingMerge kinds), `gatherByGlobalId`; unit tests np = 1…8 with **flow's inline code and amr's `ReplicatedTailStage` as the two reference implementations the tests must reproduce bitwise** (a Kokkos-free host test: box grids, random fields, `backward(forward(x)) == x`, nested == `Gatherv` values, replicated == `Allgatherv` values) | core ctests green; core tagged before any consumer (directive) |
 | S2 | core | `RedistributePlan` general kind (planned point-to-point) + aligned weighted `init` | plan test on a weighted partition; `init(w, align=1)` bit-identical to `init(w)`; `coarsened()` nests for `log2(align)` levels on a weighted tree |
 | S3 | amr (WO4b) | `ReplicatedTailStage` movement → plan (bitwise vs WO4's tail test); sibling + repartition stages on `sub`-comm `DistributedFlowMultigrid` | `amr_mg_depth.md` WO4b gate: weighted 24³-brick partition, np = 2/4/8, single-rank ladder and solution to ≤ 1e-13, np-independent iterations. **Built 2026-09-24, gate passed** (`amr_mg_depth.md` WO4b as built: ladder = single-rank, 1.6e-16 at L0 / bitwise below, 15 = 15 iterations at np = 2/4/8); `rebalance` through `chooseAlignedWeighted`. §9.6–§9.7 decided the same day and the policy is **ON by default** (measured no slower anywhere, up to 1.9× faster at np = 8). |
-| S4 | flow | `Telescope` delegates to S1 (policy + comms + movement) | byte-identical (§7) |
-| S5 | flow + coupling | `Repartition` kind for weighted `dec0`; `rebalanceByWeights` and `coupling.rebalance()` through the aligned weighted `init` | the CFD-DEM MPI tests; iteration count after `rebalance()` equal to before it ± 1; the §9.1 measurement closed |
+| S4 | flow | `Telescope` delegates to S1 (policy + comms + movement) | byte-identical (§7) — **DONE 2026-09-24** (§11.9) |
+| S5 | flow + coupling | `Repartition` kind for weighted `dec0`; `rebalanceByWeights` and `coupling.rebalance()` through the aligned weighted `init` | the CFD-DEM MPI tests; iteration count after `rebalance()` equal to before it ± 1; the §9.1 measurement closed — **Repartition half DONE; aligned half BLOCKED on a dem API** (§11.9) |
 | S6 | suite | register entry (§10), `ARCHITECTURE.md` core-module list gains the stage line, `MG_TELESCOPING_PLAN.md` status note | — |
 
 S1 is small (~300–400 lines plus tests) and unblocks S3 and S4 in parallel. Ownership: S1/S2 are
@@ -576,3 +576,64 @@ Heap passes the corrected gate and the original ≤ 0.104 s. Tilt 0.3 sits on th
 the scatter of its own unweighted ratio (0.98–1.13), with a clean ladder to the bottom. Iterations
 8 → 8 throughout. The flow wiring used to measure S2a and S2b lives only on throwaway branches
 (`s2a-probe`, `s2b-probe`); S4/S5 do it properly.
+
+### 11.9 S4 and S5 as built and measured (2026-09-24)
+
+**S4 (flow `4da7171`, `84aaa62`), two commits as §7 orders, byte-identical.** `CutcellMG::initMpi`
+and `predict()` call `chooseStageTarget` with flow's lift rule (`CutcellMG::teleLiftable`) and
+`maxBlockCells = 0`; the test-only forced telescope calls `shallowestLiftableMerge`; the
+communicators are `makeStageComm` (`Telescope` owns a `StageComm`); the gather / scatter is one
+`RedistributeTopology` per stage. Flow keeps the scatter's ADD (core's `backward` overwrites) and the
+WO-R2 outflow ghost-plane gather. Gate, against a build of the unmodified tree on the same core
+headers: `predict_hierarchy` over 4 560 configurations (the 384³ ladder 24…1536 among them)
+JSON-identical; Solver end states `np.array_equal` at np = 1/2/4 (and 8 for the weighted cases) over
+seven telescoping cases — periodic, weighted L1 and L0 collapse, inflow/outflow planes across L1/L0
+stages, solid cutting the outlet, collocated; `test_telescope_mpi`'s solutions (forced, starved)
+dumped raw, 26/26 bit-identical; the full battery 160/160 on both trees with identical printed
+numbers except timing and three run-to-run OpenMP-reduction digits that the reference itself varies.
+No core API friction: the fallback (§7, policy left in flow) was not needed.
+
+**S5, Repartition half (flow `d907c57`, `e8bb35a`).** `CutcellMG::setRepartition(bool)`, default
+OFF; the Solver sets it only for a weighted `dec0` (after `rebalanceByWeights`; reset by `initMpi`),
+so a run that never rebalances is unchanged. `maxBlockCells = largestBlockCells(level-0 dec)`. The
+WO-R2 outflow plane across a Repartition stage is flow's own `MPI_Alltoallv` over the transverse box
+intersections. A Repartition computes the same bits as the collapse it replaces (the coarse
+arithmetic is pointwise): end states identical to the collapse at np = 2/4/8, including the
+outflow case. `test_telescope_mpi` gate D (odd root split, np = 2/4: a Repartition stage, 7 iters as
+single-rank, 2–4e-13 from single-rank). The source comment at the old `mac_cutcell_mg.hpp:513–517`
+is corrected with the measured numbers.
+
+**G-B3 / G-B4 on the flow probe** (96³, 15 steps, median (min–max) of 5 runs, ranks pinned one per
+core pair on cores 8–23 by a `taskset` wrapper; the host carried another session's unpinned
+8-process job, which produces the outliers): projection ÷ momentum after the rebalance, against the
+unweighted ratio of the same run.
+
+| np, levels, tilt | unweighted | collapse (today) | Repartition only (landed) | aligned + Repartition (not landed) |
+|---|---|---|---|---|
+| 4, 8, 0.5 | 0.99 | 1.58 (1.47–3.69) | 1.10 (1.05–1.12) | 1.06 (1.05–1.08), `a = 2` |
+| 4, 4, 0.5 | 1.04 | 1.56 (1.42–1.58) | 1.10 (1.07–1.13) | 1.11 (1.09–1.13), `a = 2` |
+| 8, 8, 0.5 | 0.97 | 1.87 (1.68–2.44) | 1.05 (1.04–1.11) | 1.02 (1.01–1.05), `a = 2` |
+| 8, 4, 0.5 | 1.03 | 1.77 (1.76–1.96) | 1.09 (1.05–3.43) | 1.06 (1.01–2.45), `a = 2` |
+| 8, 8, 0.3 | 1.00 | 1.30 (1.19–4.65) | 1.00 (0.98–1.03) | 1.05 (1.04–1.14), `a = 1` |
+
+Iterations 8 → 8 everywhere. Against the corrected gate (within 10 % of the unweighted ratio) the
+Repartition half passes in four rows and sits at +13 % in the first (np = 4, depth 8); G-B4 (both
+pieces, ≤ 1.15×) passes in every row but needs the aligned half.
+
+**Coupled CFD-DEM (the §9.1 closure on this box).** `CfdDem` (porous default, fixed heap of 26k
+particles, 48³), 8 steps before and after `rebalance()`, 5 seeds × np = 4/8, pinned as above, with
+no-rebalance controls: iterations after = before ± 1 (np = 4: 9.00 → 9.67 settled, control 9.00 →
+9.33; np = 8: 10.27 → 9.70) and identical between the collapse and Repartition builds; projection ÷
+momentum after the rebalance 0.60 / 0.69 collapsed, 0.41 / 0.37 with Repartition, 0.33 / 0.34
+unweighted. Coupling's MPI tests pass at np = 1/2/4 except `test_mpi_moving_suspension` at np = 4,
+which deadlocks inside dem (ranks split between `MPI_Waitall` and `MPI_Allreduce`) with the
+unmodified flow and with a dem build of 2026-09-12 alike — pre-existing, not this work. Not
+measured: np ≥ 16, GPU.
+
+**The aligned half is blocked, not built into main.** `rebalanceByWeights` through
+`chooseAlignedWeighted` is on flow branch `s5-aligned-rebalance` (measured above) and cannot land
+alone: `CfdDem.rebalance()` and every moving step hand dem the same weights
+(`dem.migrate_to_weights(w)`), and dem builds the plain weighted ORB from them, so flow and dem would
+own different blocks. dem needs to build the same aligned partition — an `align` (or split-position)
+argument on its migration call, a public dem name — and `check_decomposition.py --predict` needs the
+weights to log `a` (a `weights=` keyword on `predict_hierarchy`). Both are decisions for the owner.
