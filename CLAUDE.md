@@ -153,7 +153,9 @@ Header-only under `include/peclet/amr/` (namespace `peclet::amr`; `common.hpp` c
   own grid — only the replicated instantiation exists today — and where the ladder runs out above
   `bottomExtent` the bottom is an agglomerated `GraphAMG`-PCG solve (`amg_bottom.hpp`,
   `Flow.diagnostics.set_pressure_bottom`). The momentum path is NOT lifted (`liftRoot = false`,
-  guarded by `minCoarse`) until that work order lands.
+  guarded by `minCoarse`) until WO8 of `amr_mg_depth.md` §9 lands. `predictPressureLadder`
+  (`mg_predict.hpp`, Python `predict_pressure_hierarchy`) is the ladder rule as a pure function;
+  tests assert the built ladder against it, never against a literal level count.
   Cut-cell openness is `cut_cell.hpp` (host oracle assembly) with `assembly.hpp`,
   `momentum_assembly.hpp`, `facegeom_assembly.hpp` / `face_geom.hpp` the device builders;
   `cf_scheme.hpp` the quadratic coarse/fine schemes; `scalar_transport.hpp` + `advect_recon.hpp`
@@ -188,17 +190,25 @@ Header-only under `include/peclet/amr/` (namespace `peclet::amr`; `common.hpp` c
   FINEST grid, as in flow; the root brick is `cells / 2**lmax`; the 16 members the two share are
   bound ONCE by `bindOctreeCommon<T>`), `Poisson`, and `Flow` over the device `AmrFlow`. **Two API
   tiers** (QUALITY_PLAN D2): the public surface is what a user needs to set up, run and read out a
-  simulation; `Flow.diagnostics` (a view holding a reference to the Flow — `last_mom_iters`,
-  `last_pres_iters`, `last_outer_iters`, `divergence_norm_face`, and the solver-internals /
+  simulation; `Flow.diagnostics` (a view holding a reference to the Flow — the instruments
+  `last_mom_iters`, `last_pres_iters`, `last_outer_iters`, `divergence_norm_face`,
+  `face_topology`, `num_cf_cut_faces`, `num_seam_sample_records`, `num_seam_layer_records`,
+  `pressure_mg_levels`, `pressure_mg_bottom`, `pressure_bottom_extent`; and the solver-internals /
   ablation switches `set_momentum_mg`, `set_momentum_gs`, `set_velocity_mg_staircase`,
-  `set_momentum_mg_solver`, `set_ghost_gradient`, `set_aperture_order`, `set_uf_advection`, `set_seam_reconstruction`) is what
-  a developer uses to inspect or ablate. Two of the scheme selectors take an INT —
+  `set_momentum_mg_solver`, `set_ghost_gradient`, `set_aperture_order`, `set_uf_advection`,
+  `set_seam_reconstruction`, `set_pressure_bottom`, `set_pressure_bottom_extent`) is what a
+  developer uses to inspect or ablate. Every switch there has a production default; its docstring
+  says what it is and why the switch exists. Two of the scheme selectors take an INT —
   `set_cf_scheme(0 = standard | 1 = quadratic)`, **before `set_solid`**, which is where the C/F
   overlays are built, and `set_advection_scheme(0 = SOU | 1 = Koren)`. That is a **divergence from
   `flow`, not a convention to copy**: `../docs/NAMING.md` wants one spelling per concept and `flow`
   spells these as strings. New selectors take a STRING — `set_pressure_bottom("auto" | "smoother" |
-  "agglomerated")` is `flow`'s spelling, verbatim. The two int ones are a NAMING item.
-- Design notes (`docs/`): `ROADMAP.md` (the one page of live items — **start here**),
+  "agglomerated")` takes `flow`'s strings verbatim — but its keyword is `kind` where `flow`'s is
+  `mode`, `set_pressure_bottom_extent`'s is `extent` where `flow`'s is `cells`, and `flow` binds
+  both on its public tier. The two int selectors and those keyword/tier differences are NAMING
+  items; do not copy either side's spelling into a third code without reading `../docs/NAMING.md`.
+- Design notes (`docs/`, indexed by `docs/README.md`): `ROADMAP.md` (the one page of live items —
+  **start here**),
   `amr_flow_uniform_parity.md` (what this solver shares with `peclet.flow`'s collocated solver at
   `lmax = 0`, measured cell by cell, and the two places it does not),
   `amr_mg_depth.md` (ROADMAP C1: what a multigrid level below the root brick IS, the lockstep lift,
@@ -209,8 +219,12 @@ Header-only under `include/peclet/amr/` (namespace `peclet::amr`; `common.hpp` c
   advection), `amr_tg_graded.md` (the graded time-accurate benchmark: second order in an unsteady
   flow, and why the C/F pressure-increment leak does not need fixing) with its design/verdict note
   `amr_pressure_iteration.md`, `amr_cf_convective.md` (the advected value at a 2:1 seam —
-  level-aware upwind probes, and why what remains is intrinsic), `amr_mixed_level_cut_band_plan.md`, `amr_setup_parallel_plan.md` (the parallel
-  builders, D1′), `amr_anisotropic.md` (per-axis root spacing). The dated campaign records are in
+  level-aware upwind probes, and why what remains is intrinsic), `amr_cf_flux_gate.md` (the C/F
+  face-value delta gated per FACE, so `uf` stays a flux), `amr_graded_convergence.md` (steady
+  second order across a 2:1 interface, and the A5 cut-row fix), `amr_mixed_level_cut_band_plan.md`,
+  `amr_setup_parallel_plan.md` (the parallel builders, D1′; §7 the distributed C/F scheme),
+  `amr_anisotropic.md` (per-axis root spacing). `docs/briefs/` keeps the brief each design pass
+  answered. The dated campaign records are in
   `docs/archive/` behind its README index — `amr_march_perf_and_distributed_plan.md` (march economics
   + the distributed band; its status table names the two items still open), `amr_distributed_flow.md`,
   `amr_device_assembly_plan.md`, `amr_aperture_advection_plan.md`, `comm_avoiding_pressure_driver.md`,
