@@ -79,7 +79,7 @@ struct Csr {
 /// Build a face-CSR on device from a per-cell `emit` functor.
 ///
 /// `Emit` must be a trivially-copyable, device-callable object with:
-///     template <class Sink> KOKKOS_INLINE_FUNCTION void operator()(Index i, Sink& s) const;
+/// `template <class Sink> KOKKOS_INLINE_FUNCTION void operator()(Index i, Sink& s) const;`
 /// calling `s(neighbourLeaf, coef)` once per face of cell `i`, in a fixed deterministic order.
 ///
 /// The count is folded directly into the prefix scan (each cell's traversal runs once in the scan
