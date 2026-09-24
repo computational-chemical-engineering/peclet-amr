@@ -1,23 +1,26 @@
 # peclet-amr roadmap
 
 One page, live items only. Everything here is open; everything closed lives in the campaign notes
-and in `docs/archive/`. Rewritten in place, not appended.
+and in `docs/archive/`. Rewritten in place, not appended. [README.md](README.md) in this directory
+indexes every note.
 
 **Where the code stands (2026-09-23).** The octree, the distributed octree with leaf/field
 rebalance, solution-adaptive refinement, the collocated cut-cell Navier–Stokes solver (ghost
 projection default, aperture fallback, mixed-level sampled cut band), the AMR multigrid / MG-PCG /
-BiCGStab stack and the parallel `setSolid` builders are all **built, distributed and gated**: 96
-C++ ctests at np = 1, 2, 4, 8 plus 5 Python, a SHA-256 byte gate over every public entry path, a
+BiCGStab stack — now with a pressure multigrid that continues below the root brick (C1) — and the
+parallel `setSolid` builders are all **built, distributed and gated**: 111 C++ ctests at np = 1, 2,
+4, 8, 5 C++ studies and 8 Python, a SHA-256 byte gate over every public entry path, a
 uniform-grid parity gate against `peclet.flow`, and a graded time-accurate gate against an exact
 unsteady solution. The package is 0.x: the API may still move (the D9 exception to the suite's
 clean-break 1.0.0).
 
 **The graded solver is now validated against analytic solutions, steady and unsteady**: order 2.00
-on the steady Poiseuille ladder (`amr_graded_convergence.md`) and **2.07 on a decaying Taylor–Green
-vortex with advection on** (`amr_tg_graded.md`), with the advecting face field conservative to
-4e-12 throughout. What is NOT yet done is the layer above: no published validation page (the gate
-on it is lifted — §E1), no at-scale multi-GPU numbers, and the advective path costs 4–7× what
-`flow` costs for the same step.
+on the steady Poiseuille ladder (`amr_graded_convergence.md`) and **2.22 on a decaying Taylor–Green
+vortex with advection on** (`amr_tg_graded.md`; 2.07 before the B5 seam reconstruction), with the
+advecting face field conservative to 4e-12 throughout. What is NOT yet done is the layer above: no
+published validation page (the gate on it is lifted — §E1) and no at-scale multi-GPU numbers. The
+4–7× step cost against `flow` was the pressure hierarchy stopping at the root brick, and is gone
+(§C1).
 
 ---
 
@@ -93,10 +96,12 @@ across the suite:
   'multigrid' | 'chebyshev')`. `amr`: four booleans that interact — `set_momentum_mg`,
   `set_momentum_gs`, `set_velocity_mg_staircase`, `set_momentum_mg_solver` — where some
   combinations are meaningless. Collapse them the way `flow` did.
-- **A′2 — the pressure driver is not selectable from Python at all.** `setPressurePCG` exists in
-  C++ (`flow.hpp:504`) and is **unbound**; so is `setMomentumTol` (§A4). `flow` exposes
-  `set_pressure_pcg / set_pressure_fcg / set_pressure_chebyshev / set_pressure_bottom`. A user of
-  `peclet.amr` cannot currently choose the pressure driver or either tolerance.
+- **A′2 — the pressure DRIVER is not selectable from Python.** `setPressurePCG` exists in C++
+  (`flow.hpp:551`) and is **unbound**. `flow` exposes `set_pressure_pcg / set_pressure_fcg /
+  set_pressure_chebyshev / set_pressure_bottom`. The tolerances are bound since §A4
+  (`set_pressure_tolerance`, `set_momentum_tolerance`) and the bottom since C1
+  (`diagnostics.set_pressure_bottom`, flow's spelling — but on the developer tier, where `flow`
+  has it public; `amr_mg_depth.md` §11.6 left the tier to the caller).
 - **A′3 — condition-number auto-selection.** `flow` picks RB-GS vs V-cycle from
   κ = 1 + 4·dt·µ·Σw/ρ. `amr` always runs the MG-preconditioned BiCGStab, which is the right default
   at large dt and probably over-solves at small dt — that is plausibly part of the §C1 cost. Worth
@@ -156,7 +161,7 @@ refined mesh, which is the entire point of the package.
   (U), uniform coarse (C), and the graded mesh (G) that IS C with a spherical shell refined — so
   G − C prices the 2:1 interface by itself. **The graded solver is second order in an unsteady
   flow: 2.07 in the volume velocity error on the 32 → 64 rung**, 1.82 in the interface-generated
-  part. `div(uf)` stays ≤ 4e-12 over hundreds of advecting steps on a mesh with ~7 000 2:1
+  part — **2.22 and 2.08 since the B5 seam reconstruction** (`amr_tg_graded.md` §3). `div(uf)` stays ≤ 4e-12 over hundreds of advecting steps on a mesh with ~7 000 2:1
   sub-faces, which is the conservation benefit B2 was opened to exercise. It also settled the
   pressure-iteration question (§B4).
 - **B3 — sub-face closures** (`amr_mixed_level_cut_band_plan.md` §8a, risk register). Bounded, not
