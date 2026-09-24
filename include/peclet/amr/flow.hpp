@@ -1829,7 +1829,7 @@ class AmrFlow {
   /// (docs/amr_mg_depth.md §6.7). Levels below the root brick are lifted levels; tail levels are
   /// appended when the redundant tail engages (WO4) — GLOBAL counts, identical on every rank, the
   /// first of them the moved coarsest in-place level itself. Empty before `setSolid`. Local (no
-  /// communication). Compare against `peclet.amr.predict_pressure_hierarchy` rather than against
+  /// communication). Compare against `peclet.amr.predict_hierarchy` rather than against
   /// a literal.
   std::vector<Index> pressureMgLevels() const {
     std::vector<Index> out;
@@ -1848,7 +1848,7 @@ class AmrFlow {
   /// `"jacobi"` (60 damped-Jacobi sweeps) | `"amg"` (the agglomerated `GraphAMG`-PCG bottom,
   /// amg_bottom.hpp), with the suffix `"+tail"` when the coarsest in-place level is gathered and
   /// continued redundantly (§6.5). Under the default `"auto"` it matches
-  /// `predict_pressure_hierarchy`'s `bottom`; `"jacobi"` before `setSolid`. Local.
+  /// `predict_hierarchy`'s `bottom`; `"jacobi"` before `setSolid`. Local.
   std::string pressureMgBottom() const {
     return dist_ ? presMGD_.bottomName() : presMG_.bottomName();
   }
@@ -1885,7 +1885,8 @@ class AmrFlow {
   /// Where the pressure ladder stops lifting the root and hands over to the bottom
   /// (docs/amr_mg_depth.md §6.2/§11.4), in CELLS PER AXIS of the coarsest level: the ladder stops
   /// once no axis has more than `e` cells, and `"auto"` engages the exact bottom where it stopped
-  /// above it. Default 4, where the 60 sweeps are exact. Developer tier — the shipped default is
+  /// above it. Default 4, where the 60 sweeps are exact; Python spells it
+  /// `Flow.set_pressure_bottom_extent(cells=)`, a count, not a length. The shipped default is
   /// measured, not preferred (§11.4: 8 moves the iteration count by ~1 on one case in three;
   /// tests/study/amr_pressure_depth.py --sweep). Only STORED here: it takes effect at the next
   /// `setSolid`, where the ladder is built. Local.

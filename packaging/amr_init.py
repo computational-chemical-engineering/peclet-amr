@@ -14,9 +14,11 @@ same classes, the same names, one package up. Everything is Kokkos (CUDA / HIP /
   collocated Stokes / Navier–Stokes step (ghost projection by default; the mixed-level sampled cut
   band via ``set_ghost_sampled``; quadratic coarse/fine schemes and the upwind seam reconstruction
   of the advected value at 2:1 faces; an MG-PCG pressure solve whose hierarchy continues below the
-  octree's root brick). Developer instruments and ablation switches live under ``Flow.diagnostics``.
-- ``predict_pressure_hierarchy(cells, lmax, num_ranks)`` — the pressure-multigrid ladder a ``Flow``
-  will build (levels, where they live, what solves the coarsest), as a pure pre-flight function;
+  octree's root brick, and whose coarsest level ``set_pressure_bottom`` /
+  ``set_pressure_bottom_extent`` control, spelled as in ``peclet.flow``). Developer instruments and
+  ablation switches live under ``Flow.diagnostics``.
+- ``predict_hierarchy(cells, lmax, num_ranks)`` — the pressure-multigrid ladder a ``Flow`` will
+  build (levels, where they live, what solves the coarsest), as a pure pre-flight function;
   compare ``Flow.diagnostics.pressure_mg_levels`` / ``pressure_mg_bottom`` after ``set_solid``.
 - ``spacing_from_extent`` / ``spacings_from_extent`` — the one place an AMR spacing is computed.
 - ``finalize()`` releases the Kokkos state (also registered at exit).

@@ -49,7 +49,8 @@ contract lives in the umbrella repository's `docs/` ([architecture](https://gith
   from 23 to 13 and its step from 1942 to ~300 ms. Distributed, the lift is lockstep; where the ORB
   blocks turn odd the coarsest level is gathered onto every rank and continued (the replicated
   stage); where the ladder runs out above 4 cells per axis the bottom is an exact agglomerated
-  `GraphAMG`-PCG solve. `peclet.amr.predict_pressure_hierarchy` predicts the ladder before a run.
+  `GraphAMG`-PCG solve (`Flow.set_pressure_bottom` / `set_pressure_bottom_extent`, `peclet.flow`'s
+  spellings). `peclet.amr.predict_hierarchy` predicts the ladder before a run.
 - **The 2:1 seam** (`cf_scheme.hpp`, `seam_recon.hpp`, `advect_recon.hpp`) — the momentum
   diffusion, the divergence constraint and the pressure gradient take the Martin–Cartwright
   tangential quadratic at a coarse/fine face (the pressure matrix stays two-point), gated per face
@@ -59,7 +60,7 @@ contract lives in the umbrella repository's `docs/` ([architecture](https://gith
 - **Python** (`python/amr_bindings.cpp` → `peclet.amr`): `Octree`, `DistributedOctree`, `Poisson`,
   `Flow` (+ `Flow.diagnostics` for the developer instruments and ablation switches — the
   pressure-multigrid ladder and bottom solver, the seam reconstruction, the C/F census),
-  `predict_pressure_hierarchy`, `spacing_from_extent` / `spacings_from_extent`. Type stub
+  `predict_hierarchy`, `spacing_from_extent` / `spacings_from_extent`. Type stub
   `packaging/_amr.pyi`.
 
 ## Validation

@@ -451,8 +451,9 @@ forces Jacobi; `agglomerated` forces the exact bottom. Same three spellings as f
 - `predictPressureLadder(G, lmax, np, bottomExtent)` — a pure host function (no MPI) returning per
   level the global cell count, whether it is in place or tail, and the bottom kind; it builds the
   ORB with the same factory `DistributedOctree::init` uses (`BlockDecomposer` on `G`). Python:
-  `peclet.amr.predict_pressure_hierarchy(cells, lmax, num_ranks)` (name to be checked against
-  `NAMING.md` by the caller; flow's is `predict_hierarchy`).
+  `peclet.amr.predict_hierarchy(cells, lmax, num_ranks)` — flow's name (it was
+  `predict_pressure_hierarchy` until 2026-09-24, never released); the arguments are amr's canonical
+  ones, and flow's differing ones are flow's recorded divergence (`../docs/NAMING.md` §2).
 - `Flow.diagnostics.pressure_mg_levels -> list[int]` (per-level local leaf counts, level 0 first,
   tail levels appended) and `Flow.diagnostics.pressure_mg_bottom -> str` (`"jacobi"` | `"amg"`;
   suffix `"+tail"` when the tail is engaged). The `[step-prof]` header line prints the same.
@@ -467,7 +468,7 @@ forces Jacobi; `agglomerated` forces the exact bottom. Same three spellings as f
 |---|---|---|---|
 | `liftRoot` | `true` for pressure, `false` for `VelocityMG` until WO5 | `AmrMultigrid::build`, `DistributedFlowMultigrid::build` | preconditioner only |
 | `bottomExtent` | 4 | same | preconditioner only |
-| `set_pressure_bottom` | `auto` | `Flow.diagnostics` (§11.6) | preconditioner only |
+| `set_pressure_bottom` | `auto` | `Flow`, public as in flow (§11.6) | preconditioner only |
 | Jacobi bottom sweeps | 60 (unchanged) | `pcg_.setVcycle` | preconditioner only |
 | ORB alignment budget | 1.05 imbalance | `DistributedOctree::init/rebalance` (WO7) | partition (np non-power-of-two, rebalanced runs) |
 
@@ -664,7 +665,11 @@ gates: `flow_parity` Stokes cases, `amr_two_sphere_gap.py` at cf = 1, momentum i
    domain measures badly.
 6. **API tier for `set_pressure_bottom` (preference).** flow exposes it publicly; here it is an
    ablation switch whose answer is `auto`. *Default:* `Flow.diagnostics` tier, flow's spelling and
-   values; the caller decides whether it should be public for symmetry.
+   values; the caller decides whether it should be public for symmetry. **Decided 2026-09-24
+   (user):** public, flow's spellings — `Flow.set_pressure_bottom(mode=)`,
+   `Flow.set_pressure_bottom_extent(cells=)` and the `Flow.pressure_bottom_extent` read-out;
+   `pressure_mg_levels` / `pressure_mg_bottom` stay on `Flow.diagnostics` (flow has no equivalent).
+   A grid-count threshold is a count, not cell-unit API (`../docs/NAMING.md` §1.8).
 7. **`GradedDistributedMultigrid::inner_` / `DistributedMultigrid` (preference).** Redundant in
    concept after this design, still tested host oracles. *Default:* leave them; retire in a later
    cleanup with their tests, not in this package.

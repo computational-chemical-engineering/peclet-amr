@@ -15,7 +15,7 @@ rather than its cell count.
 `docs/amr_mg_depth.md` answers it: a level BELOW the root brick is the same octree with its root
 LIFTED (brick halved, `lmax` incremented, leaf codes untouched), so `coarsenIf` keeps merging down
 to an extent of 4.  This driver prints, per configuration, the hierarchy the solver actually built,
-the hierarchy `predict_pressure_hierarchy` says it should have built, and what a step costs — so
+the hierarchy `predict_hierarchy` says it should have built, and what a step costs — so
 every claim here is a measurement rather than a reading of the code.
 
 Usage:  PYTHONPATH=<build> PECLET_AMR_PROFILE_STEP=1 python tests/study/amr_pressure_depth.py
@@ -55,9 +55,9 @@ def case(N, lmax, graded, ghost=True, steps=10, warm=3, bottom_extent=None, emul
     f.set_body_force(FX, 0.0, 0.0)
     # Both knobs take effect at set_solid, which is where the pressure hierarchy is built.
     if bottom_extent is not None:
-        f.diagnostics.set_pressure_bottom_extent(bottom_extent)   # §6.2/§11.4
+        f.set_pressure_bottom_extent(bottom_extent)   # §6.2/§11.4
     if bottom is not None:
-        f.diagnostics.set_pressure_bottom(bottom)                 # §6.6
+        f.set_pressure_bottom(bottom)                 # §6.6
     f.set_solid(sdf)
     for _ in range(warm):
         f.step(mom_iters=400, pres_iters=400)
@@ -73,13 +73,13 @@ def case(N, lmax, graded, ghost=True, steps=10, warm=3, bottom_extent=None, emul
         wall = w if wall is None else min(wall, w)
     root = N // (1 << lmax)
     built = list(f.diagnostics.pressure_mg_levels)
-    # The ladder `predict_pressure_hierarchy` describes.  Its `lmax` is the number of octree
+    # The ladder `predict_hierarchy` describes.  Its `lmax` is the number of octree
     # coarsenings THE MESH supports, not the tree's declared lmax: an UNREFINED Octree(N, lmax=k)
     # is the same mesh as Octree(N // 2**k, lmax=0), all of whose leaves are root cells.
     depth = int(o.lmax) - int(np.min(o.levels()))
     be = 4 if bottom_extent is None else bottom_extent
-    pred = amr.predict_pressure_hierarchy(cells=[root * (1 << depth)] * 3, lmax=depth,
-                                          num_ranks=1, bottom_extent=be)
+    pred = amr.predict_hierarchy(cells=[root * (1 << depth)] * 3, lmax=depth,
+                                 num_ranks=1, bottom_extent=be)
     return dict(N=N, lmax=lmax,
                 mesh="emul" if emulate else ("graded" if graded else "uniform"),
                 leaves=o.num_leaves,

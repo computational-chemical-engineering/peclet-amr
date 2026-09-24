@@ -99,9 +99,9 @@ across the suite:
 - **A′2 — the pressure DRIVER is not selectable from Python.** `setPressurePCG` exists in C++
   (`flow.hpp:551`) and is **unbound**. `flow` exposes `set_pressure_pcg / set_pressure_fcg /
   set_pressure_chebyshev / set_pressure_bottom`. The tolerances are bound since §A4
-  (`set_pressure_tolerance`, `set_momentum_tolerance`) and the bottom since C1
-  (`diagnostics.set_pressure_bottom`, flow's spelling — but on the developer tier, where `flow`
-  has it public; `amr_mg_depth.md` §11.6 left the tier to the caller).
+  (`set_pressure_tolerance`, `set_momentum_tolerance`) and the bottom since C1 — public, with
+  `flow`'s spellings, since 2026-09-24 (`Flow.set_pressure_bottom(mode=)`,
+  `set_pressure_bottom_extent(cells=)`, `predict_hierarchy`; `amr_mg_depth.md` §11.6).
 - **A′3 — condition-number auto-selection.** `flow` picks RB-GS vs V-cycle from
   κ = 1 + 4·dt·µ·Σw/ρ. `amr` always runs the MG-preconditioned BiCGStab, which is the right default
   at large dt and probably over-solves at small dt — that is plausibly part of the §C1 cost. Worth

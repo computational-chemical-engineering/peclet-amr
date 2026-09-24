@@ -557,6 +557,15 @@ class Flow : public Releasable {
   void set_outer_iterations(int n, double tol) { flow_.setOuterIterations(n, tol); }
   void set_pressure_tolerance(double rtol) { flow_.setPressureTol(rtol); }
   void set_momentum_tolerance(double rtol) { flow_.setMomentumTol(rtol); }
+  // §6.6/§11.4: what solves the coarsest pressure level, and where the ladder hands over to it --
+  // flow's spellings and tier (NAMING.md §1.8). The MODE takes effect at once (the bottom is
+  // re-decided on the hierarchy already built) and is kept for later set_solid calls; the extent
+  // only at the next set_solid, where the ladder is built.
+  void set_pressure_bottom(const std::string& mode) { flow_.setPressureBottom(mode); }
+  void set_pressure_bottom_extent(long cells) {
+    flow_.setPressureBottomExtent(static_cast<Index>(cells));
+  }
+  long pressure_bottom_extent() const { return static_cast<long>(flow_.pressureBottomExtent()); }
 
   // Advance one collocated projection step (Stokes, or NS if advection is on).
   void step(int mom_iters, int pres_iters) { flow_.step(mom_iters, pres_iters); }
@@ -843,24 +852,13 @@ class FlowDiagnostics {
   }
   // The pressure multigrid's ladder AS BUILT on this rank: per-level leaf counts, level 0 first
   // (docs/amr_mg_depth.md §6.7). Levels below the root brick are lifted levels. Read it against
-  // `peclet.amr.predict_pressure_hierarchy`, never against a literal.
+  // `peclet.amr.predict_hierarchy`, never against a literal.
   std::vector<peclet::core::Index> pressure_mg_levels() const {
     return f_.engine().pressureMgLevels();
   }
   // What actually solves the coarsest pressure level: "jacobi" | "amg", with "+tail" when the
   // replicated stage moved it (docs/amr_mg_depth.md §6.6/§6.7).
   std::string pressure_mg_bottom() const { return f_.engine().pressureMgBottom(); }
-  // §6.6/§11.4: what solves the coarsest pressure level, and where the ladder hands over to it.
-  // The KIND takes effect at once (the bottom is re-decided on the hierarchy already built) and is
-  // kept for later set_solid calls; the EXTENT only at the next set_solid, where the ladder is
-  // built.
-  void set_pressure_bottom(const std::string& kind) { f_.engine().setPressureBottom(kind); }
-  void set_pressure_bottom_extent(long e) {
-    f_.engine().setPressureBottomExtent(static_cast<peclet::core::Index>(e));
-  }
-  long pressure_bottom_extent() const {
-    return static_cast<long>(f_.engine().pressureBottomExtent());
-  }
   // The seam-reconstruction census (docs/amr_cf_convective.md §5.2), this rank's.
   peclet::core::Index num_seam_sample_records() const { return f_.engine().numSeamSampleRecords(); }
   peclet::core::Index num_seam_layer_records() const { return f_.engine().numSeamLayerRecords(); }
@@ -956,13 +954,13 @@ NB_MODULE(_amr, m) {
       "neighbours, export VTU, and run the flow step on device.";
 
   m.def(
-      "predict_pressure_hierarchy",
+      "predict_hierarchy",
       [](std::array<long, 3> cells, unsigned lmax, int num_ranks, long bottom_extent) {
-        const auto root = rootCellsOf(cells, lmax, "predict_pressure_hierarchy");
+        const auto root = rootCellsOf(cells, lmax, "predict_hierarchy");
         if (num_ranks < 1)
-          throw std::runtime_error("predict_pressure_hierarchy: num_ranks must be >= 1");
+          throw std::runtime_error("predict_hierarchy: num_ranks must be >= 1");
         if (bottom_extent < 1)
-          throw std::runtime_error("predict_pressure_hierarchy: bottom_extent must be >= 1");
+          throw std::runtime_error("predict_hierarchy: bottom_extent must be >= 1");
         const peclet::core::IVec<3> G{root[0], root[1], root[2]};
         const auto p = peclet::amr::predictPressureLadder<3>(G, lmax, num_ranks, bottom_extent);
         nb::list cellsL, kindL, extentL;
@@ -993,7 +991,7 @@ NB_MODULE(_amr, m) {
       "every rank (the replicated tail) and continued there; the coarsest level is then solved "
       "by damped-Jacobi sweeps if it has at most `bottom_extent` cells per axis, else by the "
       "agglomerated GraphAMG-PCG bottom. The prediction is that of the default "
-      "`Flow.diagnostics.set_pressure_bottom('auto')`.\n\n"
+      "`Flow.set_pressure_bottom('auto')`.\n\n"
       "Returns a dict, levels finest first: `extent` the level's global grid in CELLS per axis "
       "(a count, not a length), `cells` its total cell count as if the mesh were uniform (so it "
       "equals `Flow.diagnostics.pressure_mg_levels` leaf for leaf only for a uniform mesh at "
@@ -1008,7 +1006,7 @@ NB_MODULE(_amr, m) {
       "as Octree(cells/2**k, lmax=0) — all its leaves are root cells — and must be predicted that "
       "way. In general pass depth = tree.lmax - levels().min() and cells = root * 2**depth. "
       "`bottom_extent` (default 4, the solver's default) is the "
-      "`Flow.diagnostics.pressure_bottom_extent` the run will use; pass the same value.");
+      "`Flow.pressure_bottom_extent` the run will use; pass the same value.");
 
   m.def(
       "spacing_from_extent",
@@ -1252,6 +1250,39 @@ NB_MODULE(_amr, m) {
            "the over-solve. The cap is step()'s `mom_iters`. (flow spells the same concept "
            "set_velocity_residual_tolerance -- the momentum/velocity divergence between the two "
            "codes is a ../docs/NAMING.md item, not settled here.)")
+      .def("set_pressure_bottom", &Flow::set_pressure_bottom, nb::arg("mode"),
+           "What solves the coarsest level of the pressure multigrid (docs/amr_mg_depth.md "
+           "§6.6). A V-cycle converges at a mesh-independent rate only if its coarsest level is "
+           "effectively solved, and 60 damped-Jacobi sweeps solve a level only up to ~4 cells per "
+           "axis (8e-9 at 4, 8e-3 at 8, 0.6 at 25). 'auto' (THE DEFAULT) engages the agglomerated "
+           "GraphAMG-PCG bottom iff the coarsest level still has more than "
+           "`pressure_bottom_extent` cells on some axis -- i.e. where the ladder ran out on an odd "
+           "or badly factored grid -- and keeps the sweeps otherwise; 'smoother' always sweeps; "
+           "'agglomerated' always solves exactly. The choice changes the preconditioner, not the "
+           "converged pressure (to the solve tolerance), and at the default extent it does not "
+           "change the iteration count either (§11.4(a): identical counts in all nine measured "
+           "'smoother'/'agglomerated' pairs); leave it at 'auto' unless you are comparing bottom "
+           "solves. The same three strings and default as flow's `Solver.set_pressure_bottom`. "
+           "Takes effect at once on the hierarchy already built and is kept for later set_solid "
+           "calls. On a DISTRIBUTED Flow call it on every rank: the exact bottom lives in the "
+           "replicated stage's continued ladder, which the call may build. Raises on any other "
+           "string.")
+      .def("set_pressure_bottom_extent", &Flow::set_pressure_bottom_extent, nb::arg("cells"),
+           "Where the pressure ladder stops coarsening below the root brick and hands over to the "
+           "bottom solve, in CELLS PER AXIS of the coarsest level -- a count, not a length: the "
+           "limit is the bottom smoother's, which solves a level only up to ~4 cells per axis "
+           "whatever the physical domain (../docs/NAMING.md §1.8; docs/amr_mg_depth.md "
+           "§6.2/§11.4). The ladder stops once no axis has more than `cells` cells, and "
+           "set_pressure_bottom('auto') engages the exact bottom where it stopped above it. "
+           "Default 4, the value at which the 60 bottom sweeps are exact; it is measured rather "
+           "than preferred (§11.4: 8 moves the iteration count by ~1 on one case in three; "
+           "tests/study/amr_pressure_depth.py --sweep), so there is rarely a reason to change it. "
+           "Changes the preconditioner, not the converged pressure (to the solve tolerance). "
+           "Takes effect at the NEXT set_solid, where the ladder is built. Raises if cells < 1.")
+      .def_prop_ro("pressure_bottom_extent", &Flow::pressure_bottom_extent,
+                   "The bottom extent, in cells per axis (a count, not a length), that "
+                   "set_pressure_bottom_extent last stored (default 4) -- the one the next "
+                   "set_solid builds the ladder with (docs/amr_mg_depth.md §6.8).")
       .def("step", &Flow::step, nb::arg("mom_iters") = 100, nb::arg("pres_iters") = 60,
            "Advance one collocated projection step of length dt on device. `mom_iters` caps the "
            "momentum solve (BiCGStab, MG-preconditioned) and `pres_iters` the pressure solve "
@@ -1348,7 +1379,7 @@ NB_MODULE(_amr, m) {
                    "hierarchy rather than a single level. Under MPI the in-place levels are THIS "
                    "RANK's counts and the levels of a replicated tail (appended last) are GLOBAL "
                    "counts, identical on every rank. Check it against "
-                   "`peclet.amr.predict_pressure_hierarchy` (level count, and leaf for leaf on a "
+                   "`peclet.amr.predict_hierarchy` (level count, and leaf for leaf on a "
                    "uniform mesh at np=1), never against a literal.")
       .def_prop_ro("pressure_mg_bottom", &FlowDiagnostics::pressure_mg_bottom,
                    "What solves the coarsest pressure level of the hierarchy AS BUILT: 'jacobi' "
@@ -1356,40 +1387,9 @@ NB_MODULE(_amr, m) {
                    "slowest mode falls by 8e-9) or 'amg' (the agglomerated GraphAMG-PCG solve), "
                    "with the suffix '+tail' when the coarsest level was gathered onto every rank "
                    "by the replicated stage (docs/amr_mg_depth.md §6.5-§6.7). Which one runs "
-                   "follows `set_pressure_bottom` (default 'auto': the exact bottom engages only "
-                   "where the ladder ran out above `pressure_bottom_extent` cells per axis). "
-                   "'jacobi' before set_solid.")
-      .def("set_pressure_bottom", &FlowDiagnostics::set_pressure_bottom, nb::arg("kind"),
-           "What solves the coarsest pressure level (docs/amr_mg_depth.md §6.6). A V-cycle is "
-           "mesh-independent only if its coarsest level is effectively solved, and 60 "
-           "damped-Jacobi sweeps solve a level only up to ~4 cells per axis (8e-9 at 4, 8e-3 at 8, "
-           "0.6 at 25). 'auto' (THE DEFAULT, the production setting) engages the agglomerated "
-           "GraphAMG-PCG bottom iff the coarsest level still has more than "
-           "`pressure_bottom_extent` cells on some axis -- i.e. where the ladder ran out on an odd "
-           "or badly factored grid -- and keeps the sweeps otherwise; 'smoother' always sweeps; "
-           "'agglomerated' always solves exactly. The choice changes the preconditioner, not the "
-           "converged pressure (to the solve tolerance), and at the default extent it does not "
-           "change the iteration count either (§11.4(a): identical counts in all nine measured "
-           "'smoother'/'agglomerated' pairs). Exists to A/B the bottom; the three strings are "
-           "flow's `set_pressure_bottom` spellings. Takes effect at once on the "
-           "hierarchy already built and is kept for later set_solid calls. On a DISTRIBUTED Flow "
-           "call it on every rank: the exact bottom lives in the replicated stage's continued "
-           "ladder, which the call may build. Raises on any other string.")
-      .def("set_pressure_bottom_extent", &FlowDiagnostics::set_pressure_bottom_extent,
-           nb::arg("extent"),
-           "Where the pressure ladder stops coarsening below the root brick and hands over to the "
-           "bottom solve, in CELLS PER AXIS of the coarsest level (a count, not a length; "
-           "docs/amr_mg_depth.md §6.2/§11.4): the ladder stops once no axis has more than "
-           "`extent` cells, and set_pressure_bottom('auto') engages the exact bottom where it "
-           "stopped above it. Default 4, the value at which the 60 bottom sweeps are exact; it is "
-           "measured rather than preferred (§11.4: 8 moves the iteration count by ~1 on one case "
-           "in three; tests/study/amr_pressure_depth.py --sweep). Changes the preconditioner, not "
-           "the converged pressure (to the solve tolerance). Takes effect at the NEXT set_solid, "
-           "where the ladder is built. Raises if extent < 1.")
-      .def_prop_ro("pressure_bottom_extent", &FlowDiagnostics::pressure_bottom_extent,
-                   "The bottom extent, in cells per axis, that set_pressure_bottom_extent last "
-                   "stored (default 4) -- the one the next set_solid builds the ladder with "
-                   "(docs/amr_mg_depth.md §6.8).")
+                   "follows `Flow.set_pressure_bottom` (default 'auto': the exact bottom engages "
+                   "only where the ladder ran out above `Flow.pressure_bottom_extent` cells per "
+                   "axis). 'jacobi' before set_solid.")
       .def_prop_ro("num_seam_sample_records", &FlowDiagnostics::num_seam_sample_records,
                    "How many tangential-sample records the seam reconstruction built on THIS RANK "
                    "-- one per 2:1 sub-face pair that passes the C/F face gate (both cells regular "

@@ -152,9 +152,9 @@ Header-only under `include/peclet/amr/` (namespace `peclet::amr`; `common.hpp` c
   the blocks turn odd a `MgStage` (`mg_stage.hpp`) moves the level onto a new decomposition of its
   own grid — only the replicated instantiation exists today — and where the ladder runs out above
   `bottomExtent` the bottom is an agglomerated `GraphAMG`-PCG solve (`amg_bottom.hpp`,
-  `Flow.diagnostics.set_pressure_bottom`). The momentum path is NOT lifted (`liftRoot = false`,
+  `Flow.set_pressure_bottom`). The momentum path is NOT lifted (`liftRoot = false`,
   guarded by `minCoarse`) until WO8 of `amr_mg_depth.md` §9 lands. `predictPressureLadder`
-  (`mg_predict.hpp`, Python `predict_pressure_hierarchy`) is the ladder rule as a pure function;
+  (`mg_predict.hpp`, Python `predict_hierarchy`) is the ladder rule as a pure function;
   tests assert the built ladder against it, never against a literal level count.
   Cut-cell openness is `cut_cell.hpp` (host oracle assembly) with `assembly.hpp`,
   `momentum_assembly.hpp`, `facegeom_assembly.hpp` / `face_geom.hpp` the device builders;
@@ -193,20 +193,25 @@ Header-only under `include/peclet/amr/` (namespace `peclet::amr`; `common.hpp` c
   simulation; `Flow.diagnostics` (a view holding a reference to the Flow — the instruments
   `last_mom_iters`, `last_pres_iters`, `last_outer_iters`, `divergence_norm_face`,
   `face_topology`, `num_cf_cut_faces`, `num_seam_sample_records`, `num_seam_layer_records`,
-  `pressure_mg_levels`, `pressure_mg_bottom`, `pressure_bottom_extent`; and the solver-internals /
-  ablation switches `set_momentum_mg`, `set_momentum_gs`, `set_velocity_mg_staircase`,
-  `set_momentum_mg_solver`, `set_ghost_gradient`, `set_aperture_order`, `set_uf_advection`,
-  `set_seam_reconstruction`, `set_pressure_bottom`, `set_pressure_bottom_extent`) is what a
-  developer uses to inspect or ablate. Every switch there has a production default; its docstring
+  `pressure_mg_levels`, `pressure_mg_bottom`; and the solver-internals / ablation switches
+  `set_momentum_mg`, `set_momentum_gs`, `set_velocity_mg_staircase`, `set_momentum_mg_solver`,
+  `set_ghost_gradient`, `set_aperture_order`, `set_uf_advection`, `set_seam_reconstruction`) is
+  what a developer uses to inspect or ablate. Every switch there has a production default; its docstring
   says what it is and why the switch exists. Two of the scheme selectors take an INT —
   `set_cf_scheme(0 = standard | 1 = quadratic)`, **before `set_solid`**, which is where the C/F
   overlays are built, and `set_advection_scheme(0 = SOU | 1 = Koren)`. That is a **divergence from
   `flow`, not a convention to copy**: `../docs/NAMING.md` wants one spelling per concept and `flow`
-  spells these as strings. New selectors take a STRING — `set_pressure_bottom("auto" | "smoother" |
-  "agglomerated")` takes `flow`'s strings verbatim — but its keyword is `kind` where `flow`'s is
-  `mode`, `set_pressure_bottom_extent`'s is `extent` where `flow`'s is `cells`, and `flow` binds
-  both on its public tier. The two int selectors and those keyword/tier differences are NAMING
-  items; do not copy either side's spelling into a third code without reading `../docs/NAMING.md`.
+  spells these as strings. New selectors take a STRING. Where `flow` already has the concept, `amr`
+  takes `flow`'s spelling, keyword, strings, default AND tier (flow is the reference): the
+  pressure bottom is the public `Flow.set_pressure_bottom(mode="auto" | "smoother" |
+  "agglomerated")` / `Flow.set_pressure_bottom_extent(cells=)` / `Flow.pressure_bottom_extent`,
+  and the forecast is `predict_hierarchy` (until 2026-09-24, never released: `diagnostics.` with
+  `kind=` / `extent=`, and `predict_pressure_hierarchy`). `cells=` there is a count of cells per
+  axis on the coarsest grid, the one exemption from "never add cell-unit API" (`../docs/NAMING.md`
+  §1.8). `predict_hierarchy` keeps amr's canonical arguments (`cells`, `lmax`, `num_ranks`,
+  `bottom_extent`); `flow`'s `gnx, gny, gnz, np, …` are flow's own open NAMING row. The two int
+  selectors are NAMING items; do not copy either side's spelling into a third code without reading
+  `../docs/NAMING.md`.
 - Design notes (`docs/`, indexed by `docs/README.md`): `ROADMAP.md` (the one page of live items —
   **start here**),
   `amr_flow_uniform_parity.md` (what this solver shares with `peclet.flow`'s collocated solver at

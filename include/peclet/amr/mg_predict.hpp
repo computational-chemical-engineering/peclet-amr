@@ -65,7 +65,7 @@ struct MgLevelPrediction {
 };
 
 /// The whole predicted ladder: what `predictPressureLadder` returns and what
-/// `peclet.amr.predict_pressure_hierarchy` hands to Python as a dict. The built ladder is compared
+/// `peclet.amr.predict_hierarchy` hands to Python as a dict. The built ladder is compared
 /// against it level by level (`AmrFlow::pressureMgLevels`, `DistributedFlowMultigrid`).
 template <int Dim>
 struct MgLadderPrediction {

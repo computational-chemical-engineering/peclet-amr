@@ -55,7 +55,7 @@ namespace peclet::amr {
 ///
 /// Owned by `Multigrid` (single-rank, and therefore the replicated stage's continued ladder) and
 /// by `DistributedFlowMultigrid` at np = 1; selected by `Multigrid::setBottom` —
-/// `Flow.diagnostics.set_pressure_bottom('auto' | 'smoother' | 'agglomerated')`. It changes the
+/// `Flow.set_pressure_bottom('auto' | 'smoother' | 'agglomerated')`. It changes the
 /// preconditioner, never the converged pressure. LOCAL: no MPI anywhere in the class — a
 /// replicated tail runs one identical copy per rank. Setup is host, once per `build()`; the
 /// per-V-cycle solve is host or device by size (`kHostMax`). Throws nothing of its own.
