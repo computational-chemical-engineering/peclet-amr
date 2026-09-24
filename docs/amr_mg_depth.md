@@ -1,6 +1,6 @@
 # The pressure multigrid below the root brick — design note (ROADMAP C1)
 
-> Fable design pass, 2026-09-23, on branch `c1-advective-cost` (`f3a7ba0`, base `7d4dac9`).
+> Architect design pass, 2026-09-23, on branch `c1-advective-cost` (`f3a7ba0`, base `7d4dac9`).
 > Answers `docs/briefs/mg_depth_below_root.md`. Implemented by an Opus engineer who has seen
 > neither the brief nor the conversation; this note is meant to stand alone. No production code
 > was written in this pass.

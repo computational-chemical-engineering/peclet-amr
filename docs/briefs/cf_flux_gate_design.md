@@ -1,6 +1,6 @@
 # Design brief: the C/F flux correction cannot be gated per ROW and per FACE at once
 
-> For a Fable design pass. Written 2026-09-22 against `peclet-amr` `4b96cb3` + branch `uffix`.
+> For an architect design pass. Written 2026-09-22 against `peclet-amr` `4b96cb3` + branch `uffix`.
 
 ## 1. The question
 
@@ -12,7 +12,7 @@ A decision-shaped answer names the gating rule (or the reformulation that dissol
 says what it costs in accuracy at cut cells, and says why it cannot destabilise the throat meshes
 that motivated today's rule.
 
-## 2. Why this needs a Fable pass
+## 2. Why this needs an architect pass
 
 Three things make it more than an implementation choice.
 

@@ -1,6 +1,6 @@
 # The convective flux at a 2:1 seam — design note (ROADMAP B5)
 
-> Fable design pass, 2026-09-23, branch `b5-cf-convective` of `peclet-amr` (base `3c6c343`).
+> Architect design pass, 2026-09-23, branch `b5-cf-convective` of `peclet-amr` (base `3c6c343`).
 > Brief: `docs/briefs/cf_convective_flux.md`. Prototype: `tests/study/amr_cf_seam_proto.py`
 > (numpy replica of the operator; every number below is reproducible from it in ~2 min).
 > Implemented by someone who has seen neither the brief nor the conversation — it stands alone.

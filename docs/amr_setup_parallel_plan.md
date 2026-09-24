@@ -1,6 +1,6 @@
 # Parallel AMR setup: the builder restructure (post-scene-layer)
 
-*Plan, 2026-08-30 (Fable analysis; rungs 0/0.5 EXECUTED BY FABLE — the shared-dependency and
+*Plan, 2026-08-30 (architect analysis; rungs 0/0.5 EXECUTED BY THE ARCHITECT — the shared-dependency and
 abstraction-design rungs; rungs 1–5 are Opus execution). Companion to
 `amr_mixed_level_cut_band_plan.md` (the campaign this serves) and
 `../../docs/archive/AMR_GEOMETRY_SETUP_REQUIREMENTS.md` §5–6 (the scene-layer handoff this builds on).*
@@ -104,7 +104,7 @@ mask vs `.sdf-campaign-probes/mask6_before.npy` at depth 6; (c) thread-count inv
 `set_solid` + 200 steps, fields bitwise at OMP_NUM_THREADS=1 vs 16; (d) the rung's µs/leaf,
 in the commit message, measured at 1 and 8 threads.
 
-- **Rung 0 (FABLE — executed 2026-08-30) — the prefix rebuild + no-regression fence (D1′
+- **Rung 0 (ARCHITECT — executed 2026-08-30) — the prefix rebuild + no-regression fence (D1′
   piece 1; the only rung that touches a SHARED dependency).** Pre-verified before enabling:
   no code in core/flow/dem names a host execution space explicitly, so existing kernels keep
   their spaces; static Kokkos linkage means already-built flow/dem binaries are UNAFFECTED
@@ -132,7 +132,7 @@ in the commit message, measured at 1 and 8 threads.
   per-face slot ownership is cell-major (it is — `forEachFaceFull` is cell-major) before
   writing. 4.6 → ~0.6.
 - **Rung 3 — `mom_.build` parallel.** The largest phase; several consecutive per-leaf loops.
-  PRE-CLEARED by Fable 2026-08-30: the build loops contain NO neighbour-indexed writes (grep
+  PRE-CLEARED by the architect 2026-08-30: the build loops contain NO neighbour-indexed writes (grep
   over the build body: zero `[...j...] =` stores) — all writes are own-leaf slots, so the
   disjoint-write pattern applies directly. If implementation contradicts this, escalate. 4.2 →
   ~0.6.
@@ -191,7 +191,7 @@ for cluster runs, F1's distributed resolver.
 - Push after gated rungs: submodule first, umbrella last (dangling-pointer check in
   [[push-directly-to-main]]).
 
-## 5. ESCALATION (stop and hand to Fable — do not improvise)
+## 5. ESCALATION (stop and hand to the architect — do not improvise)
 
 1. Any builder loop that writes to another leaf's slots, carries state across iterations, or
    needs an atomic/reduction to parallelize — stop, document the loop and the dependency in
@@ -206,10 +206,10 @@ for cluster runs, F1's distributed resolver.
    nvidia-cuda bootstrap variant; anything else (arch flags, other backends, other prefixes) —
    stop.
 5. Rung 0's fence failing — any flow/dem probe or ctest moved by the prefix rebuild alone —
-   stop IMMEDIATELY, before any builder work: that is a suite-wide interaction Fable (and
+   stop IMMEDIATELY, before any builder work: that is a suite-wide interaction the architect (and
    possibly the flow/dem owners) must look at, not something to patch around.
-Escalations go in "## Findings" here + the memory file (`amr-mixed-level-cut-band-plan`), so a
-Fable session picks them up with context.
+Escalations go in "## Findings" here + the memory file (`amr-mixed-level-cut-band-plan`), so an
+architect session picks them up with context.
 
 ## Findings
 
@@ -238,7 +238,7 @@ its two leaf loops through a local `forLeaves`: `hostParFor` when `extResolve_` 
 when a resolver is installed. The distributed path therefore executes *exactly* today's code,
 which is what §D4/§5.4 require; multi-rank setup gets no speedup from this rung.
 
-**What a Fable session should decide.** Making the distributed path parallel needs the resolver
+**What an architect session should decide.** Making the distributed path parallel needs the resolver
 to be parallel-safe. Two shapes, neither attempted here:
 1. *Split discovery from use.* Keep one serial probe-collecting round (the fixpoint's purpose)
    and make the FINAL round — the one that actually fills `nb_`/`sdfC_` with every ghost already

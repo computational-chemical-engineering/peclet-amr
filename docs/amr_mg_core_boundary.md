@@ -1,6 +1,6 @@
 # Coarse-level redistribution (telescoping, repartition, replication): what lives in `core`, what stays in the methods
 
-> Layering decision, 2026-09-23, Fable pass on `c1-advective-cost`. Written to become a register
+> Layering decision, 2026-09-23, architect pass on `c1-advective-cost`. Written to become a register
 > entry (`suite/docs/DECISIONS.md`) and to move to `suite/docs/` when it lands. Companion to
 > `docs/amr_mg_depth.md` (C1) and `suite/docs/archive/MG_TELESCOPING_PLAN.md` (flow's design).
 > No production code.

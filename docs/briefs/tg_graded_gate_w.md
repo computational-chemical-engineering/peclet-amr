@@ -1,6 +1,6 @@
 # Review brief: WO0 is built and run — does gate W fire?
 
-> For a Fable review pass, 2026-09-23, on branch `wo0-tg-graded` of `peclet-amr` (base `43de409`).
+> For a reviewer pass, 2026-09-23, on branch `wo0-tg-graded` of `peclet-amr` (base `43de409`).
 > The reviewer is the author of the design note being tested; the question is whether its own
 > acceptance criterion should be honoured literally or corrected.
 

@@ -1,6 +1,6 @@
 # Design brief: the convective flux loses an order at a 2:1 coarse/fine face
 
-> For a Fable design pass, 2026-09-23, on branch `b5-cf-convective` of `peclet-amr`
+> For an architect design pass, 2026-09-23, on branch `b5-cf-convective` of `peclet-amr`
 > (`ddeee84`, base `3c6c343`). ROADMAP item **B5**, opened by the WO0 benchmark's control arm.
 
 ## 1. The question

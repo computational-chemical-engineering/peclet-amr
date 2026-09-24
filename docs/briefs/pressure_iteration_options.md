@@ -1,8 +1,8 @@
 # Design brief: two optional routes out of the conservation-vs-accuracy trade at coarse/fine faces
 
-> For a Fable design pass. Written 2026-09-22 against `peclet-amr` `2426ef4` (+ the unmerged
+> For an architect design pass. Written 2026-09-22 against `peclet-amr` `2426ef4` (+ the unmerged
 > `cfgate` branch). The user's instruction: *"Could they both be included as option (default off,
-> and without performance penalty when off?). Let Fable consider this and if positive do the
+> and without performance penalty when off?). Let the architect consider this and if positive do the
 > design."*
 
 ## 1. The question

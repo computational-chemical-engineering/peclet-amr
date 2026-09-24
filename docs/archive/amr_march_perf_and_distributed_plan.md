@@ -1,8 +1,8 @@
 # Next phase: march-time economics + the distributed mixed-level band
 
-*Plan, 2026-08-30 (Fable). Follows `../amr_setup_parallel_plan.md` (complete, F1 resolved) and
+*Plan, 2026-08-30 (architect). Follows `../amr_setup_parallel_plan.md` (complete, F1 resolved) and
 `../amr_mixed_level_cut_band_plan.md` (P3c). Ownership per rung is marked **[OPUS]** (execution
-against settled decisions) or **[FABLE]** (a decision gate — Opus stops there and hands back,
+against settled decisions) or **[ARCHITECT]** (a decision gate — Opus stops there and hands back,
 same escalation contract as the setup-parallel plan §5, which applies verbatim here).*
 
 **Status (2026-09-04): BOTH PHASES EXECUTED except two items, one of which needs a decision and
@@ -15,7 +15,7 @@ and the rung bodies only for detail.
 | M1 attribution matrix | DONE (`1c9517d`) — verdict: H-band + H-launch; H-iters, H-mg refuted |
 | M2 verdict | DONE (`bc2b117`) — H-launch accepted; H-band → cloud economy |
 | M2a cloud-economy table | DONE (`94cdc28`) — §M2a results |
-| **M2b pick production rho/N** | **OPEN — [FABLE] decision, the table is waiting** |
+| **M2b pick production rho/N** | **OPEN — [ARCHITECT] decision, the table is waiting** |
 | M2c slot caching | DONE (`dd5bc83`) — bitwise; wall-clock unmeasured (box contended) |
 | F2 (LS cloud period) | RESOLVED (`dfe8065`) — §Findings |
 | D0 probe-set clouds | DONE (`c8c19fc`) |
@@ -70,13 +70,13 @@ Hypotheses the matrix must separate (pre-registered so the attribution is honest
   (both arms have identical bands at matched depth — this would explain ~equal step times
   exactly).
 
-### M2 [FABLE] — the verdict + fix selection
+### M2 [ARCHITECT] — the verdict + fix selection
 
 Whatever M1 attributes, the fix is a design decision (MG cycle shape, kernel fusion,
 level-batched launches, or "accept: the win is memory + capacity, document it honestly").
 Opus stops after M1.
 
-#### M2 VERDICT (Fable, 2026-08-30) — accept H-launch; attack H-band through cloud economy
+#### M2 VERDICT (architect, 2026-08-30) — accept H-launch; attack H-band through cloud economy
 
 M1's attribution splits into a term worth accepting and a term worth one bounded campaign.
 
@@ -101,7 +101,7 @@ through a pre-registered a-priori ladder, not a tuning loop ([[first-principles-
   M0-profiled overlay-matvec ms/step, (iv) the degraded-row count (must stay 0 on the bed —
   a cloud too small to solve falls down the cascade, and M1 retired that risk at rho = 2.2).
   Deliverable: one table. STOP (do not pick a winner) — that is M2b.
-- **M2b [FABLE] — pick the production rho/N from M2a's table.** Not before the data exists.
+- **M2b [ARCHITECT] — pick the production rho/N from M2a's table.** Not before the data exists.
 - **M2c [OPUS] — slot-value caching in the sampled matvec kernels. Bitwise, independent of
   M2a/M2b.** `ghostApplyDeltaSampled` / `ghostDivergDeltaSampled` re-gather the same slot's CSR
   sum up to twice per row (the ±faces share interior slots). Evaluate each of the row's 15 slot
@@ -129,7 +129,7 @@ other builder already reaches across ranks. Single-rank must reproduce today's c
 bitwise or the change is wrong (the probe pattern must enumerate the same candidates the bin
 search finds — verify on the P2b meshes before touching the distributed path; if the bin
 search's candidate set cannot be reproduced by a bounded fixed pattern, STOP — that is a
-[FABLE] gate, not a workaround).
+[ARCHITECT] gate, not a workaround).
 
 **DD2 — Discovery via the existing fixpoint, no new machinery.** `buildGhostOverlaySampled`
 (and `buildMomSeamDelta`, and `makeBinaryOpenFnMixed`'s center probes) join
@@ -154,7 +154,7 @@ bed as the two test geometries; a new ctest pinning np=1 bitwise on a seamed mes
 - **D0 [OPUS]** — DD1 single-rank: probe-set clouds, bitwise vs today's bin-search clouds on
   the P2b meshes + depth-7 bed (this is a pure refactor gate; any diff ⇒ stop per DD1).
   *Status 2026-08-30: escalated as F2 (the bin search's period was 4 fine cells short — a
-  pre-existing bug, not an enumeration failure), RESOLVED by Fable (true-period fix landed on
+  pre-existing bug, not an enumeration failure), RESOLVED by the architect (true-period fix landed on
   `main` first, separately). The rewrite is parked on `dev/d0-probe-clouds`, already proven
   bitwise against the FIXED bin search on every gate geometry; remaining work = the merge +
   gate rerun per the F2-resolution instruction in §Findings.*
@@ -168,14 +168,14 @@ bed as the two test geometries; a new ctest pinning np=1 bitwise on a seamed mes
 - **D2 [OPUS]** — drop the single-rank guard; np=2,4 acceptance per DD4; measure distributed
   setSolid scaling (the F1 fix should give near-single-rank per-rank cost).
   *DONE 2026-08-30 — see §D2 results below.*
-- **D3 [FABLE]** — review the np>1 numbers, decide whether the ~5e-12 class holds for the
+- **D3 [ARCHITECT]** — review the np>1 numbers, decide whether the ~5e-12 class holds for the
   sampled path or the deviation needs attribution; then the depth-9 TWO-ARM run on 2×H100
   *Status 2026-08-30: the setup-cost item is RESOLVED (see the D3 resolution under §D2 results)
   and the ~3e-7 class is RULED ON (accepted — see below). Remaining: the depth-9 two-arm run,
   now unblocked and queued as D3b [OPUS-executable] below.*
   (the uniform control finally fits split) — the full accuracy-matched headline at R/h₀=48.
 - **Backlog, explicitly NOT this phase**: sub-face closures (accuracy item, bounded at ≤1.6%
-  of rows — needs its own Fable design pass), pocket exclusion in LS clouds (fold into D0's
+  of rows — needs its own architect design pass), pocket exclusion in LS clouds (fold into D0's
   cloud redesign ONLY if it falls out naturally; otherwise unchanged), device-resident
   assembly (next campaign after these).
 
@@ -383,7 +383,7 @@ BOUNDED set of probes inside a pending region (e.g. at the coarsest level presen
 so it learns several levels per round, trading a larger miss set for fewer collectives. That is a
 design choice with a real trade-off, so it is flagged here rather than taken: **a D3 item.**
 
-#### D3 resolution (Fable, 2026-08-30): discovery is probe-only + aligned-lattice pending regions
+#### D3 resolution (architect, 2026-08-30): discovery is probe-only + aligned-lattice pending regions
 
 Taken and landed. Two independent pieces, and two wrong turns worth recording because each was
 caught by a measurement, not by review:
@@ -442,7 +442,7 @@ set_solid + 20 steps BITWISE vs the D2 baseline; depth-6 mask bitwise; seam acce
 
 ## M2a results — the cloud-economy table (Opus, 2026-08-30; `tests/study/amr_cloud_economy.py`)
 
-Measurement only, per the M2 verdict; **M2b (picking the production rho/N) is FABLE's** and is
+Measurement only, per the M2 verdict; **M2b (picking the production rho/N) is ARCHITECT's** and is
 deliberately not taken here. Knobs (both inert at their defaults, verified bitwise on the depth-7
 bed): `PECLET_CORE_GPS_RHO` (radius factor, default 2.2) and `PECLET_CORE_GPS_MAXN` (keep the N
 nearest by (distance², global Morton key), default 0 = no cap; the kept set is emitted in the
@@ -491,7 +491,7 @@ the uniform arm a is variant-independent and needs running once.
 number (a fixed workload wandered 886 → 5886 ms/step across windows today) makes it meaningless.
 The CSR column is the contention-free proxy, and it is exact.
 
-## D3 rulings (Fable, 2026-08-30)
+## D3 rulings (architect, 2026-08-30)
 
 **D3(a) — the ~3e-7 np>1 class: ACCEPTED as the sampled path's march-level
 decomposition-independence class; no further attribution required.** The evidence Opus assembled
@@ -521,17 +521,17 @@ np-dependence in the steady-state permeability beyond the ~1e-10 class.
    fix and must not be mixed into the two-arm comparison. Right-size `--gpus-per-node`
    ([[snellius-access]]: billed per allocated GPU) and remember `--export=ALL,VAR=…`
    ([[snellius-sbatch-env-vars]]). Report the k pair, the census, and the fixpoint round count
-   at np=2 — then stop; reading the headline is FABLE.
+   at np=2 — then stop; reading the headline is ARCHITECT.
 
 ## Findings
 
 ### F2 (D0, 2026-08-30) — the LS cloud's periodic period is 4 fine cells SHORT: DD1 cannot be made bitwise without fixing it
 
-**Status: RESOLVED 2026-08-30 (Fable) — the true-period fix is TAKEN and is on `main` (see the
+**Status: RESOLVED 2026-08-30 (architect) — the true-period fix is TAKEN and is on `main` (see the
 resolution at the end of this finding). D0 is unblocked; the parked branch's remaining diff is
 enumeration-only.**
 
-*(The finding as escalated, kept verbatim for the record:)* D0 BLOCKED on a [FABLE] decision
+*(The finding as escalated, kept verbatim for the record:)* D0 BLOCKED on a [ARCHITECT] decision
 (DD1's own escalation clause). The probe-set rewrite is written, gated and green everywhere
 EXCEPT this; it is parked on branch `dev/d0-probe-clouds` (core), not on `main`, because landing
 it would silently change march numerics.
@@ -619,12 +619,12 @@ single-rank guard. The fix is a prerequisite for D, not an optional cleanup.
   256, and the depth-7 bed's census and fluid mask are unchanged. The bed's field difference above
   is entirely the period fix.
 
-**The decision Fable owns.** Take the fix (`nbx = fineExt/4`, `domain = nbx·hb`, and in the
+**The decision the architect owns.** Take the fix (`nbx = fineExt/4`, `domain = nbx·hb`, and in the
 distributed build the GLOBAL fine extent rather than `pres.fineExt()`, which is the block's), which
 re-blesses any bed reference that carries sampled clouds near a boundary — or specify a different
 period convention. Either way D0 lands the same refactor; only the constant changes.
 
-#### F2 RESOLUTION (Fable, 2026-08-30) — take the true period; land it FIRST, separately from D0
+#### F2 RESOLUTION (architect, 2026-08-30) — take the true period; land it FIRST, separately from D0
 
 There is no alternative convention to weigh. The minimum-image period of a periodic domain of
 `fineExt` fine cells is `fineExt·h0` — the value `probeSlot`, `LeafHalo::wrap`, and every other
@@ -689,7 +689,7 @@ from now on are corrected-period ones and must not be compared to the old logs a
 
 Two items are open. Neither is blocked on code — one is a decision, one is machine time.
 
-### 1. M2b — pick the production cloud (FABLE decision; the data is in §M2a results)
+### 1. M2b — pick the production cloud (ARCHITECT decision; the data is in §M2a results)
 
 The table is complete and the shape is clean: **rho 1.8, rho 1.5 and N ≤ 32 all pass every gate**;
 N ≤ 24 passes the bed permeability while FAILING the LS2-convergence gate; N ≤ 16 fails three

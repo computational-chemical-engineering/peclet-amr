@@ -1,6 +1,6 @@
 # Design brief: the pressure multigrid cannot coarsen below the octree's root brick
 
-> For a Fable design pass, 2026-09-23, on branch `c1-advective-cost` of `peclet-amr` (`ed33b51`,
+> For an architect design pass, 2026-09-23, on branch `c1-advective-cost` of `peclet-amr` (`ed33b51`,
 > base `7d4dac9`). ROADMAP item **C1**, re-diagnosed by profiling — the old entry blamed the
 > momentum path and was wrong.
 
@@ -14,7 +14,7 @@ A decision-shaped answer says what the sub-root levels are made of, who owns the
 cut-cell openness reaches them, where the hierarchy stops and what solves the bottom, and what it
 costs to build and to run.
 
-## 2. Why it needs Fable
+## 2. Why it needs the architect
 
 Three things put it above routine work.
 

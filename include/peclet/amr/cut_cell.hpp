@@ -249,7 +249,7 @@ class AmrCutCell {
     //
     // Exactly inert at the finest level: f == 1.0, so betaArr and AC0 are bit-for-bit the old beta
     // and AC0 expressions, and any run whose cut cells are all finest is byte-identical.
-    forLeaves([&](Index i) {  // own-leaf slots only (rung 3, Fable-pre-cleared: no
+    forLeaves([&](Index i) {  // own-leaf slots only (rung 3, architect-pre-cleared: no
                               // neighbour-indexed stores in this body)
       const double f = static_cast<double>(Index(1) << t_->level(i));  // h_leaf / h_finest
       const double inv = 1.0 / (f * f);
