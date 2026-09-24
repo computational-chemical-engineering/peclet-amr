@@ -18,9 +18,11 @@
 //   * the bottom is exact damped Jacobi while the final extent is <= `bottomExtent`, and the
 //     agglomerated GraphAMG-PCG solve otherwise (§6.6).
 //
-// The tail (WO4) and the GraphAMG bottom (WO5) are predicted here before they are built: this
-// header describes the ladder of the finished design, which is what makes it useful as the
-// specification the built ladder is checked against.
+// The prediction was written before the tail (WO4) and the GraphAMG bottom (WO5) were built, as
+// the ladder of the finished design; both have since landed and match it, which is what makes it
+// the specification the built ladder is checked against (`amr_mg_predict`, `amr_mg_tail`,
+// `amr_mg_bottom{,_dist}`). It predicts the default bottom selection, `auto`, on the ORB a
+// freshly initialised DistributedOctree builds — not a weighted or rebalanced partition.
 #ifndef PECLET_AMR_MG_PREDICT_HPP
 #define PECLET_AMR_MG_PREDICT_HPP
 
@@ -54,20 +56,28 @@ inline const char* toString(MgBottomKind k) {
   return k == MgBottomKind::Jacobi ? "jacobi" : "amg";
 }
 
+/// One predicted level of the pressure ladder (docs/amr_mg_depth.md §6.7).
 template <int Dim>
 struct MgLevelPrediction {
   IVec<Dim> extent{};   ///< global grid extent in THIS level's cell units
   long long cells = 0;  ///< product of `extent` — the global cell count of a UNIFORM mesh
-  MgLevelKind kind = MgLevelKind::Octree;
+  MgLevelKind kind = MgLevelKind::Octree;  ///< where the level comes from
 };
 
+/// The whole predicted ladder: what `predictPressureLadder` returns and what
+/// `peclet.amr.predict_pressure_hierarchy` hands to Python as a dict. The built ladder is compared
+/// against it level by level (`AmrFlow::pressureMgLevels`, `DistributedFlowMultigrid`).
 template <int Dim>
 struct MgLadderPrediction {
-  std::vector<MgLevelPrediction<Dim>> levels;  ///< finest first; tail levels appended
+  /// Finest first; tail levels appended. The first tail level is the SAME grid as the last
+  /// in-place one (moved, not coarsened), as `AmrFlow::pressureMgLevels` also lists it.
+  std::vector<MgLevelPrediction<Dim>> levels;
   bool tail = false;                           ///< the redundant tail engages
   IVec<Dim> tailFrom{};                        ///< the coarsest in-place grid the tail gathers
-  MgBottomKind bottom = MgBottomKind::Jacobi;
+  MgBottomKind bottom = MgBottomKind::Jacobi;  ///< what solves the coarsest level under `auto`
 
+  /// Levels that keep the ORB (kinds `Octree` and `Lifted`); compare against
+  /// `DistributedFlowMultigrid::numInPlaceLevels()`.
   std::size_t numInPlace() const {
     std::size_t k = 0;
     for (const auto& lv : levels)
@@ -129,6 +139,14 @@ void pushLevel(MgLadderPrediction<Dim>& p, const IVec<Dim>& G, MgLevelKind kind)
 /// of `Octree(cells, lmax=0)`). An UNREFINED `Octree(cells, lmax=k>0)` is the same mesh as
 /// `Octree(cells / 2^k, lmax=0)` and must be predicted as such — its leaves are all root cells, so
 /// its octree ladder is one level, not `k + 1`.
+///
+/// LOCAL and pure: no MPI, no Kokkos, no mesh; any `numRanks` may be asked for on one process.
+/// `numRanks < 1` is treated as 1. The ORB is `BlockDecomposer<Dim>(numRanks, G)`, the partition
+/// `DistributedOctree::init` builds without weights; a weighted (`rebalance`d) partition may nest
+/// less deeply than predicted. `bottomExtent` is `AmrFlow::pressureBottomExtent()` (default 4).
+///
+/// @pre every `G[d] >= 1` and `bottomExtent >= 1` (the Python binding checks both). Does not
+/// throw.
 template <int Dim>
 MgLadderPrediction<Dim> predictPressureLadder(IVec<Dim> G, unsigned lmax, int numRanks,
                                               Index bottomExtent = 4) {

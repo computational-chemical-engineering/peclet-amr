@@ -671,7 +671,10 @@ class AmrFlow {
   /// level-aware probes at every face whose upwind-side stencil crosses a 2:1 octree seam —
   /// default ON. The tables are built either way (setSolid); this captures one bool in the two
   /// advective kernels, so `false` is TODAY'S arithmetic bit for bit (gate G0) and the switch can
-  /// be flipped between steps. Inert without advection, and on any mesh with no 2:1 face.
+  /// be flipped between steps. Inert without advection, with `CfScheme::standard` (no tables are
+  /// built), and on any mesh with no 2:1 face. Leave it on in production: it exists for the A/B
+  /// of §12, where it cuts the one-step seam truncation 7.9e-3 → 2.0e-3 at no measurable cost.
+  /// Local (every rank must pass the same value, as for every scheme switch).
   void setSeamReconstruction(bool on) { seamRecon_ = on; }
   /// Use the Galerkin velocity multigrid (MomentumMG) as the momentum BiCGStab
   /// preconditioner. This is the scalable momentum solver: the coarse operators are the exact
@@ -1824,8 +1827,10 @@ class AmrFlow {
   }
   /// The pressure multigrid's ladder as BUILT on this rank: per-level leaf counts, level 0 first
   /// (docs/amr_mg_depth.md §6.7). Levels below the root brick are lifted levels; tail levels are
-  /// appended when the redundant tail engages (WO4). Compare against
-  /// `peclet.amr.predict_pressure_hierarchy` rather than against a literal.
+  /// appended when the redundant tail engages (WO4) — GLOBAL counts, identical on every rank, the
+  /// first of them the moved coarsest in-place level itself. Empty before `setSolid`. Local (no
+  /// communication). Compare against `peclet.amr.predict_pressure_hierarchy` rather than against
+  /// a literal.
   std::vector<Index> pressureMgLevels() const {
     std::vector<Index> out;
     if (!dist_) {
@@ -1840,10 +1845,10 @@ class AmrFlow {
     return out;
   }
   /// What actually solves the coarsest pressure level (docs/amr_mg_depth.md §6.6/§6.7):
-  /// `"jacobi"` | `"amg"`, with the suffix `"+tail"` when the coarsest in-place level is gathered
-  /// and continued redundantly (§6.5). The agglomerated GraphAMG bottom is WO5, so the kind is
-  /// still `"jacobi"` on every path; `predict_pressure_hierarchy` reports the bottom of the
-  /// FINISHED design and so may say `"amg"` where this says `"jacobi"`.
+  /// `"jacobi"` (60 damped-Jacobi sweeps) | `"amg"` (the agglomerated `GraphAMG`-PCG bottom,
+  /// amg_bottom.hpp), with the suffix `"+tail"` when the coarsest in-place level is gathered and
+  /// continued redundantly (§6.5). Under the default `"auto"` it matches
+  /// `predict_pressure_hierarchy`'s `bottom`; `"jacobi"` before `setSolid`. Local.
   std::string pressureMgBottom() const {
     return dist_ ? presMGD_.bottomName() : presMG_.bottomName();
   }
@@ -1852,7 +1857,14 @@ class AmrFlow {
   /// default — the agglomerated GraphAMG-PCG bottom engages iff the coarsest global extent exceeds
   /// `pressureBottomExtent()`, where 60 damped-Jacobi sweeps stop being a solve), `"smoother"`
   /// (always the sweeps), `"agglomerated"` (always the exact solve). Flow's three spellings.
-  /// Call BEFORE setSolid — that is where the pressure hierarchy is built.
+  /// Changes the preconditioner, never the converged pressure; §11.4(a) measured identical
+  /// iteration counts for `smoother` and `agglomerated` in all nine cases at the default extent.
+  ///
+  /// Takes effect AT ONCE on the hierarchy already built (the bottom is re-decided in place) and
+  /// is kept for every later `setSolid`, so it may be called before or after it. Distributed it is
+  /// COLLECTIVE — the re-decision may build the replicated stage (`DistributedFlowMultigrid::
+  /// setBottom`) — so call it on every rank.
+  /// @throws std::runtime_error on any other string.
   void setPressureBottom(const std::string& kind) {
     using B = typename Multigrid<3, Bits>::Bottom;
     if (kind == "auto")
@@ -1871,13 +1883,19 @@ class AmrFlow {
   }
 
   /// Where the pressure ladder stops lifting the root and hands over to the bottom
-  /// (docs/amr_mg_depth.md §6.2/§11.4). Developer tier — the shipped default is measured, not
-  /// preferred (tests/study/amr_pressure_depth.py --sweep). Call BEFORE setSolid.
+  /// (docs/amr_mg_depth.md §6.2/§11.4), in CELLS PER AXIS of the coarsest level: the ladder stops
+  /// once no axis has more than `e` cells, and `"auto"` engages the exact bottom where it stopped
+  /// above it. Default 4, where the 60 sweeps are exact. Developer tier — the shipped default is
+  /// measured, not preferred (§11.4: 8 moves the iteration count by ~1 on one case in three;
+  /// tests/study/amr_pressure_depth.py --sweep). Only STORED here: it takes effect at the next
+  /// `setSolid`, where the ladder is built. Local.
+  /// @throws std::runtime_error if `e < 1`.
   void setPressureBottomExtent(Index e) {
     if (e < 1)
       throw std::runtime_error("amr::AmrFlow::setPressureBottomExtent: must be >= 1");
     presBottomExtent_ = e;
   }
+  /// The bottom extent the next `setSolid` builds the ladder with (default 4).
   Index pressureBottomExtent() const { return presBottomExtent_; }
 
   /// Copy the divergence-free face field to host (one value per CSR (sub)face, forEachFaceFull
@@ -1896,12 +1914,16 @@ class AmrFlow {
     std::vector<Index> start, nbr, upupI, upupJ;
     std::vector<int> axis, dir;
     std::vector<double> rawArea, dist, alpha;
-    // Seam reconstruction (docs/amr_cf_convective.md §5.2), empty where no tables were built.
+    /// @name Seam reconstruction
+    /// The `SeamReconHost` tables (seam_recon.hpp, docs/amr_cf_convective.md §5.2) as uploaded;
+    /// empty where no tables were built (`CfScheme::standard`).
+    ///@{
     std::vector<Index> seam, sampI, sampJ, uuRecI, uuRecJ, recStart, recCell;
     std::vector<double> d1I, d1J, recDist, recW;
-    // World centre of EVERY slot (local leaves then ghosts, size nExt): the only way a caller can
-    // say what cell a ghost index in `nbr` / `recCell` is, and so the only way the record tables
-    // can be compared across decompositions (gate WO1c).
+    ///@}
+    /// World centre of EVERY slot (local leaves then ghosts, size nExt): the only way a caller can
+    /// say what cell a ghost index in `nbr` / `recCell` is, and so the only way the record tables
+    /// can be compared across decompositions (gate WO1c).
     std::vector<double> center;
   };
   FaceTopologyHost faceTopology() const {
@@ -1945,9 +1967,11 @@ class AmrFlow {
     return c;
   }
   /// Seam-reconstruction census (docs/amr_cf_convective.md §5.2): how many sample records (one per
-  /// 2:1 sub-face pair that passes the C/F gate) and face-layer records this rank built. LOCAL
-  /// under MPI, like `numCfGhostColumns`.
+  /// 2:1 sub-face pair that passes the C/F gate) this rank built. LOCAL under MPI, like
+  /// `numCfGhostColumns`; 0 with `CfScheme::standard` and on any mesh without a 2:1 face.
   Index numSeamSampleRecords() const { return seamSampleRecords_; }
+  /// The face-layer half of the census: one record per (regular coarse cell, face) whose far side
+  /// is refined into four fluid cells — the upstream probe of case 3. LOCAL under MPI.
   Index numSeamLayerRecords() const { return seamLayerRecords_; }
   Index numLeaves() const { return n_; }
   /// Distributed: number of ghost slots in the ±2 registry (0 single-rank).

@@ -16,6 +16,9 @@
 // against core's `GraphAMGDevice`, so a big elongated-brick bottom (§5.5: `512x512x4` lifts to
 // `256x256x2` = 131 k cells) never leaves the device. The two paths are the same algorithm; only
 // the dot products reassociate, which perturbs an inner solve converged to `kTol` by ~1e-12.
+// The threshold is §5.5's; §11.11 later MEASURED it to be about an order of magnitude too high
+// (the host CG is ~16 % faster than the 60 sweeps at a 64-cell bottom, ~28 % slower at 4096 rows)
+// and left it, with those numbers, for whoever builds the device path out.
 //
 // It is used by `Multigrid` single-rank and therefore by the replicated stage (§6.5), which IS a
 // single-rank Multigrid on the gathered coarsest in-place level.
@@ -45,10 +48,21 @@
 
 namespace peclet::amr {
 
+/// The agglomerated exact bottom of the pressure multigrid (docs/amr_mg_depth.md §6.6): the
+/// coarsest level's FV Laplacian assembled as the SPD matrix S = −Vol·L, with identity rows for
+/// fully closed cells and the constant nullspace projected per connected fluid component, solved
+/// by `GraphAMG`-preconditioned CG to relative `kTol` = 1e-10 (cap `kMaxIters` = 100).
+///
+/// Owned by `Multigrid` (single-rank, and therefore the replicated stage's continued ladder) and
+/// by `DistributedFlowMultigrid` at np = 1; selected by `Multigrid::setBottom` —
+/// `Flow.diagnostics.set_pressure_bottom('auto' | 'smoother' | 'agglomerated')`. It changes the
+/// preconditioner, never the converged pressure. LOCAL: no MPI anywhere in the class — a
+/// replicated tail runs one identical copy per rank. Setup is host, once per `build()`; the
+/// per-V-cycle solve is host or device by size (`kHostMax`). Throws nothing of its own.
 template <int Dim, unsigned Bits = (Dim == 2 ? 32u : (Dim == 3 ? 21u : 16u))>
 class AmgBottom {
  public:
-  using Poisson = AmrPoisson<Dim, Bits>;
+  using Poisson = AmrPoisson<Dim, Bits>;  ///< the level operator the matrix is assembled from
 
   /// Above this many rows the per-V-cycle solve runs on the device (§5.5).
   static constexpr Index kHostMax = 10000;
@@ -108,11 +122,17 @@ class AmgBottom {
     }
   }
 
+  /// True once `build()` has assembled a non-empty level.
   bool ready() const { return n_ > 0; }
+  /// Whether the per-V-cycle solve runs on the device (`size() > kHostMax`).
   bool onDevice() const { return onDevice_; }
+  /// Rows of the bottom matrix = cells of the coarsest level.
   Index size() const { return n_; }
+  /// Fully closed cells (every face openness 0), solved as identity rows with solution 0.
   Index numIdentityRows() const { return nIdentity_; }
+  /// Connected fluid components; each carries its own constant nullspace mode.
   int numComponents() const { return nComp_; }
+  /// CG iterations of the last `solve` (0 for a zero right-hand side).
   int lastIters() const { return lastIters_; }
   /// ‖rhs − S x‖∞ / ‖rhs‖∞ of the last solve, measured on the CSR the bottom itself assembled.
   /// The V-cycle's own FvOp check (the §6.6 consistency gate) lives in Multigrid::vcycle and is the

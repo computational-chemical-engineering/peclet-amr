@@ -131,7 +131,7 @@ class DistributedOctree {
   /// and this block's size are all even on every axis — flow's `evenBlocks` test, re-evaluated in
   /// the CURRENT root units. The decision is collective (one rank's odd block stops the ladder for
   /// everyone), so a caller Allreduces this before lifting; see the lockstep depth in
-  /// `DistributedFlowMultigrid::buildImpl`.
+  /// `DistributedFlowMultigrid::buildImpl`. This call itself is LOCAL (no communication).
   bool canLiftRoot() const {
     for (int d = 0; d < Dim; ++d)
       if ((globalRootSize_[d] % 2) != 0 || (blockOriginRoot_[d] % 2) != 0 ||
@@ -153,6 +153,12 @@ class DistributedOctree {
   /// Precondition: `canLiftRoot()` on EVERY rank. Lifting one rank alone would desynchronise the
   /// decomposition; `coarsened()` asserts the divisibility of every split and block in debug
   /// builds.
+  ///
+  /// No communication of its own — but it must be done in LOCKSTEP: every rank lifts the same
+  /// number of times, because every later collective on the lifted level (halo build, owner
+  /// lookup, `Allreduce`) assumes the same decomposition everywhere. Does not throw; the
+  /// preconditions are debug asserts. Like `BlockOctree::liftRoot`, it is applied to copies that
+  /// become multigrid levels, never to the solver's own mesh.
   void liftRoot() {
     IVec<Dim> ratio{};
     for (int d = 0; d < Dim; ++d)

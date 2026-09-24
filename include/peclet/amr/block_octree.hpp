@@ -257,7 +257,10 @@ class BlockOctree {
   /// True iff the root brick can be halved on every axis: `brick()` and
   /// `globalOrigin()` both even everywhere. This is the lift precondition, and
   /// under MPI it is flow's `evenBlocks` test re-evaluated in the current root
-  /// units (docs/amr_mg_depth.md §6.2/§6.4).
+  /// units (docs/amr_mg_depth.md §6.2/§6.4). It says only that a lift is LEGAL;
+  /// whether one is useful (the grid still larger than the bottom extent, and
+  /// at least two cells left per axis) is the ladder's rule,
+  /// `AmrMultigrid::canLiftLevel`. Local, O(Dim).
   bool canLiftRoot() const {
     for (int d = 0; d < Dim; ++d)
       if ((brick_[d] % 2) != 0 || (globalOrigin_[d] % 2) != 0)
@@ -272,7 +275,10 @@ class BlockOctree {
   /// the device assembly, the halo) sees exactly what it saw before. What changes
   /// is that each former root cell now has siblings, so `coarsenIf` merges one
   /// octet further: this is what a multigrid level below the root brick IS
-  /// (docs/amr_mg_depth.md §1, §6.1). Precondition: `canLiftRoot()`.
+  /// (docs/amr_mg_depth.md §1, §6.1). Precondition: `canLiftRoot()`, checked by
+  /// `assert` only (no throw in a release build). Local, O(Dim). The inverse
+  /// does not exist: a lifted tree is a multigrid LEVEL, never handed back to
+  /// the solver as its mesh (`AmrMultigrid::build` lifts copies).
   void liftRoot() {
     assert(canLiftRoot());
     for (int d = 0; d < Dim; ++d) {

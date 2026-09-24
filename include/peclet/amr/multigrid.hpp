@@ -136,6 +136,9 @@ class Multigrid {
   void build(const Octree& finest, double h0, bool liftRoot = true, Index bottomExtent = 4) {
     build(finest, detail::filledVec<Dim>(h0), liftRoot, bottomExtent);
   }
+  /// The per-axis form: `h0` is the finest spacing (dx, dy, dz); every level inherits the root
+  /// aspect ratio (docs/amr_anisotropic.md AM1). Re-decides the bottom (`setBottom`'s rule) at the
+  /// end. Host setup + device upload; local (single-rank).
   void build(const Octree& finest, const Vec<Dim>& h0, bool liftRoot = true,
              Index bottomExtent = 4) {
     bottomExtent_ = bottomExtent;
@@ -154,6 +157,10 @@ class Multigrid {
     build(finest, detail::filledVec<Dim>(h0), std::forward<OpenFn>(openFn), periodic, immersedWall,
           liftRoot, bottomExtent);
   }
+  /// The per-axis form of the openness build (see the scalar-`h0` overload above). `liftRoot` /
+  /// `bottomExtent` continue the ladder below the root brick exactly as in the openness-free
+  /// build (docs/amr_mg_depth.md §6.1–§6.2); the openness of a lifted level is area-averaged like
+  /// any other (§6.3).
   template <class OpenFn>
   void build(const Octree& finest, const Vec<Dim>& h0, OpenFn&& openFn, bool periodic = true,
              bool immersedWall = false, bool liftRoot = true, Index bottomExtent = 4) {
@@ -211,18 +218,28 @@ class Multigrid {
   }
 
   /// Select what solves the coarsest level (§6.6). Takes effect immediately — the exact bottom is
-  /// (re)assembled here — so it may be called before or after build().
+  /// (re)assembled here — so it may be called before or after build(); `build` re-applies the
+  /// selection in force. Local. CAVEAT: the rule is the Laplacian's alone — `setHelmholtz`'s
+  /// fall-back to the sweeps (the exact bottom assembles the pure Laplacian) is undone by a LATER
+  /// `setBottom`, `build` or `reassembleOperators`. Nothing combines them today (no caller of
+  /// `setHelmholtz`); call `setHelmholtz` last if one ever does.
   void setBottom(Bottom b) {
     bottomKind_ = b;
     buildBottom();
   }
+  /// The selection in force (`Auto` unless `setBottom` said otherwise).
   Bottom bottom() const { return bottomKind_; }
   /// `"jacobi"` | `"amg"` — what the coarsest level ACTUALLY runs.
   std::string bottomName() const { return amgOn_ ? "amg" : "jacobi"; }
+  /// The extent (cells per axis) the last `build` stopped the ladder at and `Auto` compares with.
   Index bottomExtent() const { return bottomExtent_; }
+  /// Rows of the exact bottom's matrix (0 when the sweeps run instead).
   Index bottomSize() const { return amg_ ? amg_->size() : 0; }
+  /// Fully closed coarsest cells the exact bottom solves as identity rows (0 without it).
   Index bottomIdentityRows() const { return amg_ ? amg_->numIdentityRows() : 0; }
+  /// Connected fluid components of the coarsest level (0 without the exact bottom).
   int bottomComponents() const { return amg_ ? amg_->numComponents() : 0; }
+  /// Inner CG iterations of the last exact bottom solve (0 without it).
   int bottomIters() const { return amg_ ? amg_->lastIters() : 0; }
   /// Whether the exact bottom's per-V-cycle solve runs on the device (§5.5's 10^4-row rule).
   bool bottomOnDevice() const { return amg_ && amg_->onDevice(); }
@@ -231,6 +248,7 @@ class Multigrid {
   /// |b − L x| with the V-CYCLE'S OWN FvOp and record max|b − Lx| / max|b|. Off by default (two
   /// extra device reductions per V-cycle); §10 quotes `bottomResidual()` at <= 1e-9.
   void setBottomCheck(bool on) { bottomCheck_ = on; }
+  /// max|b − L x| / max|b| of the last checked bottom solve (0 unless `setBottomCheck(true)`).
   double bottomResidual() const { return bottomRel_; }
 
   std::size_t numLevels() const { return levels_.size(); }

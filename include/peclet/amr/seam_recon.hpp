@@ -1,4 +1,4 @@
-// core — the prebuilt tables the convective flux needs at a 2:1 coarse/fine seam (ROADMAP B5).
+// amr — the prebuilt tables the convective flux needs at a 2:1 coarse/fine seam (ROADMAP B5).
 //
 // docs/amr_cf_convective.md: the SOU/Koren reconstruction of the ADVECTED value is O(h) wrong at
 // every face whose upwind-side stencil crosses a level — the coarse upwind cell's column is
@@ -47,7 +47,14 @@
 
 namespace peclet::amr {
 
-/// Host-side seam-reconstruction tables (docs/amr_cf_convective.md §5.2). Uploaded into FaceGeom.
+/// Host-side seam-reconstruction tables (docs/amr_cf_convective.md §5.2), built once per
+/// `AmrFlow::setSolid` by `buildSeamRecon` and uploaded into `FaceGeom` (`face_geom.hpp`), where
+/// the two advective kernels read them through `advect_recon.hpp`. Indexed three ways: per face
+/// SLOT of the `forEachFaceFull` CSR (`seam`), per DESCRIPTOR (the `samp*`, `uuRec*`, `d1*`
+/// arrays, one entry per slot whose `seam >= 0`), and per RECORD (the `rec*` CSR). Cell indices
+/// are slots of the flow's extended layout (local rows, then ghost slots under MPI). All vectors
+/// are empty when no tables were built (`CfScheme::standard`); `Flow.diagnostics.face_topology()`
+/// returns them verbatim.
 struct SeamReconHost {
   std::vector<Index> seam;   ///< per face slot: descriptor id, −1 = plain slot
   std::vector<Index> sampI;  ///< per descriptor: sample record when i is the COARSE cell, else −1
@@ -62,6 +69,7 @@ struct SeamReconHost {
   std::vector<double> recW;     ///< record entries: weight
   Index numSampleRecords = 0;   ///< diagnostics: how many of the records are sample records
   Index numLayerRecords = 0;    ///< diagnostics: how many are layer records
+  /// Number of descriptors, i.e. of face slots that take the seam path (`seam[slot] >= 0`).
   Index numDescriptors() const { return static_cast<Index>(sampI.size()); }
 };
 
@@ -106,6 +114,17 @@ inline bool seamFaceLayer(const AmrPoisson<3, Bits>& ap, Index C, int axis, int 
 /// suite-wide). Every probe it issues is registered by the distributed discovery fixpoint
 /// (`AmrFlow::probeCfScheme` + `AmrFlow::probeSeamLayer`), so a ghost cell resolves rather than
 /// throwing.
+///
+/// LOCAL: no communication; each rank walks its own rows, reading ghost slots through `ap`'s
+/// resolver. Deterministic (see the file header), which is what makes np = 1 bitwise identical to
+/// the single-rank build.
+///
+/// @pre `ap` is fully built on the final mesh (operator, level-aware probes and — distributed — a
+///      FINALIZED resolver whose registry holds every probe above). An unregistered out-of-block
+///      probe reaches the frozen `LeafHalo` resolver, which throws `std::runtime_error`.
+/// @pre `regularOk` / `fluidOk` accept every slot `ap` can return, ghost slots included.
+/// @return the tables; the two record counts are `Flow.diagnostics.num_seam_sample_records` /
+///         `num_seam_layer_records`.
 template <unsigned Bits, class RegularFn, class FluidFn>
 SeamReconHost buildSeamRecon(const AmrPoisson<3, Bits>& ap, RegularFn&& regularOk,
                              FluidFn&& fluidOk, CfScheme scheme) {

@@ -165,16 +165,20 @@ class DistributedFlowMultigrid {
   /// instantiation exists today (one block on every rank, moved by `Allgatherv`); the sibling-merge
   /// and repartition stages are WO4b and slot in behind the same `MgStage` interface.
   bool hasStage() const { return stage_ != nullptr; }
+  /// `"replicated"` (today's only stage), or `"none"` without one.
   const char* stageKind() const { return stage_ ? stage_->kind() : "none"; }
   /// Levels of the continued ladder (its level 0 IS the moved level, so the full ladder is
   /// `numInPlaceLevels() + numStageLevels()` — the convention `predictPressureLadder` reports).
   std::size_t numStageLevels() const { return stage_ ? stage_->numLevels() : 0u; }
+  /// Cells of continued-ladder level `L` on this rank's target block (GLOBAL counts for the
+  /// replicated stage). @pre `hasStage()`.
   Index stageLeaves(std::size_t L = 0) const { return stage_->numLeaves(L); }
   /// The global grid the stage moves (the coarsest in-place level's extent).
   const IVec<Dim>& stageFrom() const { return stageFrom_; }
   /// The moved level's solution on THIS rank's target block. For the replicated stage every rank
   /// holds an identical copy, which is what §11.2's cross-rank bitwise check reads.
   View<double> stageSolution() { return stage_->targetX(); }
+  /// The stage itself, for tests and diagnostics. @pre `hasStage()`.
   MgStage<Dim, Bits>& stage() { return *stage_; }
   /// `"jacobi"` | `"amg"`, suffixed by the stage's own spelling — `"+tail"` for the replicated
   /// one (docs/amr_mg_depth.md §6.7). Without a stage the coarsest in-place level is already at or
@@ -189,6 +193,12 @@ class DistributedFlowMultigrid {
   /// the single-rank `Multigrid`, so on this path it is the STAGE's bottom: without a stage the
   /// coarsest in-place level is at or below `bottomExtent` and the sweeps there are exact, which
   /// is why §6.6 scopes the agglomerated solve to `Multigrid` and the stage.
+  ///
+  /// COLLECTIVE whenever no stage exists yet: the selection is re-decided by `buildStage`, which
+  /// may BUILD the replicated stage (an `Allgatherv` of the coarsest level) — e.g.
+  /// `Agglomerated` at np > 1 on a ladder that stopped at or below `bottomExtent`. With a stage
+  /// already built it only re-selects the stage's own bottom; the stage stays. Call it on every
+  /// rank. Before `build` it just stores the selection.
   void setBottom(typename Multigrid<Dim, Bits>::Bottom b) {
     bottomKind_ = b;
     if (stage_)

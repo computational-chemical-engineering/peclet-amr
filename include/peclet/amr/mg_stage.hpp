@@ -43,11 +43,16 @@ namespace peclet::amr {
 /// a target decomposition, a target communicator with an active flag, the moved fields, the
 /// level's cells on the target block as a `BlockOctree`, and the continued ladder below it — are
 /// the five accessors below; the two movement steps are the only part the instantiations differ in.
+///
+/// Owned by `DistributedFlowMultigrid` (at most one, built in its `buildStage` after the openness
+/// ladder) and driven from its `vcycle` through `apply` at the stage point; `pressure_mg_levels`
+/// and `pressure_mg_bottom` report it. Collective semantics are per method, below: movement is
+/// collective on the PARENT communicator, the continued ladder on `targetComm()`.
 template <int Dim, unsigned Bits = (Dim == 2 ? 32u : (Dim == 3 ? 21u : 16u))>
 class MgStage {
  public:
-  using Octree = BlockOctree<Dim, Bits>;
-  using Decomposition = core::decomp::BlockDecomposer<Dim>;
+  using Octree = BlockOctree<Dim, Bits>;                     ///< a level's cells on one block
+  using Decomposition = core::decomp::BlockDecomposer<Dim>;  ///< the target partition's type
 
   virtual ~MgStage() = default;
 
@@ -68,9 +73,16 @@ class MgStage {
   virtual const Octree& targetOctree() const = 0;
 
   // ---- the continued ladder (its level 0 IS the moved level) ---------------------------------
+  /// Levels of the continued ladder, its level 0 (the moved level) included. Local.
   virtual std::size_t numLevels() const = 0;
+  /// Cells of continued-ladder level `L` on this rank's target block — the GLOBAL count for the
+  /// replicated stage, whose one block is the whole level. Local.
   virtual Index numLeaves(std::size_t L) const = 0;
+  /// `"jacobi"` | `"amg"`: what solves the continued ladder's coarsest level, WITHOUT the stage's
+  /// `diagnosticSuffix()` (the owner appends it). Local.
   virtual std::string bottomName() const = 0;
+  /// Per-level constant-nullspace projection for the singular periodic pressure; the owner forwards
+  /// its own flag (`DistributedFlowMultigrid::setRemoveMean`). Local.
   virtual void setRemoveMean(bool on) = 0;
   /// What solves the continued ladder's coarsest level (docs/amr_mg_depth.md §6.6). The exact
   /// bottom lives in the single-rank `Multigrid`, so this is where the selector lands.
@@ -112,11 +124,11 @@ class MgStage {
 template <int Dim, unsigned Bits = (Dim == 2 ? 32u : (Dim == 3 ? 21u : 16u))>
 class ReplicatedTailStage final : public MgStage<Dim, Bits> {
  public:
-  using Base = MgStage<Dim, Bits>;
-  using Octree = typename Base::Octree;
-  using Decomposition = typename Base::Decomposition;
-  using DO = DistributedOctree<Dim, Bits>;
-  using Poisson = AmrPoisson<Dim, Bits>;
+  using Base = MgStage<Dim, Bits>;                     ///< the stage interface
+  using Octree = typename Base::Octree;                ///< the gathered level, one block
+  using Decomposition = typename Base::Decomposition;  ///< one block: the whole level
+  using DO = DistributedOctree<Dim, Bits>;             ///< the level the stage fires at
+  using Poisson = AmrPoisson<Dim, Bits>;               ///< that level's FV operator
 
   /// Global cell id (x-fastest, CONVENTIONS.md) of a coordinate on the moved level's grid.
   static long long gidOf(const IVec<Dim>& g, const IVec<Dim>& G) {
@@ -130,6 +142,16 @@ class ReplicatedTailStage final : public MgStage<Dim, Bits> {
   /// so `rootSpan()` is the W of §6.5's `g_i = (blockFineOrigin + lo_i)/W`), `ap` its `AmrPoisson`
   /// — whose `opennessRaw()` rows are the DISTRIBUTED openness ladder's own output and are carried
   /// over rather than re-sampled — and `n` its local cell count. Collective on `comm`.
+  ///
+  /// Every rank then holds the whole level (`G = d.globalRootSize()` cells) and a single-rank
+  /// `Multigrid` on it, lifted down to `bottomExtent` with its own §6.6 bottom (default selection
+  /// `auto`; the owner re-sets it). `nExt` is unused (the extended size of the caller's views,
+  /// kept for the WO4b stages' signature). Memory: O(G) doubles and one host `Multigrid` per rank.
+  ///
+  /// @pre `d` is nested (every local leaf is a root cell of the lifted grid) and periodic on
+  ///      every axis.
+  /// @throws std::runtime_error if an axis is not periodic, if the ranks' leaves do not tile the
+  ///         global grid (the lift was not nested), or on a global id out of range.
   void build(const DO& d, const Vec<Dim>& h0, const Poisson& ap, Index n, Index nExt,
              Index bottomExtent, MPI_Comm comm) {
     comm_ = comm;
