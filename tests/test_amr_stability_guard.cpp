@@ -29,9 +29,10 @@
 //     own level) and marched 100 steps at dt in {0.1, 1, 10, 100} beside the unseeded twin.
 //     Measured: A_P = |(pi,pi,pi) amplitude of P - P_twin| (volume-weighted projection on the
 //     per-leaf checkerboard, fluid-mean removed; on the uniform mesh the FFT coefficient) and
-//     U = max|du - <du>|, du = u - u_twin with its fluid-volume mean removed per component (the
-//     kick grows the checkerboard, not the box mean; the mean carries a separate, report-only open
-//     defect — probeMeanMomentum). Pass iff at step 100 each is <= 2x its step-0 value and
+//     U = max|du| on the uniform (lmax = 0) meshes, where the box mean of du is conserved, and
+//     max|du - <du>| on the REFINED ones, du = u - u_twin with its fluid-volume mean removed per
+//     component there only (the kick grows the checkerboard, not the box mean; on a refined mesh
+//     the mean carries a separate, report-only open defect — probeMeanMomentum). Pass iff at step 100 each is <= 2x its step-0 value and
 //     <= (1 + 1e-6)x its step-50 value. A kick fails at dt >= 0.1 (x12 per step at dt = 1).
 //     Run at amr's DEFAULT settings (quadratic C/F scheme, AUTO ghost projection).
 //  G3 dt-independence. Sphere meshes, dt in {1, 10, 100}, each marched to
@@ -195,12 +196,13 @@ void seed(Flow& f, const Leafs& L, Index n) {
     f.setVelocity(c, u[static_cast<std::size_t>(c)]);
 }
 
-// A_P: the (pi,pi,pi) amplitude of dP = P - P_twin (fluid-mean removed). U: max|du - <du>|, du =
-// u - u_twin with its fluid-VOLUME MEAN removed per component. The kick grows the checkerboard,
-// not the box mean; the mean is excluded because the quadratic C/F pressure gradient leaks net
+// A_P: the (pi,pi,pi) amplitude of dP = P - P_twin (fluid-mean removed: the pressure gauge).
+// U: max|du|, du = u - u_twin -- RAW on a uniform (lmax = 0) mesh, where the box mean of du is
+// conserved and so must be gated too; with its fluid-VOLUME MEAN removed per component on a
+// REFINED mesh only (`removeUMean`), because there the quadratic C/F pressure gradient leaks net
 // momentum at 2:1 seams (a separate open defect, probed below and NOT gated here — see
-// probeMeanMomentum and amr CLAUDE.md "Gotchas").
-G2Measure measure(const Leafs& L, const Flow& fs, const Flow& ft) {
+// probeMeanMomentum and amr CLAUDE.md "Gotchas"). The kick grows the checkerboard either way.
+G2Measure measure(const Leafs& L, const Flow& fs, const Flow& ft, bool removeUMean) {
   const auto ps = fs.pressure(), pt = ft.pressure();
   const auto us = fs.velocities(), ut = ft.velocities();
   const std::size_t n = ps.size();
@@ -219,7 +221,8 @@ G2Measure measure(const Leafs& L, const Flow& fs, const Flow& ft) {
     if (L.fluid[i]) {
       a += L.vol[i] * L.chk[i] * (ps[i] - pt[i] - mean);
       for (int c = 0; c < 3; ++c)
-        um = maxAbs(um, us[i * 3 + c] - ut[i * 3 + c] - su[static_cast<std::size_t>(c)] / sv);
+        um = maxAbs(um, us[i * 3 + c] - ut[i * 3 + c] -
+                            (removeUMean ? su[static_cast<std::size_t>(c)] / sv : 0.0));
     }
   return {std::fabs(a) / sv, um};
 }
@@ -233,15 +236,15 @@ bool runG2(const Config& cfg, double dt) {
   const Leafs L = leafData(t, fs);
   const Index n = t.numLeaves();
   seed(fs, L, n);
-  const G2Measure m0 = measure(L, fs, ft);
+  const G2Measure m0 = measure(L, fs, ft, cfg.refined);
   G2Measure m50{}, m100{};
   for (int s = 1; s <= kG2Steps; ++s) {
     fs.step(200, 200);
     ft.step(200, 200);
     if (s == kG2Steps / 2)
-      m50 = measure(L, fs, ft);
+      m50 = measure(L, fs, ft, cfg.refined);
   }
-  m100 = measure(L, fs, ft);
+  m100 = measure(L, fs, ft, cfg.refined);
   const bool okP =
       std::isfinite(m100.ap) && m100.ap <= 2.0 * m0.ap && m100.ap <= (1 + 1e-6) * m50.ap;
   const bool okU = std::isfinite(m100.u) && m100.u <= 2.0 * m0.u && m100.u <= (1 + 1e-6) * m50.u;
