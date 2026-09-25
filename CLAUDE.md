@@ -52,11 +52,13 @@ PYTHONPATH=$PWD/build_q OMP_NUM_THREADS=1 python python/state_hash.py --check py
 export PATH=/usr/local/cuda-13.2/bin:$PATH                 # for the nvidia-cuda prefix
 ```
 
-**Counts** (host-openmp): **115** C++ ctests (31 single-rank + 21 distributed binaries × np = 1, 2,
+**Counts** (host-openmp): **116** C++ ctests (32 single-rank + 21 distributed binaries × np = 1, 2,
 4, 8) + 5 `bench` (four `study_amr_*` + `bench_amr_flow`) + 8 `python` (`python_amr`,
 `python_amr_np2`, `python_amr_seam_records` ×3 at np = 1, 2, 4, `python_state_hash`,
-`python_flow_parity`, `python_amr_tg_graded` — the last also carries the `bench` label) = **128**;
-`-LE 'bench|np8'` runs 101 of them and `-L np8` the remaining 21. (111 / 124 until 2026-09-24,
+`python_flow_parity`, `python_amr_tg_graded` — the last also carries the `bench` label) = **129**;
+`-LE 'bench|np8'` runs 102 of them and `-L np8` the remaining 21. (115 / 128 until 2026-09-25,
+when `amr_stability_guard` — the collocated no-kick gate — added a 32nd single-rank binary;
+111 / 124 until 2026-09-24,
 when WO4b's `amr_mg_stages` — the sibling-merge and repartition stages — added a 21st distributed
 binary; 92 / 101 until 2026-09-21,
 when `amr_distributed_cf` — the distributed C/F quadratic scheme — added a 17th distributed
@@ -281,3 +283,12 @@ still apply to the leaf halo.
   `set_solid` → `set_velocity()/set_pressure()`.
 - `core/python/build*/`-style stale trees naming `tpx_amr` were NOT carried over; a fresh
   `build_q` is the recipe.
+- **OPEN DEFECT (2026-09-25) — the pressure gradient at 2:1 seams is not momentum-conservative
+  under the quadratic C/F scheme** (`set_cf_scheme(1)`, the default). On a refined all-fluid
+  periodic box a decaying pressure perturbation puts net momentum in: mean u reached
+  (8.4e-4, −3.6e-3, −1.2e-3) by step 300 at dt = 100 from a 1e-3 seed, the 1e-5 level at dt = 1;
+  with `set_cf_scheme(0)` the mean is conserved to round-off. This is flow
+  `doc/collocated_varrho_forces.md` §13.2's question (is amr's pressure-force / constraint pair
+  exact-transpose at C/F faces?) — here it is not. `amr_stability_guard` removes the box mean
+  from its gated velocity and prints the drift as a report-only probe; the fix (or an explicit
+  acceptance) needs an architect / amr-owner decision BEFORE amr multiphase.

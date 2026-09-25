@@ -49,10 +49,12 @@ endforeach()
 # amr_pcg            MG-preconditioned CG over the device V-cycle
 # amr_momentum       device momentum operator + BiCGStab vs the host AmrCutCell
 # amr_flow_solver    the device AmrFlow step vs the host oracle + analytic solutions
+# amr_stability_guard  no face-acceleration kick: seeded-checkerboard growth + dt-independent steady
+#                    state (flow doc/collocated_varrho_forces.md §7.6; suite-wide register)
 foreach(t IN ITEMS block_octree_view amr_fv_op amr_assembly amr_momentum_assembly amr_facegeom
                    amr_multigrid amr_mg_lift amr_mg_bottom amr_fv_openness amr_kappa_restrict
                    amr_kappa_dirichlet
-                   amr_pcg amr_momentum amr_flow_solver)
+                   amr_pcg amr_momentum amr_flow_solver amr_stability_guard)
   _amr_test_exe(test_${t})
   peclet_amr_add_test(${t} test_${t})
 endforeach()
