@@ -37,6 +37,18 @@ judgement call in the moment.
 - **MG-as-solver with a Picard outer loop projects ONCE per step**, never inside the loop.
 - **Projection, MG transfers and V-cycle orchestration are deliberately NOT consolidated** onto a
   shared abstraction — that separation is intentional.
+- **Collocated Navier–Stokes pressure and forces go INSIDE the implicit momentum predictor — never a
+  face acceleration added after the viscous solve (the Basilisk `centered.h` "kick").** Added after
+  the implicit solve, the projection removes the lagged pressure exactly, so the velocity update is
+  non-incremental. That gives Chorin's dt-dependent steady state, and with the rotational update an
+  explicit pressure diffusion growing like −12κ·dt/(ρh²) per step (measured −12.0000; it capped
+  flow's V8 at density ratio ~100). Variable density keeps balance through the mass-adjoint pair
+  (the ρ-weighted face-average pressure force + the momentum-weighted centre→face map) and the
+  optional balanced-force projection — not through face placement. The guard is the
+  stability/dt-independence gate on every collocated path, not a grep: here ctest
+  `amr_stability_guard` (`tests/test_amr_stability_guard.cpp`; a kick emulated in `flow.hpp` fails
+  it at ×12.000000/step, κ = 0 fails its dt-independence by 2.5e-2–2.2e-1). Register: suite-wide
+  "Collocated forces stay in the implicit predictor"; design: flow `doc/collocated_varrho_forces.md`.
 
 ## Build / test
 
