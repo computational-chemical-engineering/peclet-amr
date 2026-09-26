@@ -32,7 +32,8 @@
 //     U = max|du| on the uniform (lmax = 0) meshes, where the box mean of du is conserved, and
 //     max|du - <du>| on the REFINED ones, du = u - u_twin with its fluid-volume mean removed per
 //     component there only (the kick grows the checkerboard, not the box mean; on a refined mesh
-//     the mean carries a separate, report-only open defect — probeMeanMomentum). Pass iff at step 100 each is <= 2x its step-0 value and
+//     the mean carries a separate, report-only open defect — probeMeanMomentum). Pass iff at step
+//     100 each is <= 2x its step-0 value and
 //     <= (1 + 1e-6)x its step-50 value. A kick fails at dt >= 0.1 (x12 per step at dt = 1).
 //     Run at amr's DEFAULT settings (quadratic C/F scheme, AUTO ghost projection).
 //  G3 dt-independence. Sphere meshes, dt in {1, 10, 100}, each marched to
