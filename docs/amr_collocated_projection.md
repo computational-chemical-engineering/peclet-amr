@@ -137,8 +137,11 @@ Driver knobs (Python `peclet.amr.Flow.diagnostics`, the developer tier): `set_mo
 (uf), `face_field()`.
 
 flow collocated reference run lived at `/tmp/sdflow_coloc_gpu.py` (single SC sphere, tol 1e-6,
-`SolverColocated`, `set_pressure_pcg(True,200,1e-8)`); the field-localisation harness is
-`flow/scripts/compare_amr_sdflow_field.py` (subprocess-isolated).
+`SolverColocated`, `set_pressure_pcg(True,200,1e-8)`); the field-localisation harness was
+`flow/scripts/compare_amr_sdflow_field.py` (subprocess-isolated), removed 2026-10-01 once the
+uniform-grid parity settled its question (flow and amr agree to 2.9e-7 at N=32 / 1.1e-6 at N=64 at
+lmax=0; the one difference is flow's un-projected advecting velocity) — in flow's git history at
+`eac5b07`.
 
 ## Open / next (pick up here)
 
