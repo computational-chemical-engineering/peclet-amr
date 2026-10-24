@@ -334,7 +334,8 @@ class Multigrid {
     return r;
   }
 
- private:
+  // Public: bottomSolveExact (a public device-kernel host, see there) names it — nvcc's stub
+  // must reach every type an extended-lambda enclosing function mentions.
   struct Level {
     FvOp op;
     Index n = 0;
@@ -343,6 +344,7 @@ class Multigrid {
     View<Index> c2p, childStart, childIdx;  // describe L → L+1 (unused on coarsest)
   };
 
+ private:
   // Upload the device hierarchy from the host AmrMultigrid hmg_ (which already holds
   // the uniform-coarsened octrees + per-level operators with coarsened openness). Each
   // level's face CSR is built from hmg_->op(L), so the device operator == that host
@@ -454,6 +456,7 @@ class Multigrid {
     amgOn_ = true;
   }
 
+ public:  // nvcc: a KOKKOS_LAMBDA's enclosing member function must be public
   /// One exact bottom solve. `AmgBottom` takes and returns device views: at or below 10^4 rows it
   /// stages them to the host and runs the CG there, above it the CG runs on the device (§5.5).
   void bottomSolveExact(Level& lv) {
@@ -478,6 +481,7 @@ class Multigrid {
     bottomRel_ = (bm > 0.0) ? rm / bm : 0.0;
   }
 
+ private:
   void buildFaceCsr(const Poisson& ap, const Octree& t, Level& lv) {
     const double c0 = lv.op.c0, cD = lv.op.cD;
     BlockOctreeView<Dim, Bits> ov;

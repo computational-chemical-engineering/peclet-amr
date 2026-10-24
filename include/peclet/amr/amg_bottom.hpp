@@ -267,6 +267,9 @@ class AmgBottom {
     dRhs_ = View<double>("amgb_rhs", nn);
   }
 
+  // nvcc forbids an extended (KOKKOS_LAMBDA) lambda in a private member function: the device
+  // kernels below are public, the rest of the implementation stays private.
+ public:
   /// Subtract the per-component mean on the device. The component count is 1 on a connected pore
   /// space and a handful with sealed pockets, so one reduction per component is the cheap shape.
   void projectDevice(View<double> v) const {
@@ -398,6 +401,7 @@ class AmgBottom {
     }
   }
 
+ private:
   // ---- shared setup --------------------------------------------------------------------------
   /// Connected components of the fluid graph: union-find over the faces with a POSITIVE
   /// conductance, identity rows excluded. The nullspace of a singular S is the constant on each
