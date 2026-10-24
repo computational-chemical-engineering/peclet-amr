@@ -81,6 +81,7 @@ Fields runSteps(AmrFlow<kBits>& f, int steps) {
 }
 
 void configure(AmrFlow<kBits>& f) {
+  f.setAdvection(false);  // Stokes (advection is ON by default)
   f.setDensity(1.0);
   f.setViscosity(1.0);
   f.setBodyForce(1.0, 0.0, 0.0);

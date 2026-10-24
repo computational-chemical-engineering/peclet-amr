@@ -119,6 +119,7 @@ BO buildMesh(const Config& cfg) {
 
 void initFlow(Flow& f, const BO& t, const Config& cfg, double dt) {
   f.init(t, 1.0);
+  f.setAdvection(false);  // the PROTOCOL is Stokes (advection is ON by default)
   f.setDensity(1.0);
   f.setViscosity(1.0);
   f.setDt(dt);
@@ -333,6 +334,7 @@ void probeMeanMomentum() {
       BO t = buildMesh(cfg);
       Flow f;
       f.init(t, 1.0);
+      f.setAdvection(false);  // Stokes (advection is ON by default)
       f.setDensity(1.0);
       f.setViscosity(1.0);
       f.setDt(dt);

@@ -61,6 +61,7 @@ def example_poiseuille() -> None:
     a, b = 0.25, 0.75  # wall planes; fluid in the slab a < x < b
     oct = core_amr.Octree(cells=[n, n, n], origin=[0, 0, 0], extent=[1.0, 1.0, 1.0])
     flow = core_amr.Flow(oct, density=1.0, viscosity=1.0, dt=1e6)
+    flow.set_advection(False)  # Stokes: advection is ON by default
     flow.set_solid(lambda x, y, z: min(x - a, b - x))  # >0 inside the channel
     flow.set_body_force(0.0, 1.0, 0.0)  # drive the flow along y
     for _ in range(5):

@@ -44,6 +44,7 @@ void test_poiseuille() {
 
   oracle::AmrFlow<21> fl;
   fl.init(t, h0);
+  fl.setAdvection(false);  // Stokes Poiseuille (advection is ON by default)
   fl.setDensity(1.0);
   fl.setViscosity(mu);
   fl.setDt(1e6);  // ~steady (divided convention well-conditioned at large dt)

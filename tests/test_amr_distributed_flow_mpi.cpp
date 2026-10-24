@@ -101,7 +101,8 @@ void run() {
       f.setAdvection(true);
       f.setDt(60.0);  // transient NS regime
     } else {
-      f.setDt(1e6);  // steady-drag regime (the hard, large-dt momentum system)
+      f.setAdvection(false);  // Stokes (advection is ON by default)
+      f.setDt(1e6);           // steady-drag regime (the hard, large-dt momentum system)
       f.setGhostProjection(mode == 1);
     }
     f.setSolid(sphereSdf);

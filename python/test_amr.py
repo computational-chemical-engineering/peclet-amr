@@ -205,6 +205,7 @@ if rank == 0:
 
     tc = core_amr.Octree(cells=[Nc, Nc, Nc], origin=[0, 0, 0], spacing=h0)
     flow = core_amr.Flow(tc, density=1.0, viscosity=1.0, dt=1e6)
+    flow.set_advection(False)  # Stokes (advection is ON by default)
     # No operator yet: step()/project() must raise, not dereference the unallocated state.
     for name, call in (("step", lambda: flow.step(mom_iters=1, pres_iters=1)),
                        ("project", lambda: flow.project(pres_iters=1))):
@@ -246,6 +247,7 @@ if rank == 0:
         aA, bA = 0.25 * L, 0.75 * L      # wall planes, cell-aligned at 4 and 12 cells
         fAxis = (wallAxis + 1) % 3       # drive along the next axis
         fA = core_amr.Flow(tA, density=1.0, viscosity=1.0, dt=1e6)
+        fA.set_advection(False)  # Stokes (advection is ON by default)
         fA.set_solid(lambda x, y, z, w=wallAxis, lo=aA, hi=bA: min((x, y, z)[w] - lo,
                                                                    hi - (x, y, z)[w]))
         fv = [0.0, 0.0, 0.0]
@@ -290,6 +292,7 @@ if rank == 0:
         t = core_amr.Octree(cells=[16, 16, 16], lmax=1, origin=[0, 0, 0], extent=[1.0, 1.0, 1.0])
         t.refine_to_sphere([0.5, 0.5, 0.5], 0.25, 0, 1.0)
         f = core_amr.Flow(t, density=1.0, viscosity=1.0, dt=1e6)
+        f.set_advection(False)  # Stokes (advection is ON by default)
         f.set_ghost_projection(ghost)
         if pcg is not None:
             f.set_pressure_pcg(pcg)

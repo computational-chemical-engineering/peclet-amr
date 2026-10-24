@@ -53,6 +53,7 @@ void benchFlowCompare(unsigned L, int steps) {
 
   oracle::AmrFlow<21> hfl;
   hfl.init(t, h0);
+  hfl.setAdvection(false);  // Stokes (advection is ON by default)
   hfl.setViscosity(1.0);
   hfl.setDt(1e6);
   hfl.setBodyForce(1.0, 0, 0);
@@ -65,6 +66,7 @@ void benchFlowCompare(unsigned L, int steps) {
 
   AmrFlow<21> dfl;
   dfl.init(t, h0);
+  dfl.setAdvection(false);  // Stokes (advection is ON by default)
   dfl.setViscosity(1.0);
   dfl.setDt(1e6);
   dfl.setBodyForce(1.0, 0, 0);
@@ -93,6 +95,7 @@ void profileFlow(unsigned L, int steps) {
   auto sdf = sphereSdf(Vec<3>{0.5, 0.5, 0.5}, 0.25);
   AmrFlow<21> dfl;
   dfl.init(t, h0);
+  dfl.setAdvection(false);  // Stokes (advection is ON by default)
   dfl.setViscosity(1.0);
   dfl.setDt(1e6);
   dfl.setBodyForce(1.0, 0, 0);
@@ -138,6 +141,7 @@ void dtSweep(unsigned L) {
   for (double dt : {dtVisc, 100 * dtVisc, 1e4 * dtVisc, 1e6}) {
     AmrFlow<21> dfl;
     dfl.init(t, h0);
+    dfl.setAdvection(false);  // Stokes (advection is ON by default)
     dfl.setViscosity(mu);
     dfl.setDensity(rho);
     dfl.setDt(dt);
@@ -164,6 +168,7 @@ void velocityMgCompare(unsigned L) {
   auto runIt = [&](bool mg) {
     AmrFlow<21> dfl;
     dfl.init(t, h0);
+    dfl.setAdvection(false);  // Stokes (advection is ON by default)
     dfl.setViscosity(1.0);
     dfl.setDt(1e6);
     dfl.setBodyForce(1.0, 0, 0);
@@ -200,6 +205,7 @@ void mgStrategyCompare(unsigned L) {
   auto runIt = [&](bool staircase, bool gs) {
     AmrFlow<21> dfl;
     dfl.init(t, h0);
+    dfl.setAdvection(false);  // Stokes (advection is ON by default)
     dfl.setViscosity(1.0);
     dfl.setDt(1e6);
     dfl.setBodyForce(1.0, 0, 0);
@@ -249,6 +255,7 @@ void benchFlow(unsigned L, int steps) {
 
   AmrFlow<21> dfl;
   dfl.init(t, h0);
+  dfl.setAdvection(false);  // Stokes (advection is ON by default)
   dfl.setViscosity(1.0);
   dfl.setDt(1e6);
   dfl.setBodyForce(1.0, 0, 0);

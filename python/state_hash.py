@@ -110,6 +110,7 @@ def run_amr(out, comm):
         ts = amr.Octree(cells=[32, 32, 32], lmax=1, origin=[0, 0, 0], extent=[1.0, 1.0, 1.0])
         ts.refine_to_sdf_graded(sph, lambda x, y, z: 0 if x < 0.5 else 1, band=2.0)
         fs = amr.Flow(ts, density=1.0, viscosity=0.05, dt=0.02)
+        fs.set_advection(False)  # the recorded hash is the Stokes path (advection is ON by default)
         fs.set_ghost_sampled(True)
         fs.set_solid(sph)
         fs.set_body_force(1.0, 0.0, 0.0)

@@ -55,6 +55,7 @@ void test_poiseuille() {
   // Host reference.
   oracle::AmrFlow<21> hfl;
   hfl.init(t, h0);
+  hfl.setAdvection(false);  // Stokes (advection is ON by default)
   hfl.setDensity(1.0);
   hfl.setViscosity(mu);
   hfl.setDt(1e6);
@@ -67,6 +68,7 @@ void test_poiseuille() {
   // Device.
   AmrFlow<21> dfl;
   dfl.init(t, h0);
+  dfl.setAdvection(false);  // Stokes (advection is ON by default)
   dfl.setDensity(1.0);
   dfl.setViscosity(mu);
   dfl.setDt(1e6);
@@ -132,6 +134,7 @@ void test_sphere() {
 
   oracle::AmrFlow<21> hfl;
   hfl.init(t, h0);
+  hfl.setAdvection(false);  // Stokes (advection is ON by default)
   hfl.setViscosity(mu);
   hfl.setDt(1e6);
   hfl.setBodyForce(G, 0, 0);
@@ -142,6 +145,7 @@ void test_sphere() {
 
   AmrFlow<21> dfl;
   dfl.init(t, h0);
+  dfl.setAdvection(false);  // Stokes (advection is ON by default)
   dfl.setViscosity(mu);
   dfl.setDt(1e6);
   dfl.setBodyForce(G, 0, 0);
@@ -188,6 +192,7 @@ void test_sphere_ghost() {
 
   oracle::AmrFlow<21> hfl;
   hfl.init(t, h0);
+  hfl.setAdvection(false);  // Stokes (advection is ON by default)
   hfl.setViscosity(mu);
   hfl.setDt(1e6);
   hfl.setBodyForce(G, 0, 0);
@@ -199,6 +204,7 @@ void test_sphere_ghost() {
 
   AmrFlow<21> dfl;
   dfl.init(t, h0);
+  dfl.setAdvection(false);  // Stokes (advection is ON by default)
   dfl.setViscosity(mu);
   dfl.setDt(1e6);
   dfl.setBodyForce(G, 0, 0);
@@ -248,6 +254,7 @@ void test_sphere_ghostproj() {
 
   oracle::AmrFlow<21> hfl;
   hfl.init(t, h0);
+  hfl.setAdvection(false);  // Stokes (advection is ON by default)
   hfl.setViscosity(mu);
   hfl.setDt(1e6);
   hfl.setBodyForce(G, 0, 0);
@@ -259,6 +266,7 @@ void test_sphere_ghostproj() {
 
   AmrFlow<21> dfl;
   dfl.init(t, h0);
+  dfl.setAdvection(false);  // Stokes (advection is ON by default)
   dfl.setViscosity(mu);
   dfl.setDt(1e6);
   dfl.setBodyForce(G, 0, 0);
@@ -315,6 +323,7 @@ void test_graded_ghostproj() {
     BO t = makeTree(0.5);
     AmrFlow<21> fl;
     fl.init(t, 1.0, Vec<3>{0, 0, 0});
+    fl.setAdvection(false);  // Stokes (advection is ON by default)
     fl.setViscosity(0.1);
     fl.setDt(60.0);
     fl.setGhostProjection(true, 2, 2);
@@ -332,6 +341,7 @@ void test_graded_ghostproj() {
     PECLET_AMR_CHECK(t.numLeaves() < N * N * N);
     AmrFlow<21> fl;
     fl.init(t, 1.0, Vec<3>{0, 0, 0});
+    fl.setAdvection(false);  // Stokes (advection is ON by default)
     fl.setViscosity(0.1);
     fl.setDt(60.0);
     fl.setBodyForce(1e-3, 0, 0);
@@ -377,6 +387,7 @@ void test_seam_sampled() {
   auto runDev = [&](const BO& t, bool sampled) {
     AmrFlow<21> fl;
     fl.init(t, 1.0, Vec<3>{0, 0, 0});
+    fl.setAdvection(false);  // Stokes (advection is ON by default)
     fl.setViscosity(1.0);
     fl.setDt(1e6);
     fl.setBodyForce(1e-3, 0, 0);
@@ -444,6 +455,7 @@ void test_seam_sampled() {
 
     oracle::AmrFlow<21> hfl;
     hfl.init(t, 1.0);
+    hfl.setAdvection(false);  // Stokes (advection is ON by default)
     hfl.setViscosity(1.0);
     hfl.setDt(1e6);
     hfl.setBodyForce(1e-3, 0, 0);
@@ -495,6 +507,7 @@ void test_graded_cf_quadratic() {
   auto runDev = [&](int cf) {
     AmrFlow<21> fl;
     fl.init(t, 1.0, Vec<3>{0, 0, 0});
+    fl.setAdvection(false);  // Stokes (advection is ON by default)
     fl.setViscosity(0.1);
     fl.setDt(60.0);
     fl.setBodyForce(1e-3, 0, 0);
@@ -507,6 +520,7 @@ void test_graded_cf_quadratic() {
   };
   oracle::AmrFlow<21> hfl;
   hfl.init(t, 1.0, Vec<3>{0, 0, 0});
+  hfl.setAdvection(false);  // Stokes (advection is ON by default)
   hfl.setViscosity(0.1);
   hfl.setDt(60.0);
   hfl.setBodyForce(1e-3, 0, 0);
@@ -578,6 +592,7 @@ void test_cf_cut_band_parity() {
   };
   AmrFlow<21> fl;
   fl.init(t, 1.0, Vec<3>{0, 0, 0});
+  fl.setAdvection(false);  // Stokes (advection is ON by default)
   configure(fl);
   for (int s = 0; s < 40; ++s)
     fl.step(100, 60);
@@ -585,6 +600,7 @@ void test_cf_cut_band_parity() {
 
   oracle::AmrFlow<21> hfl;
   hfl.init(t, 1.0, Vec<3>{0, 0, 0});
+  hfl.setAdvection(false);  // Stokes (advection is ON by default)
   configure(hfl);
   for (int s = 0; s < 40; ++s)
     hfl.step(/*momSweeps=*/250, /*presIters=*/12, /*presSweeps=*/2);
@@ -729,6 +745,7 @@ void test_adapt_midrun() {
   };
   auto configure = [&](AmrFlow<21>& fl, const BO& t) {
     fl.init(t, 1.0, Vec<3>{0, 0, 0});
+    fl.setAdvection(false);  // Stokes (advection is ON by default)
     fl.setViscosity(0.1);
     fl.setDt(60.0);
     fl.setBodyForce(1e-3, 0, 0);
@@ -791,6 +808,7 @@ void test_pocket_guard() {
   };
   AmrFlow<21> fl;
   fl.init(t, h0);
+  fl.setAdvection(false);  // Stokes (advection is ON by default)
   fl.setViscosity(0.1);
   fl.setDt(60.0);
   fl.setBodyForce(1e-3, 0, 0);
@@ -843,6 +861,7 @@ void test_momentum_mg_option() {
   auto run = [&](bool mgPre) {
     AmrFlow<21> f;
     f.init(t, h0);
+    f.setAdvection(false);  // Stokes (advection is ON by default)
     f.setViscosity(1.0);
     f.setDt(1e6);
     f.setBodyForce(1.0, 0, 0);
@@ -880,6 +899,7 @@ void test_momentum_scaling() {
     };
     AmrFlow<21> f;
     f.init(t, h0);
+    f.setAdvection(false);  // Stokes (advection is ON by default)
     f.setViscosity(1.0);
     f.setDt(1e6);
     f.setBodyForce(1.0, 0, 0);
@@ -1084,6 +1104,7 @@ void test_staircase_mg() {
   auto run = [&](bool staircase) {
     AmrFlow<21> f;
     f.init(t, h0);
+    f.setAdvection(false);  // Stokes (advection is ON by default)
     f.setViscosity(1.0);
     f.setDt(1e6);
     f.setBodyForce(1.0, 0, 0);
@@ -1125,6 +1146,7 @@ void test_momentum_gs() {
   auto run = [&](bool staircase, bool gs) {
     AmrFlow<21> f;
     f.init(t, h0);
+    f.setAdvection(false);  // Stokes (advection is ON by default)
     f.setViscosity(1.0);
     f.setDt(1e6);
     f.setBodyForce(1.0, 0, 0);
@@ -1169,6 +1191,7 @@ void test_momentum_mgsolver() {
   auto run = [&](bool staircase, bool mgSolver) {
     AmrFlow<21> f;
     f.init(t, h0);
+    f.setAdvection(false);  // Stokes (advection is ON by default)
     f.setViscosity(1.0);
     f.setDt(1e6);
     f.setBodyForce(1.0, 0, 0);
@@ -1222,6 +1245,7 @@ void test_picard_outer() {
     auto run = [&](int outer, int* lastOuter) {
       AmrFlow<21> f;
       f.init(t, h0);
+      f.setAdvection(false);  // Stokes (advection is ON by default)
       f.setViscosity(1.0);
       f.setDt(1e6);
       f.setBodyForce(1.0, 0, 0);
