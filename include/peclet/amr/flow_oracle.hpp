@@ -23,7 +23,7 @@
 // divergence-free), not a bug to be engineered away (see the amr-octree memory).
 //
 // Navier–Stokes (semi-implicit): implicit viscous diffusion + explicit high-order
-// advection ∇·(u u) (setAdvection(true)); the high-order flux is second-order
+// advection ∇·(u u) (setAdvection, ON by default like AmrFlow); the high-order flux is second-order
 // upwind (SOU) by default, or Koren TVD via setAdvectionScheme(1). setAdvection(false)
 // ⇒ Stokes. 3D. Cut cells and the
 // ±2-cell advection stencil assume same-level neighbours (resolve the boundary in a
@@ -893,7 +893,7 @@ class AmrFlow {
   Vec<3> h0_ = detail::filledVec<3>(1.0);
   Vec<3> origin_{};
   double rho_ = 1.0, mu_ = 1.0, dt_ = 1e6;
-  bool advect_ = false;
+  bool advect_ = true;        // momentum advection ON by default, as AmrFlow (off ⇒ Stokes)
   bool ghostGrad_ = true;     // directional ghost gradient on cut cells (setGhostGradient)
   bool ghostProj_ = false;    // RESOLVED projection mode (set by setSolid from the request)
   int8_t ghostProjReq_ = -1;  // -1 = AUTO (DEFAULT: ghost, aperture fallback on thin band),

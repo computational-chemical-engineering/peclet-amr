@@ -31,6 +31,9 @@ judgement call in the moment.
   Rhie–Chow.** The residual cell divergence is *intrinsic* to cell-centred velocity placement. This
   has been re-proposed by mistake repeatedly; it is not an "upgrade".
 - **AMR keeps the ORB block decomposition**, not a global SFC partition.
+- **Momentum advection is ON by default (`advect_ = true` in `AmrFlow` and the oracle, USER
+  DIRECTIVE 2026-10-23, as `flow`); never reintroduce a default off.** Stokes callers say
+  `setAdvection(false)` / `set_advection(False)`; every Stokes test and benchmark does.
 - **The pressure smoother is MG-PCG, NOT multicolor-GS**; Chebyshev was not pursued for pressure.
 - **The rebalance weight grid is defined over root cells**, not fine cells.
 - **Cut-cell openness α is evaluated at the finer neighbour's actual lower corner.**

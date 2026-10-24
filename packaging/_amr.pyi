@@ -221,7 +221,9 @@ class Flow:
         """
 
     def set_advection(self, on: bool) -> None:
-        """Enable explicit momentum advection (Navier-Stokes); off = Stokes."""
+        """
+        Enable/disable momentum advection (high-order scheme SOU by default; implicit FOU + deferred correction). ON by default since 2026-10-24; False => Stokes (no inertia), which a creeping-flow script must now ask for.
+        """
 
     def set_ghost_projection(self, on: bool, matrix_order: int = 2, rhs_order: int = 2) -> None:
         """

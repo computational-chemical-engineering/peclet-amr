@@ -442,10 +442,11 @@ class Poisson : public Releasable {
 // cut-cell immersed boundary (peclet::amr::AmrFlow). Each step() is: an implicit
 // backward-Euler viscous momentum predictor with no-slip (u=0) Dirichlet cut-cell IBM on the SDF
 // solid, then the Almgren-Bell-Colella approximate projection in incremental-rotational form
-// (openness-weighted pressure Poisson). Stokes by default; set_advection(True) adds explicit
-// high-order (SOU / Koren-TVD) momentum advection. Driven by a body force; iterate step() to steady
-// state. Velocities/pressure are per-leaf (num_leaves,) in Z-order slots. The octree is borrowed by
-// reference (kept alive for the Flow's lifetime).
+// (openness-weighted pressure Poisson). Navier-Stokes by default (high-order SOU / Koren-TVD
+// momentum advection, implicit FOU + deferred correction); set_advection(False) gives Stokes.
+// Driven by a body force; iterate step() to steady state. Velocities/pressure are per-leaf
+// (num_leaves,) in Z-order slots. The octree is borrowed by reference (kept alive for the Flow's
+// lifetime).
 //
 // The classic cut band is uniformly finest (the ghost closures reach ±2 same-level cells);
 // set_ghost_sampled(True) is what admits cut cells at several levels. Away from the wall the
@@ -1175,7 +1176,9 @@ NB_MODULE(_amr, m) {
            "pressure gradient -dp/dx along x. It is the only driving the periodic box has. "
            "Default (0, 0, 0).")
       .def("set_advection", &Flow::set_advection, nb::arg("on"),
-           "Enable explicit momentum advection (Navier-Stokes); off = Stokes.")
+           "Enable/disable momentum advection (high-order scheme SOU by default; implicit FOU + "
+           "deferred correction). ON by default since 2026-10-24; False => Stokes (no inertia), "
+           "which a creeping-flow script must now ask for.")
       .def("set_ghost_projection", &Flow::set_ghost_projection, nb::arg("on"),
            nb::arg("matrix_order") = 2, nb::arg("rhs_order") = 2,
            "DEFAULT since 2026-08-25 (AUTO: ghost, with an aperture fallback + stderr notice when "

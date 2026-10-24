@@ -12,9 +12,10 @@
 //     (FaceGeom) that mirror AmrPoisson::forEachFaceFull (same 2:1 sub-faces +
 //     openness), so D / G / L stay consistent exactly as in the host collocated coupling.
 //
-// Stokes (advection off) and Navier–Stokes (setAdvection): implicit-FOU + explicit SOU/Koren
-// deferred correction, advected by the divergence-free face field uf (built each projection;
-// falls back to ½(u_i+u_j) until the first projection) — conservative (∇·uf = 0).
+// Navier–Stokes (setAdvection, ON by default since 2026-10-24) and Stokes (setAdvection(false)):
+// implicit-FOU + explicit SOU/Koren deferred correction, advected by the divergence-free face
+// field uf (built each projection; falls back to ½(u_i+u_j) until the first projection) —
+// conservative (∇·uf = 0).
 //
 #ifndef PECLET_AMR_FLOW_HPP
 #define PECLET_AMR_FLOW_HPP
@@ -629,8 +630,9 @@ class AmrFlow {
   /// solution — the (1,2)-mixed philosophy). Works in both aperture and ghost-projection modes.
   /// Call before setSolid.
   void setCfScheme(int scheme) { cfScheme_ = static_cast<CfScheme>(scheme); }
-  /// Enable momentum advection ∇·(u u) (default OFF ⇒ Stokes). The high-order flux is
-  /// second-order upwind (SOU) by default; the first-order-upwind part is solved *implicitly*
+  /// Momentum advection ∇·(u u), ON by default (user directive 2026-10-23, amr 2026-10-24;
+  /// setAdvection(false) ⇒ Stokes, which a creeping-flow caller must ask for). The high-order flux
+  /// is second-order upwind (SOU) by default; the first-order-upwind part is solved *implicitly*
   /// (folded into the momentum operator) and the (SOU−FOU) difference is the explicit deferred
   /// correction — unconditionally stable for the FOU part, exact-SOU at steady state. This is
   /// the same implicit-FOU + deferred-SOU scheme as the host oracle::AmrFlow and flow's collocated
@@ -2615,7 +2617,7 @@ class AmrFlow {
   double outerTol_ = 1e-6;   // outer-loop early-stop tolerance on max|Δu|
   double momTol_ = 1e-8;     // per-step momentum BiCGStab relative tolerance (Phase-0 knob)
   double presTol_ = 1e-10;   // pressure solve relative tolerance (MG-PCG and ghost BiCGStab)
-  bool advect_ = false;      // momentum advection ∇·(u u) (off ⇒ Stokes)
+  bool advect_ = true;       // momentum advection ∇·(u u), ON by default (off ⇒ Stokes)
   bool implicitFou_ = true;  // implicit-FOU deferred-correction (stable) vs fully-explicit
   int advScheme_ = 0;        // high-order flux: 0 = SOU (default), 1 = Koren TVD
   Index n_ = 0;
