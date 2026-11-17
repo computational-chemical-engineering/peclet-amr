@@ -89,7 +89,7 @@ the operator's **condition number** rather than by geometry, and Chebyshev moved
 tier. None of that changed the method, and `amr` is not behind on *capability* — where `flow`'s
 collocated path is explicitly barred from the velocity V-cycle (`!Grid::collocated`, V8
 unvalidated), `amr` runs the Galerkin velocity multigrid as its momentum preconditioner by default.
-What `amr` is behind on is **surface**, and `../docs/NAMING.md` asks for one spelling per concept
+What `amr` is behind on is **surface**, and `../../docs/NAMING.md` asks for one spelling per concept
 across the suite:
 
 - **A′1 — string selectors.** `flow`: `diagnostics.set_velocity_solver('auto' | 'gauss_seidel' |
@@ -341,4 +341,4 @@ refined mesh, which is the entire point of the package.
 | when | decision | why |
 |---|---|---|
 | 2026-09-21 | The parity gate lives in **`amr`**, skipping with 77 when no `flow` build is pointed at (`-DPECLET_AMR_FLOW_PYTHONPATH=`). | `amr` is the code whose claim it is ("we reduce to flow"); the skip protocol already exists here for the morton-guarded tests, so CI needs no new concept. Alternative — putting it in `flow` or the umbrella — was rejected: `flow` has no reason to depend on `amr`, and the umbrella runs no tests. |
-| 2026-09-21 | `set_uf_advection` is a **diagnostics-tier ablation**, default unchanged; no numerics moved. | The byte gate is IDENTICAL, so the switch costs nothing and buys the A/B that isolated the one difference. Changing the default would be reversing `../docs/decisions/amr.md:13`. |
+| 2026-09-21 | `set_uf_advection` is a **diagnostics-tier ablation**, default unchanged; no numerics moved. | The byte gate is IDENTICAL, so the switch costs nothing and buys the A/B that isolated the one difference. Changing the default would be reversing `../../docs/decisions/amr.md:13`. |

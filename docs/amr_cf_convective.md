@@ -345,7 +345,7 @@ single-rank, np = 2/4/8 in the ~3e-7 class. Acceptance: G4.
 **WO5 — stability and cost.** `amr_two_sphere_gap.py` battery; `bench_amr_flow` and
 `PECLET_AMR_PROFILE_STEP=1` before/after. Acceptance: G5, G6.
 
-**WO6 — the record.** Register entry (`../docs/decisions/amr.md`): *"Seam reconstruction of the
+**WO6 — the record.** Register entry (`../../docs/decisions/amr.md`): *"Seam reconstruction of the
 advected value: upwind-side, level-aware probes (coarse upwind tangentially sampled by
 `cfAppendStencil`, applied once; coarser/finer upstream probes at true distance). Rejected:
 Martin–Colella quadratic normal fill (mixes downstream fine cells; amplitude/stability), minmod

@@ -350,7 +350,7 @@ sub-faces on which the quadratic face value is withheld. Computed in the same sw
 under MPI (like `numCfGhostColumns`), and by ownership `Σ_ranks numCfCutFaces` is
 decomposition-invariant — an exact integer gate (§10). Python: `Flow.diagnostics.num_cf_cut_faces`
 (developer tier, next to `divergence_norm_face`; the spelling must be checked against
-`../docs/NAMING.md` before it ships — open question 4). No stderr notice (D3: no noise; the number
+`../../docs/NAMING.md` before it ships — open question 4). No stderr notice (D3: no noise; the number
 is a diagnostic, not a warning).
 
 ### 6.6 The equality test
@@ -571,7 +571,7 @@ with cut cells at two levels); `amr.flow_ghost` and `amr.distributed_flow.np{1,2
 the `numCfGhostColumns` count of it); shorten the `finishProjection` comment to rule (I) and a
 pointer here. Update `cf_scheme.hpp`'s header comment ("Robustness gating" paragraph: the row gate
 is gone, the face gate is the rule) and `docs/amr_collocated_projection.md` (one paragraph: (I),
-the face gate, the census). Register (`../docs/decisions/amr.md`, and the index): (i) a NEW entry
+the face gate, the census). Register (`../../docs/decisions/amr.md`, and the index): (i) a NEW entry
 "C/F face-value delta is gated per FACE (`regular(i) && regular(j)`), never per row; one emitter
 feeds D, the G substitution and uf" with the rejected alternatives B, D, E, G of §5 and this note
 as provenance; (ii) mark "cfDiv/cfGrad row gate must be rowRegular, not rowFluid" as **superseded

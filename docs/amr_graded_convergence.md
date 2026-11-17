@@ -162,7 +162,7 @@ below even first order — **while the quadratic scheme reaches 1.60**, and the 
 with refinement: 3.8× at n=32, **8.8× at n=64**.
 
 This independently confirms, and sharpens, a decision already in the register:
-`../docs/decisions/amr.md` "cf=1 (quadratic C/F flux) is not optional on graded meshes — *the
+`../../docs/decisions/amr.md` "cf=1 (quadratic C/F flux) is not optional on graded meshes — *the
 standard flux cannot converge on graded meshes*", with cf=0 explicitly rejected there. The
 measurement says that is **orientation-dependent**: cf=0 is perfectly second order where the
 interface has no tangential variation, and only collapses where it does. Since a real graded mesh

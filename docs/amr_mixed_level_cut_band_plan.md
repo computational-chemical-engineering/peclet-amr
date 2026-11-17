@@ -1,8 +1,8 @@
 # Mixed-level cut cells: local surface refinement for the AMR ghost projection
 
 *Plan, 2026-08-24 (F. Peters / Claude session). Companion to `amr_collocated_projection.md`
-(the AMR ghost port + graded-mesh record) and flow's `collocated_invisible_subspace.md` /
-`fluid_only_constraint_plan.md` (the campaign verdicts that constrain any design here).*
+(the AMR ghost port + graded-mesh record) and flow's `../../flow/doc/collocated_invisible_subspace.md` /
+`../../flow/doc/fluid_only_constraint_plan.md` (the campaign verdicts that constrain any design here).*
 
 **Status (2026-08-27): PHASE 2 COMPLETE — the gate passed and the design is measured.** The
 Snellius verdict came in 2026-08-25 and the ghost projection is the production default suite-wide
@@ -284,7 +284,7 @@ L(x) on the surface = union of criteria, then D4-quantized:
      levels kept only 27% of the saving. Keep the full ladder, accept seams-as-main-path;
      quantization/hysteresis remains only for adapt-cycle stability, not seam avoidance.
   4. ~~Follow-up: rerun on a REAL dense bed~~ **DONE 2026-08-25** on the dem RCP bed
-     (`tests/data/rcp_pack_seed3_unit.txt` = flow's `rcp_pack_seed3.npz`, 180 monodisperse
+     (`../../core/tests/data/rcp_pack_seed3_unit.txt` = flow's `rcp_pack_seed3.npz`, 180 monodisperse
      spheres, φ=0.63; logs `amr_seam_census_m1_rcp{8,9}.log`):
 
      | R/h0 | map G cells vs uniform band | seam rows | of seam: axis-pass / samples / fallback |
@@ -700,7 +700,7 @@ two row gates plus this record.
 
 #### P3c — the sphere bed: policy validated end-to-end, headline capped by the local GPU (2026-08-28)
 
-`tests/study/amr_bed_graded.py` on the M1 census bed (`tests/data/rcp_pack_seed3_unit.txt`, 180
+`tests/study/amr_bed_graded.py` on the M1 census bed (`../../core/tests/data/rcp_pack_seed3_unit.txt`, 180
 monodisperse spheres, φ = 0.63), Stokes along x, Darcy k = μ⟨u_x⟩/f, gap floor at the
 P3a-calibrated n = 4, `set_ghost_sampled(True)`, cf-quadratic. Logs
 `docs/data/amr_bed_graded_d{7,8}*.log`.

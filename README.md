@@ -4,7 +4,7 @@
 > C++ studies, 8 Python; byte-gated) and validated against analytic solutions on graded meshes, but a
 > research code: no published validation page yet, open items in [docs/ROADMAP.md](https://github.com/computational-chemical-engineering/peclet-amr/blob/main/docs/ROADMAP.md),
 > and an API that may change between minor versions until it graduates to 1.0.0 on its own merits
-> (suite `docs/QUALITY_PLAN.md` D9, 2026-09-11). The rest of the peclet family is 1.0.0 and semver.
+> (suite `../docs/QUALITY_PLAN.md` D9, 2026-09-11). The rest of the peclet family is 1.0.0 and semver.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/computational-chemical-engineering/peclet-amr/blob/main/LICENSE)
 [![CI](https://github.com/computational-chemical-engineering/peclet-amr/actions/workflows/ci.yml/badge.svg)](https://github.com/computational-chemical-engineering/peclet-amr/actions/workflows/ci.yml)
@@ -12,7 +12,7 @@
 The adaptive-mesh-refinement package of the **peclet** suite: a **block-local-Morton AMR octree**
 and the **collocated-projection incompressible Navier–Stokes solver** with a cut-cell immersed
 boundary that runs on it (`peclet::amr`; Python `peclet.amr`). Relocated out of `peclet-core` with
-its git history on 2026-09-10 (suite `docs/QUALITY_PLAN.md` D6 / G.2): core is the infrastructure
+its git history on 2026-09-10 (suite `../docs/QUALITY_PLAN.md` D6 / G.2): core is the infrastructure
 layer every method code uses, AMR is a method under active development, so it is its own package.
 
 Header-only C++20 over [peclet-core](https://github.com/computational-chemical-engineering/peclet-core)

@@ -227,7 +227,7 @@ unchanged by anisotropy and stay in the risk register.
 | **A4** | bindings + `.pyi` + `test_amr.py` new cases (anisotropic constructor, Poiseuille ×3 orientations, `h0` raise, `spacing_from_extent` still raises) | A1, A2, A6 |
 | **A5** | new C++ gates: stretched `amr_poisson`/`amr_multigrid` (A3), stretched `amr_drag` uniform + graded (A4), stretched `amr_distributed_seam` (A5); umbrella pointer bump last | A2–A6 |
 
-core edits go in the shared `core/` checkout only while `git status` is clean there (untracked
+core edits go in the shared `../../core/` checkout only while `git status` is clean there (untracked
 build logs excepted); named paths only; `git pull --rebase origin main && git push origin HEAD:main`.
 
 ## 9. Acceptance gates and the numbers they must hit
