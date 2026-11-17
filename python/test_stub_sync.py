@@ -19,18 +19,25 @@ def _public(name):
     return not name.startswith("_") or name == "__init__"
 
 
+def _top_level_name(node):
+    if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+        return node.name
+    if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+        return node.target.id
+    return None
+
+
+def _member_names(cls):
+    return {f"{cls.name}.{m.name}" for m in cls.body
+            if isinstance(m, ast.FunctionDef) and _public(m.name)}
+
+
 def _stub_names():
     tree = ast.parse(STUB.read_text())
-    names = set()
+    names = {_top_level_name(node) for node in tree.body} - {None}
     for node in tree.body:
-        if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
-            names.add(node.name)
-        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-            names.add(node.target.id)
         if isinstance(node, ast.ClassDef):
-            for member in node.body:
-                if isinstance(member, ast.FunctionDef) and _public(member.name):
-                    names.add(f"{node.name}.{member.name}")
+            names |= _member_names(node)
     return names
 
 
