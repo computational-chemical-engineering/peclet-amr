@@ -16,7 +16,7 @@
 ## 1. The question, and why it has a crisp answer
 
 Both codes solve the same method: cell-centred (collocated) velocity, Almgren–Bell–Colella
-**approximate projection** (never Rhie–Chow — see `../docs/DECISIONS.md`), backward-Euler implicit
+**approximate projection** (never Rhie–Chow — see `../../docs/DECISIONS.md`), backward-Euler implicit
 viscous predictor, rotational (Timmermans) incremental pressure update, cut-cell IBM over an SDF.
 `amr` runs it on a `BlockOctree` through a face-CSR operator; `flow` runs it on a structured MAC
 brick. At `lmax = 0` the octree IS a uniform brick, so the two discretizations must coincide —
@@ -31,7 +31,7 @@ peclet.amr.Octree(cells=[N,N,nz], lmax=0, spacing=1.0)      extent [N,N,nz]  spa
 
 `amr`'s face CSR enumerates each leaf's faces as `[-x, +x, -y, +y, -z, +z]`
 (`facegeom_assembly.hpp:58`), so slot `2a` of leaf *i* is the **low** face on axis *a* — precisely
-`flow`'s `uf/vf/wf(i) = ½(U(i)+U(i-1))` convention (`mac_approx_projection.hpp:30`). The face
+`flow`'s `uf/vf/wf(i) = ½(U(i)+U(i-1))` convention (`../../flow/src/mac_approx_projection.hpp:30`). The face
 fields are therefore directly comparable too, not just the cell fields.
 
 The two modules **cannot share one process** (each finalizes Kokkos under the other's Views), so
@@ -113,18 +113,18 @@ unaffected by ablating the rotational term. The cause is one function:
 - **`amr`** advects with the projected, divergence-free face field
   `uf = ½(u_i+u_j) − ∇φ` (`flow.hpp::buildFaceField`), falling back to the plain average only on
   the first step, before any projection has run. This is a **recorded settled decision**
-  (`../docs/decisions/amr.md:13`, 2026-07-24) and it is the Almgren–Bell–Colella / Basilisk
+  (`../../docs/decisions/amr.md:13`, 2026-07-24) and it is the Almgren–Bell–Colella / Basilisk
   prescription: the field the projection just made solenoidal IS the conservative advecting flux.
 - **`flow`** advected (until 2026-09-21 — see the RESOLVED box below) with the *un-projected*
   cell→face average
-  `½(U(x)+U(x+1))` — `colocated_advection.hpp:29-36`. Its own header says the swap is pending:
+  `½(U(x)+U(x+1))` — `../../flow/src/colocated_advection.hpp:29-36`. Its own header says the swap is pending:
   > *"in phase 2 (no pressure) the advecting velocity is the plain cell→face average … Once the
   > approximate projection lands (phase 3), the natural advecting field is the projected,
   > divergence-free face velocity — this header's `adv_vel` is where that swap happens."*
 
   Phase 3 landed; the swap did not. `doc/flow_colocated_plan.md` §1 step 3 prescribes it
   (*"These `u_f` become the advecting velocities for the next step's advection"*), and
-  `../docs/decisions/flow.md:977` independently records that the FOU operator's conservative
+  `../../docs/decisions/flow.md:977` independently records that the FOU operator's conservative
   row-sum identity *"holds only for uniform/div-free advecting field"* — which the plain average
   is not.
 
@@ -142,7 +142,7 @@ above runnable without touching either solver's numerics.
 > engines at their default: **vel 1.90e-11, pres 4.41e-11** over the same 20 NS steps — so the
 > gate case below is no longer an ablation but an agreement gate, and `tg_advect_matched.json`
 > dropped its `"uf_advection": false` (the tolerance tightened 1e-8 → 1e-9). §7's P1 is closed.
-> `amr`'s own scheme and `docs/decisions/amr.md:13` are unchanged: `flow` moved to `amr`.
+> `amr`'s own scheme and `../../docs/decisions/amr.md:13` are unchanged: `flow` moved to `amr`.
 >
 > Landed in `flow` as `8e21724` / `f461151`, and measured independently from each side: `flow`
 > reports 2.5e-4 → 1.9e-11 on its case, this repo 3.950e-04 → 4.414e-11 on the gate case. Two
@@ -174,7 +174,7 @@ and momentum conservation, on a Galilean-shifted vortex (mean(u) = 0.5, periodic
 **On smooth flow the two choices are indistinguishable** — 0.4 % apart in error, same order, both
 conserving momentum to round-off. The case for the swap is therefore *consistency*, not measured
 accuracy: `flow`'s own design note prescribes it, the FOU row-sum identity needs it
-(`../docs/decisions/flow.md:977`), it is the ABC/Basilisk convention, and it removes the last
+(`../../docs/decisions/flow.md:977`), it is the ABC/Basilisk convention, and it removes the last
 uniform-grid difference between the two engines. The case against is the cost of re-blessing
 `flow`'s baselines. **That trade is the user's, and this section is what makes it cheap to judge:
 the change is low-risk and low-reward on smooth cases.** Where it could still bite is the regime
@@ -208,7 +208,7 @@ L7 adds advection to the cut-cell sphere at a usable CFL (dt = 0.05, `u_max` ≈
 Re ≈ 180) and leaves a residual 1.6e-4 in velocity / 4.2e-4 in pressure — 200× the L5g Stokes
 floor. Ablating the §3 advecting velocity does **not** move it (1.6497e-4 → 1.6484e-4), so this is
 a *second*, independent difference: the two engines reconstruct the advective flux differently at
-**cut faces**. `amr` uses fluid-fluid gates with raw-area fluxes (`../docs/decisions/amr.md:13`);
+**cut faces**. `amr` uses fluid-fluid gates with raw-area fluxes (`../../docs/decisions/amr.md:13`);
 what `flow` does there has not been read side by side yet. Not diagnosed further here.
 
 (Note the interaction with §3: the uf-vs-plain-average difference scales as dt², so at a

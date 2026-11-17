@@ -24,22 +24,22 @@ def predict_hierarchy(cells: Sequence[int], lmax: int = 0, num_ranks: int = 1, b
 
     Returns a dict, levels finest first: `extent` the level's global grid in CELLS per axis (a count, not a length), `cells` its total cell count as if the mesh were uniform (so it equals `Flow.diagnostics.pressure_mg_levels` leaf for leaf only for a uniform mesh at num_ranks=1), `kind` ('octree' at or above the root brick, 'lifted' below it in place, 'tail' / 'sibling' / 'repartition' on a stage's continued ladder -- a stage's first level is the SAME grid as the level above it, moved rather than coarsened, exactly as `pressure_mg_levels` lists it), `num_levels`, `num_in_place` (levels above the first stage), `stages` (the stage kinds, outermost first), `tail` (bool: a replicated tail engages) and `bottom` ('jacobi' or 'amg', suffixed '+tail' / '+sibling' / '+repartition' per stage, innermost first) — the spelling `Flow.diagnostics.pressure_mg_bottom` reports.
 
-    `lmax` is the number of octree coarsenings THE MESH supports, i.e. the tree's lmax for a mesh refined to level 0 somewhere. An UNREFINED Octree(cells, lmax=k>0) is the same mesh as Octree(cells/2**k, lmax=0) — all its leaves are root cells — and must be predicted that way. In general pass depth = tree.lmax - levels().min() and cells = root * 2**depth. `bottom_extent` (default 4, the solver's default) is the `Flow.pressure_bottom_extent` the run will use; pass the same value.
+    `lmax` is the number of octree coarsenings THE MESH supports, i.e. the tree's lmax for a mesh refined to level 0 somewhere. An UNREFINED Octree(cells, lmax=k>0) is the same mesh as Octree(cells/2**k, lmax=0) — all its leaves are root cells — and must be predicted that way. In general pass depth = tree.lmax - levels().min() and cells = root * 2**depth. `bottom_extent` (default 4, the solver's default; a count in cells per axis, dimensionless) is the `Flow.pressure_bottom_extent` the run will use; pass the same value.
     """
 
 def spacing_from_extent(extent: Sequence[float], root_cells: Sequence[int], lmax: int) -> float:
     """
-    The finest cell width h0 = extent / (root_cells * 2**lmax) of a PHYSICAL domain — the one place an AMR spacing is computed, so no caller writes one (see suite/docs/PHYSICAL_UNITS_PLAN.md). Returns ONE number, so it raises when the extent does not give cubic cells — use `spacings_from_extent` for a box mesh.
+    The finest cell width h0 = extent / (root_cells * 2**lmax) of a PHYSICAL domain (`extent` and h0 in the caller's length units) — the one place an AMR spacing is computed, so no caller writes one (see suite/docs/PHYSICAL_UNITS_PLAN.md). Returns ONE number, so it raises when the extent does not give cubic cells — use `spacings_from_extent` for a box mesh.
     """
 
 def spacings_from_extent(extent: Sequence[float], root_cells: Sequence[int], lmax: int) -> list[float]:
     """
-    The finest cell size (dx, dy, dz) = extent / (root_cells * 2**lmax), PER AXIS. The anisotropic form of `spacing_from_extent`: it accepts any positive extent, because the octree's cells are boxes (core/docs/amr_anisotropic.md).
+    The finest cell size (dx, dy, dz) = extent / (root_cells * 2**lmax), PER AXIS, in the caller's length units (those of `extent`). The anisotropic form of `spacing_from_extent`: it accepts any positive extent, because the octree's cells are boxes (core/docs/amr_anisotropic.md).
     """
 
 class Octree:
     """
-    Serial single-block adaptive octree with a world placement (origin + finest spacing per axis). Leaves are addressed in Z-order slot order; every per-leaf array is indexed by that slot.
+    Serial single-block adaptive octree with a world placement (origin + finest spacing per axis). Leaves are addressed in Z-order slot order; every per-leaf array is indexed by that slot. Lengths (origin, spacing, extent, centres, sizes, sphere centres and radii) are in the caller's consistent length units; amr assumes no unit system.
     """
 
     def __init__(self, cells: Sequence[int], *, lmax: int = 0, origin: Sequence[float] = [0.0, 0.0, 0.0], spacing: float | Sequence[float] | None = None, extent: Sequence[float] | None = None) -> None:
@@ -88,7 +88,9 @@ class Octree:
 
     @property
     def spacing(self) -> list[float]:
-        """Finest cell size (dx, dy, dz), per axis. Equal on a cubic octree."""
+        """
+        Finest cell size (dx, dy, dz), per axis, in length units. Equal on a cubic octree.
+        """
 
     @property
     def num_leaves(self) -> int:
@@ -100,10 +102,12 @@ class Octree:
 
     @property
     def origin(self) -> list[float]:
-        """Lower corner in world coordinates."""
+        """Lower corner in world coordinates (length units)."""
 
     def centers(self) -> NDArray[numpy.float64]:
-        """Leaf world centres, (num_leaves, 3) float64 (global coordinates)."""
+        """
+        Leaf world centres, (num_leaves, 3) float64 (global coordinates, length units).
+        """
 
     def sizes(self, axis: int = 0) -> NDArray[numpy.float64]:
         """
@@ -118,7 +122,7 @@ class Octree:
 
     def refine_to_sphere(self, center: Sequence[float], radius: float, target_level: int = 0, band: float = 1.0, balance: bool = True) -> int:
         """
-        Refine leaves the sphere surface passes through (plus `band` cells) down to target_level; optionally restore 2:1 balance (cross-block, collective, on a DistributedOctree). Returns the (local) number of refinements performed.
+        Refine leaves the sphere surface (`center`, `radius` in length units) passes through (plus `band` cells) down to target_level; optionally restore 2:1 balance (cross-block, collective, on a DistributedOctree). Returns the (local) number of refinements performed.
         """
 
     def refine_to_sdf(self, sdf: Callable[[float, float, float], float], target_level: int = 0, band: float = 1.0, balance: bool = True) -> int:
@@ -212,7 +216,7 @@ class Flow:
 
     def set_solid_spheres(self, centers: Annotated[NDArray[numpy.float64], dict(order='C', writable=False)], radii: Annotated[NDArray[numpy.float64], dict(order='C', writable=False)], periodic: bool = True) -> None:
         """
-        set_solid for a UNION OF SPHERES, evaluated natively instead of through a Python callback — the porous-media geometry. `centers` is (M,3), `radii` is (M,) or (1,); `periodic` uses the minimum-image convention over the octree's own box extent. Prefer this to set_solid at bed scale: set_solid samples the SDF tens of times per leaf (operator build, overlay classification at virtual positions, the openness probe), so a Python callback dominates everything else — measured >1h43m of pure numpy on an 11.35M-leaf 180-sphere bed before the GPU ran a single kernel.
+        set_solid for a UNION OF SPHERES, evaluated natively instead of through a Python callback — the porous-media geometry. `centers` is (M,3), `radii` is (M,) or (1,), both in length units; `periodic` uses the minimum-image convention over the octree's own box extent. Prefer this to set_solid at bed scale: set_solid samples the SDF tens of times per leaf (operator build, overlay classification at virtual positions, the openness probe), so a Python callback dominates everything else — measured >1h43m of pure numpy on an 11.35M-leaf 180-sphere bed before the GPU ran a single kernel.
         """
 
     def set_body_force(self, fx: float, fy: float, fz: float) -> None:
@@ -232,17 +236,17 @@ class Flow:
 
     def set_ghost_sampled(self, on: bool, rho: float = 2.2, max_samples: int = 0) -> None:
         """
-        MIXED-LEVEL CUT BAND (docs/amr_mixed_level_cut_band_plan.md): allow cut cells at MULTIPLE octree levels — the finest-band contract is dropped. Chain entries that cross a 2:1 boundary become degree-2 LS virtual samples at the uniform closure positions (identity weights at same level, so a uniform finest band is BIT-IDENTICAL to set_ghost_sampled(False)); face classification uses the level-aware canonical openness; the momentum xi-row seam correction and the wall-aware C/F tangential fallback ride along. Implies the ghost projection (engages when the resolved scheme is ghost — the AUTO default or an explicit set_ghost_projection(True)). Distributed since 2026-08-30 (the clouds are a deterministic probe set through the leaf halo). `rho` is the least-squares cloud radius factor (rho = factor * max(h, H); 2.2 = the shipped behaviour) and `max_samples` the nearest-N candidate cap (0 = uncapped) — the M2a cloud-economy knobs, inert at their defaults; do not change them in production without the M2a table. Call before set_solid.
+        MIXED-LEVEL CUT BAND (docs/amr_mixed_level_cut_band_plan.md): allow cut cells at MULTIPLE octree levels — the finest-band contract is dropped. Chain entries that cross a 2:1 boundary become degree-2 LS virtual samples at the uniform closure positions (identity weights at same level, so a uniform finest band is BIT-IDENTICAL to set_ghost_sampled(False)); face classification uses the level-aware canonical openness; the momentum xi-row seam correction and the wall-aware C/F tangential fallback ride along. Implies the ghost projection (engages when the resolved scheme is ghost — the AUTO default or an explicit set_ghost_projection(True)). Distributed since 2026-08-30 (the clouds are a deterministic probe set through the leaf halo). `rho` is the least-squares cloud radius factor, dimensionless (rho = factor * max(h, H); 2.2 = the shipped behaviour) and `max_samples` the nearest-N candidate cap (0 = uncapped) — the M2a cloud-economy knobs, inert at their defaults; do not change them in production without the M2a table. Call before set_solid.
         """
 
     def set_pressure(self, values: Annotated[NDArray[numpy.float64], dict(order='C')]) -> None:
         """
-        Write the accumulated rotational pressure from a (num_leaves,) array — restart, or re-accumulation policies after finish_adapt (at steady-state dt the transferred p is the load-bearing state; zeroing it after a coarsening adapt lets it re-accumulate cleanly).
+        Write the accumulated rotational pressure (pressure units, force/length^2) from a (num_leaves,) array — restart, or re-accumulation policies after finish_adapt (at steady-state dt the transferred p is the load-bearing state; zeroing it after a coarsening adapt lets it re-accumulate cleanly).
         """
 
     def set_dt(self, dt: float) -> None:
         """
-        Change the time step. dt is BAKED INTO the momentum operator at build time (idiag = rho/dt), so a set_dt must be followed by set_solid or the operator stays stale. set_solid reallocates and zeroes u and p, so a dt SWITCH mid-march is: read velocity()/pressure() -> set_dt -> set_solid -> set_velocity()/set_pressure(). That sequence is the dt-cycling protocol of the attractor-family batteries.
+        Change the time step dt (time units). dt is BAKED INTO the momentum operator at build time (idiag = rho/dt), so a set_dt must be followed by set_solid or the operator stays stale. set_solid reallocates and zeroes u and p, so a dt SWITCH mid-march is: read velocity()/pressure() -> set_dt -> set_solid -> set_velocity()/set_pressure(). That sequence is the dt-cycling protocol of the attractor-family batteries.
         """
 
     def begin_adapt(self) -> None:
@@ -312,10 +316,14 @@ class Flow:
         """
 
     def velocity(self, component: int) -> NDArray[numpy.float64]:
-        """Per-leaf velocity component (0=x,1=y,2=z), (num_leaves,) float64."""
+        """
+        Per-leaf velocity component (0=x,1=y,2=z), (num_leaves,) float64, in velocity units (length/time).
+        """
 
     def velocities(self) -> NDArray[numpy.float64]:
-        """All three velocity components, (num_leaves, 3) float64."""
+        """
+        All three velocity components, (num_leaves, 3) float64, in velocity units (length/time).
+        """
 
     def is_fluid(self) -> NDArray[numpy.bool_]:
         """Per-leaf fluid mask (False in the solid), (num_leaves,) bool."""
@@ -326,7 +334,9 @@ class Flow:
         """
 
     def pressure(self) -> NDArray[numpy.float64]:
-        """Per-leaf pressure (incremental-rotational p), (num_leaves,) float64."""
+        """
+        Per-leaf pressure (incremental-rotational p), (num_leaves,) float64, in pressure units (force/length^2).
+        """
 
     def face_field(self) -> NDArray[numpy.float64]:
         """
@@ -335,7 +345,7 @@ class Flow:
 
     def set_velocity(self, component: int, values: Annotated[NDArray[numpy.float64], dict(order='C')]) -> None:
         """
-        Write velocity component c (0=x,1=y,2=z) from a (num_leaves,) array — initial conditions, restart, or warm-start. Call before step()/project().
+        Write velocity component c (0=x,1=y,2=z) from a (num_leaves,) array in velocity units (length/time) — initial conditions, restart, or warm-start. Call before step()/project().
         """
 
     def project(self, pres_iters: int = 60) -> None:
@@ -449,7 +459,7 @@ class FlowDiagnostics:
 
 class DistributedOctree:
     """
-    MPI octree: an ORB block decomposition of a global root grid (one BlockOctree per rank, over MPI_COMM_WORLD). Construct it collectively; refine/balance/rebalance/face_neighbor_gather are collective. Per-leaf arrays describe THIS rank's local block in global world coordinates.
+    MPI octree: an ORB block decomposition of a global root grid (one BlockOctree per rank, over MPI_COMM_WORLD). Construct it collectively; refine/balance/rebalance/face_neighbor_gather are collective. Per-leaf arrays describe THIS rank's local block in global world coordinates. Lengths (origin, spacing, extent, centres, sizes) are in the caller's consistent length units.
     """
 
     def __init__(self, cells: Sequence[int], *, lmax: int = 0, origin: Sequence[float] = [0.0, 0.0, 0.0], spacing: float | Sequence[float] | None = None, periodic: Sequence[bool] = [True, True, True], extent: Sequence[float] | None = None) -> None:
@@ -501,7 +511,9 @@ class DistributedOctree:
 
     @property
     def spacing(self) -> list[float]:
-        """Finest cell size (dx, dy, dz), per axis. Equal on a cubic octree."""
+        """
+        Finest cell size (dx, dy, dz), per axis, in length units. Equal on a cubic octree.
+        """
 
     @property
     def num_leaves(self) -> int:
@@ -513,10 +525,12 @@ class DistributedOctree:
 
     @property
     def origin(self) -> list[float]:
-        """Lower corner in world coordinates."""
+        """Lower corner in world coordinates (length units)."""
 
     def centers(self) -> NDArray[numpy.float64]:
-        """Leaf world centres, (num_leaves, 3) float64 (global coordinates)."""
+        """
+        Leaf world centres, (num_leaves, 3) float64 (global coordinates, length units).
+        """
 
     def sizes(self, axis: int = 0) -> NDArray[numpy.float64]:
         """
@@ -531,7 +545,7 @@ class DistributedOctree:
 
     def refine_to_sphere(self, center: Sequence[float], radius: float, target_level: int = 0, band: float = 1.0, balance: bool = True) -> int:
         """
-        Refine leaves the sphere surface passes through (plus `band` cells) down to target_level; optionally restore 2:1 balance (cross-block, collective, on a DistributedOctree). Returns the (local) number of refinements performed.
+        Refine leaves the sphere surface (`center`, `radius` in length units) passes through (plus `band` cells) down to target_level; optionally restore 2:1 balance (cross-block, collective, on a DistributedOctree). Returns the (local) number of refinements performed.
         """
 
     def refine_to_sdf(self, sdf: Callable[[float, float, float], float], target_level: int = 0, band: float = 1.0, balance: bool = True) -> int:

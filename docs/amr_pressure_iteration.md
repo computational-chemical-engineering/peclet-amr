@@ -5,7 +5,7 @@
 > No production code was written for this note. Prior art it builds on:
 > `docs/amr_cf_flux_gate.md` (rule (I), the O(1) tangential leak, §6.8's sketch of (B)),
 > `docs/amr_collocated_projection.md` (the projection, `uf`, the (1,2) placement),
-> `../flow/doc/collocated_invisible_subspace.md` (the attractor family, Props. 1–2).
+> `../../flow/doc/collocated_invisible_subspace.md` (the attractor family, Props. 1–2).
 
 ## 1. The recommendation
 
@@ -527,7 +527,7 @@ Each with a default so work proceeds unattended.
 2. **Does a consumer exist that this note does not know of** — a scalar-transport or coupling run
    on a graded octree at `dt ≫` CFL with evolving pressure? *Needs the user's preference / a fact
    about planned work.* Default: none today; the option is one WO-set away when one appears.
-3. **Names.** *User's preference / `../docs/NAMING.md`.* Default: C++
+3. **Names.** *User's preference / `../../docs/NAMING.md`.* Default: C++
    `setCfPressureCorrections(int)` / `lastCfPressureCorrections()`; Python
    `Flow.set_cf_pressure_corrections(n)` (public tier, a numerics option like `set_cf_scheme`) and
    `Flow.diagnostics.last_cf_pres_corrections` (developer tier, the `last_*_iters` family). "Outer

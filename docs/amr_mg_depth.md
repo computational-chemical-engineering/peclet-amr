@@ -68,7 +68,7 @@ with a trigger).
   PCG all see bit-identical operators.
 - **The pressure operator is singular** on every `AmrFlow` path: the three `presMG_.build` /
   `presMGD_.build` sites (`flow.hpp:824–851`) pass `periodic = true` and `setRemoveMean(true)`
-  follows. flow's anchored-path caveat (`DECOMPOSITION_AND_MULTIGRID.md` open problem 4) does not
+  follows. flow's anchored-path caveat (`../../docs/DECOMPOSITION_AND_MULTIGRID.md` open problem 4) does not
   arise here; if a non-periodic pressure path is ever added, the exact bottom must be gated the
   way flow gates it.
 - **Parallel contract.** np = 1 bitwise vs single-rank; np = 2/4/8 in the ~3e-7 march class;
@@ -92,7 +92,7 @@ there: coarsen geometrically until the coarsest grid is a handful of cells per a
 and solve the bottom exactly (agglomerated direct/AMG). Under MPI the geometric ladder is bounded
 by the per-rank block; the libraries redistribute coarse levels onto fewer ranks.
 
-**`flow` (`mac_cutcell_mg.hpp:1821, 1857, 2056`; `DECOMPOSITION_AND_MULTIGRID.md` §1–2).**
+**`flow` (`mac_cutcell_mg.hpp:1821, 1857, 2056`; `../../docs/DECOMPOSITION_AND_MULTIGRID.md` §1–2).**
 Per-axis halving while every rank's block origin and size are even (`evenBlocks`); coarse levels
 are the fine ORB `coarsened()` in place so transfers stay local; `auto` agglomerates when the
 coarsest global extent exceeds 4 on any axis (singular path only): global CSR keyed by global cell
@@ -100,7 +100,7 @@ id, `Allgatherv` of the rhs each V-cycle, every rank runs the identical `GraphAM
 id — decomposition-independent by construction (np=6 vs np=1 to 4.5e-16). §2.7's table: an exact
 bottom is depth-independent (4.0 iterations at 4 and at 8 levels) and *beats* full depth (69.5 vs
 77.1 ms) because tiny levels cost more than the coarse solve they replace. Telescoping onto
-sub-communicators (rung 2 of `archive/MG_TELESCOPING_PLAN.md`) is implemented, off by default,
+sub-communicators (rung 2 of `../../docs/archive/MG_TELESCOPING_PLAN.md`) is implemented, off by default,
 and measured rank-independent iteration counts at 24–1536 ranks.
 
 **This design follows flow on:** the extent-4 criterion; the exact bottom as an agglomerated global
@@ -182,16 +182,16 @@ the *short* axes to 2 and the bottom has
 
 cells: `4096×32×32` bricks → `256×2×2` = 1024; `64×64×4` → `32×32×2` = 2048. An exact solve on
 that costs microseconds to a millisecond, and it is the reference's own answer to elongation:
-`DECOMPOSITION_AND_MULTIGRID.md` §2.7's `64×2×2` row is 6.0 iterations smoothed vs **4.0 exact**,
+`../../docs/DECOMPOSITION_AND_MULTIGRID.md` §2.7's `64×2×2` row is 6.0 iterations smoothed vs **4.0 exact**,
 and flow's full-depth *semi-coarsened* ladder (4.4) did not beat the exact bottom. Semi-coarsening
 buys nothing on iterations; it only bounds `n_b`, which matters when the short axis has few factors
 of two (`512×512×4` → `256×256×2` = 131 k cells, ~50 ms serial per V-cycle). Hence two rules,
 absorbed by WO5 and `predict`:
 
 - the exact bottom runs on the host for `n_b ≤ 10⁴` and on core's existing `GraphAMGDevice`
-  (`graph_amg_device.hpp`) above that — **but 10⁴ is now measured to be about an order of magnitude
+  (`../../core/include/peclet/core/solver/graph_amg_device.hpp`) above that — **but 10⁴ is now measured to be about an order of magnitude
   too high, see §11.11**;
-- design rule (joins §3 rule 1 of `DECOMPOSITION_AND_MULTIGRID.md`): choose brick counts for their
+- design rule (joins §3 rule 1 of `../../docs/DECOMPOSITION_AND_MULTIGRID.md`): choose brick counts for their
   factors of two on every axis, keep the short axis at ≥ 8 bricks, and read `n_b` off `predict`.
 
 Revisit a structured semi-coarsening *tail* level (single-rank, uniform, no octree needed there)
@@ -203,7 +203,7 @@ only if a production slab measures a bottom above ~10⁵ cells on device.
 on a build-cost premise that is false — core's `BlockDecomposer::agglomerated()` exists, is unit-
 tested, and names AMR as a consumer; flow has run it as the default at 24–1536 ranks.)
 
-One primitive, per `archive/MG_TELESCOPING_PLAN.md` §4.0: **move a level, at its own resolution,
+One primitive, per `../../docs/archive/MG_TELESCOPING_PLAN.md` §4.0: **move a level, at its own resolution,
 onto a new decomposition of that level's grid on a sub-communicator, and continue the ladder
 there.** Three instantiations, in the order the trigger tries them:
 
@@ -327,7 +327,7 @@ Two partitions produce those blocks:
   non-power-of-two `np` (3, 6, 12, 1536 = 2⁹·3) the splits land at thirds and nesting depth is
   whatever the arithmetic gives; the prediction tool (§6.7) reports it. Improvement: build the ORB
   **coarse-first** — decompose `G / 2^a` and `refined(2^a)` (core `BlockDecomposer::refined`,
-  measured in `DECOMPOSITION_AND_MULTIGRID.md` §2.4 to balance as well or better) with the largest
+  measured in `../../docs/DECOMPOSITION_AND_MULTIGRID.md` §2.4 to balance as well or better) with the largest
   `a` whose imbalance ≤ 1.05. Pure function of `(np, G)`: every rank computes it identically. For
   power-of-two cases the result is the partition of today (bit-identical runs).
 - **Weighted `rebalance`.** Today's weighted ORB has no alignment, so a rebalanced partition may
@@ -367,7 +367,7 @@ for the coarsest level `L_t`:
 **Once per build.**
 1. Global coarse coordinate of local cell `i` at `L_t`: `g_i[d] = (blockFineOrigin[d] + lo_i[d]) / W`,
    `W = 2^(lmax + k)` fine units (exact division by nesting); `gid_i = linear(g_i)` x-fastest
-   (`CONVENTIONS.md`).
+   (`../../docs/CONVENTIONS.md`).
 2. `Allgatherv` of `(gid_i, α_i[2·Dim])` — the local rows of `L_t`'s `opennessRaw()` — into a
    gid-ordered array of the whole `G_t` (every rank ends with the same array).
 3. Build `tail = BlockOctree(G_t, lmax + k, origin 0)`; map `gid → tail leaf` once via
@@ -434,7 +434,7 @@ and therefore by the tail):
    the null component alive and stalls the inner CG).
 4. **Solve.** `b_i = res_i / invVol_i` (the volume-integrated rhs; the projected mean per component
    is then the volume-weighted mean of `res`, consistent with `removeMeanFv`); project `b`
-   per component; `GraphAMG`-preconditioned CG (core `graph_amg.hpp`, default `AmgParams`) to
+   per component; `GraphAMG`-preconditioned CG (core `../../core/include/peclet/core/solver/graph_amg.hpp`, default `AmgParams`) to
    relative 1e-8, cap 100 iterations, projecting the preconditioned residual per component each
    iteration; project the solution per component; `x_bottom = e`; then the existing `removeMeanFv`.
 5. **Build once per `build()`** (the operator changes only with `setSolid`); the host↔device traffic
@@ -453,7 +453,7 @@ forces Jacobi; `agglomerated` forces the exact bottom. Same three spellings as f
   ORB with the same factory `DistributedOctree::init` uses (`BlockDecomposer` on `G`). Python:
   `peclet.amr.predict_hierarchy(cells, lmax, num_ranks)` — flow's name (it was
   `predict_pressure_hierarchy` until 2026-09-24, never released); the arguments are amr's canonical
-  ones, and flow's differing ones are flow's recorded divergence (`../docs/NAMING.md` §2).
+  ones, and flow's differing ones are flow's recorded divergence (`../../docs/NAMING.md` §2).
 - `Flow.diagnostics.pressure_mg_levels -> list[int]` (per-level local leaf counts, level 0 first,
   tail levels appended) and `Flow.diagnostics.pressure_mg_bottom -> str` (`"jacobi"` | `"amg"`;
   suffix `"+tail"` when the tail is engaged). The `[step-prof]` header line prints the same.
@@ -569,7 +569,7 @@ across ranks (Allreduce of a hash in the test); `predict` reports the tail.
 **WO4b — sibling-merge and repartition stages (after WO5).** flow's trigger verbatim for
 `agglomerated(d)`; the fresh-proportional-ORB fallback with `np_L` from the extent-4 rule;
 `redistributeGridFields` movement; sub-communicators and idle ranks; per-level halos on the
-sub-communicator (core's NBX tag rotation — the 1536-rank race of `SCALING_ISSUES.md` §4 is fixed
+sub-communicator (core's NBX tag rotation — the 1536-rank race of `../../docs/SCALING_ISSUES.md` §4 is fixed
 in core `10294e6`). *Accept:* a WEIGHTED partition on 24³ bricks at np = 2/4/8 reproduces the
 single-rank ladder and its solution to ≤ 1e-13 (flow's pattern, 2.5e-14) and the iteration count
 is np-independent; with stages disabled the ladders that never block are byte-identical to WO3.
@@ -731,7 +731,7 @@ gates: `flow_parity` Stokes cases, `amr_two_sphere_gap.py` at cf = 1, momentum i
    (user):** public, flow's spellings — `Flow.set_pressure_bottom(mode=)`,
    `Flow.set_pressure_bottom_extent(cells=)` and the `Flow.pressure_bottom_extent` read-out;
    `pressure_mg_levels` / `pressure_mg_bottom` stay on `Flow.diagnostics` (flow has no equivalent).
-   A grid-count threshold is a count, not cell-unit API (`../docs/NAMING.md` §1.8).
+   A grid-count threshold is a count, not cell-unit API (`../../docs/NAMING.md` §1.8).
 7. **`GradedDistributedMultigrid::inner_` / `DistributedMultigrid` (preference).** Redundant in
    concept after this design, still tested host oracles. *Default:* leave them; retire in a later
    cleanup with their tests, not in this package.

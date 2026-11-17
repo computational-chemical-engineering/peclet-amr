@@ -218,7 +218,7 @@ Two results worth your attention:
 
 ## 6. Already decided — do not reopen
 
-From `../../docs/decisions/amr.md`:
+From `../../../docs/decisions/amr.md`:
 
 - **The collocated coupling is the Almgren–Bell–Colella approximate projection, never Rhie–Chow.**
 - **`cf = 1` (quadratic C/F) is not optional on graded meshes** and is the shipped default.

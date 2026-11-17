@@ -8,17 +8,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 `../`: `core`, `morton`, `flow`, `dem`, `voro`, `pnm`, `coupling`): the block-local-Morton **AMR
 octree** and the **collocated-projection Navier–Stokes solver** with a cut-cell immersed boundary
 that runs on it — `peclet::amr` in C++, `peclet.amr` in Python. It was the `amr/` subtree of
-`peclet-core` until **2026-09-10**, when suite `docs/QUALITY_PLAN.md` D6 / G.2 relocated it here
+`peclet-core` until **2026-09-10**, when suite `../docs/QUALITY_PLAN.md` D6 / G.2 relocated it here
 *with its git history* (`git log --follow` reaches back through `core/include/peclet/core/amr/` and
 the `tpx/amr/` era). Nothing was deleted; the ctest names, the docs and the campaign logs came along.
 
 Header-only C++20. Depends on **`peclet-core`** (`../core`: decomposition, halos, SDF geometry, and
-the face-CSR solver layer `peclet/core/solver/` that was lifted out of this tree in the same move) and
+the face-CSR solver layer `../core/include/peclet/core/solver/` that was lifted out of this tree in the same move) and
 **`peclet-morton`** (`../morton`), on **Kokkos** (required: CUDA / HIP / OpenMP, chosen by the prefix
 `CMAKE_PREFIX_PATH` points at) and on **MPI** (required: the distributed octree / flow and the Python
-module link it, and core's `mpi_stub.hpp` covers the host halo only, not the Kokkos grid halo the
+module link it, and core's `../core/include/peclet/core/common/mpi_stub.hpp` covers the host halo only, not the Kokkos grid halo the
 device flow reaches — a Kokkos + no-MPI build was never a core configuration either). The suite-wide contract is in `../docs/`
-(`ARCHITECTURE.md`, `CONVENTIONS.md`, `NAMING.md`, `STYLE.md`); read them before cross-cutting changes.
+(`../docs/ARCHITECTURE.md`, `../docs/CONVENTIONS.md`, `../docs/NAMING.md`, `../docs/STYLE.md`); read them before cross-cutting changes.
 
 ## Settled decisions — do not reverse silently
 
@@ -287,7 +287,7 @@ still apply to the leaf halo.
   are 11 / 41 / 45 and stay below 24576; core's `NbxEngine` rotates its own wire tags. Until
   2026-09-05 family-0 NBX rounds walked over the AMR gather tags and
   `amr_distributed_{fv,mg,graded_mg,openness,poisson}_np{4,8}` returned wrong ghosts intermittently.
-- The Python wrappers are `Releasable` (core's `kokkos_teardown.hpp`): the atexit hook drops their
+- The Python wrappers are `Releasable` (core's `../core/include/peclet/core/python/kokkos_teardown.hpp`): the atexit hook drops their
   Views BEFORE `Kokkos::finalize()`, so an `Octree`/`Flow` at script scope does not abort the process
   on exit (CUDA: `cudaErrorCudartUnloading`). Every new wrapper class must register the same way.
 - `Flow.set_solid` releases the GIL around the host builders' parallel regions (a Python SDF callable

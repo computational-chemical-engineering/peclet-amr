@@ -87,7 +87,7 @@ any φ. Every solve uses the symmetric `L`, so MG-PCG is untouched.
 
 ## 5. Settled decisions this touches
 
-From `../../docs/decisions/amr.md`:
+From `../../../docs/decisions/amr.md`:
 
 - **"MG-as-solver with a Picard outer loop projects ONCE per step, never inside the loop."**
   **Option (A) reverses this.** If you recommend (A), record a superseding decision with the

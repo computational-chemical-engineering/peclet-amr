@@ -27,7 +27,7 @@ Rejected alternatives:
   because flow is the **first production consumer of the missing piece** (§6): load-balanced
   CFD-DEM runs on a weighted decomposition, which its sibling-merge telescoping cannot handle.
 
-The test for "belongs in core" is the one `ARCHITECTURE.md` states: core provides *where data
+The test for "belongs in core" is the one `../../docs/ARCHITECTURE.md` states: core provides *where data
 lives and how it moves*, not *how the physics is integrated*. Everything in §3.1 can be named in
 core's vocabulary (`BlockDecomposer`, `Block`, `MPI_Comm`, `T*`, an index functor); nothing in
 §3.2 can.
@@ -36,7 +36,7 @@ core's vocabulary (`BlockDecomposer`, `Block`, `MPI_Comm`, `T*`, an index functo
 
 Three findings from the tree, 2026-09-23:
 
-1. `gatherGroups` / `scatterGroups` — the plan's "core share" (`MG_TELESCOPING_PLAN.md:259`) —
+1. `gatherGroups` / `scatterGroups` — the plan's "core share" (`../../docs/archive/MG_TELESCOPING_PLAN.md:259`) —
    were never written. Neither core nor flow has them; flow's `Telescope` carries its own
    `MPI_Comm_split` pair (`:775–776`) and `Gatherv`/`Scatterv` (`:1486, 1554, 1602`), and amr's
    `ReplicatedTailStage` has just written its own `Allgatherv` keyed by global id.
@@ -61,7 +61,7 @@ Three findings from the tree, 2026-09-23:
 | **target policy** | pure function of `(currentDec, G_L, liftable-predicate, minExtent)` → `{kind, dec, ownerOf, groupOf}` | flow inline (`:745–770`); amr would copy | flow, amr |
 | **stage communicators** | `MPI_Comm_split` into group comm + roots sub-comm (or first-`np_L` sub-comm), `active`, member lists, counts/displs | flow inline (`:775–800`); amr partial | flow, amr, voro (comm part) |
 | **planned field movement** | build once from `(srcDec, dstDec, ownerOf, srcIndex, dstIndex, comm)`; `forward(fields)` / `backward(fields)` many times; kinds: replicated (`Allgatherv`), nested group (`Gatherv`/`Scatterv`), general (planned point-to-point) | only the one-shot, same-rank-numbering, box-layout `redistributeGridFields` | flow, amr |
-| weighted + aligned ORB | `init(numBlocks, globalSize, weights, align)` — coarse-first on the weight grid (`DECOMPOSITION_AND_MULTIGRID.md` open problem 9) | no | flow (CFD-DEM), amr `rebalance`, coupling's shared factory |
+| weighted + aligned ORB | `init(numBlocks, globalSize, weights, align)` — coarse-first on the weight grid (`../../docs/DECOMPOSITION_AND_MULTIGRID.md` open problem 9) | no | flow (CFD-DEM), amr `rebalance`, coupling's shared factory |
 | id-keyed replicated gather | `gatherByGlobalId(ids, values, comm)` → the global vector | flow inline (`gatherv` in the bottom); amr inline | flow, amr, voro (GraphAMG bottom) |
 
 ### 3.2 Method-specific — stays where it is
@@ -88,8 +88,8 @@ composes core's policy with the method's lift rule.
 
 ## 4. Core API sketch
 
-All in `peclet::core::decomp`, header-only, MPI + optional Kokkos as the rest of `decomp/`. Names
-are proposals for the caller to settle against `NAMING.md`.
+All in `peclet::core::decomp`, header-only, MPI + optional Kokkos as the rest of `../../core/include/peclet/core/decomp/`. Names
+are proposals for the caller to settle against `../../docs/NAMING.md`.
 
 ```
 // --- policy: a pure function replicated on every rank, no communication -------------------
@@ -185,11 +185,11 @@ continuation on `sub`.
 
 Setup: flow + dem share one `BlockDecomposer` (settled). `coupling.rebalance()` →
 `flow.rebalance_by_weights(w)` → `Solver::rebalanceByWeights` builds `BlockDecomposer(size, G, w)`
-(`flow_ibm_mpi.hpp:149`), `redistribute(newDec)`, `initMpi(newDec)` → `CutcellMG::initMpi(...,
+(`../../flow/src/flow_ibm_mpi.hpp:149`), `redistribute(newDec)`, `initMpi(newDec)` → `CutcellMG::initMpi(...,
 dec0 = weighted)`.
 
 **Today — measured 2026-09-24** (`flow/tests/study/weighted_dec0_telescope_probe.py`, flow
-`0ae29d6`; table in `docs/SCALING_ISSUES.md` #2 TRAP). Level 0 is the weighted partition; `evenOn`
+`0ae29d6`; table in `../../docs/SCALING_ISSUES.md` #2 TRAP). Level 0 is the weighted partition; `evenOn`
 fails on some axis → `blocked`, and the `agglomerated(d)` search walks down the ORB tree and lands
 at **the shallowest depth whose splits are all even** — which is `d = 0` (the whole level on one
 rank) whenever the root split falls on an odd plane, and 2^d ranks or a collapse one level lower
@@ -224,7 +224,7 @@ raises S2's leverage relative to the repartition kind, and the order below stand
 
 Neither piece alone suffices: alignment cannot buy full depth at bounded imbalance on a weighted
 tree; repartition at `a = 0` moves the whole fine grid per V-cycle. Together they are the general
-form of what `MG_TELESCOPING_PLAN.md` open problem 9 asked for, and they are consumed by flow's
+form of what `../../docs/archive/MG_TELESCOPING_PLAN.md` open problem 9 asked for, and they are consumed by flow's
 production path first. **This raises the priority of the core work above amr's WO4b's own need
 for it.**
 
@@ -255,7 +255,7 @@ WO4b has not started. Aim it at core:
 | S3 | amr (WO4b) | `ReplicatedTailStage` movement → plan (bitwise vs WO4's tail test); sibling + repartition stages on `sub`-comm `DistributedFlowMultigrid` | `amr_mg_depth.md` WO4b gate: weighted 24³-brick partition, np = 2/4/8, single-rank ladder and solution to ≤ 1e-13, np-independent iterations. **Built 2026-09-24, gate passed** (`amr_mg_depth.md` WO4b as built: ladder = single-rank, 1.6e-16 at L0 / bitwise below, 15 = 15 iterations at np = 2/4/8); `rebalance` through `chooseAlignedWeighted`. §9.6–§9.7 decided the same day and the policy is **ON by default** (measured no slower anywhere, up to 1.9× faster at np = 8). |
 | S4 | flow | `Telescope` delegates to S1 (policy + comms + movement) | byte-identical (§7) — **DONE 2026-09-24** (§11.9) |
 | S5 | flow + coupling | `Repartition` kind for weighted `dec0`; `rebalanceByWeights` and `coupling.rebalance()` through the aligned weighted `init` | the CFD-DEM MPI tests; iteration count after `rebalance()` equal to before it ± 1; the §9.1 measurement closed — **DONE 2026-09-25**: Repartition half (flow `d907c57`) and aligned half (flow `fa3178f`, dem `9c93253` `migrate_to_weights(w, align=)`, coupling `455150e`); remaining: `a` in `check_decomposition.py --predict` (§11.9) |
-| S6 | suite | register entry (§10), `ARCHITECTURE.md` core-module list gains the stage line, `MG_TELESCOPING_PLAN.md` status note | — |
+| S6 | suite | register entry (§10), `../../docs/ARCHITECTURE.md` core-module list gains the stage line, `../../docs/archive/MG_TELESCOPING_PLAN.md` status note | — |
 
 S1 is small (~300–400 lines plus tests) and unblocks S3 and S4 in parallel. Ownership: S1/S2 are
 core changes and need this decision recorded first (a cross-cutting change); S3 is C1's; S4/S5 are
@@ -276,7 +276,7 @@ delete-and-include, not a rewrite.
 3. **Device-resident plan buffers (fact).** *Default:* host-staged; measure at 384 GPUs before
    moving them, as `GridHalo` was.
 4. **Names (preference).** `StageTarget`, `chooseStageTarget`, `StageComm`, `RedistributePlan`,
-   `gatherByGlobalId`. *Default:* these, unless `NAMING.md` already has a spelling for "plan"
+   `gatherByGlobalId`. *Default:* these, unless `../../docs/NAMING.md` already has a spelling for "plan"
    (`GridHaloTopology` is the precedent for "topology once, exchange many" — `RedistributeTopology`
    would follow it).
 5. **Does `MgStage`'s interface survive S3? (preference.)** *Default:* yes — it is the right
@@ -314,12 +314,12 @@ delete-and-include, not a rewrite.
 > (core cannot name a level, and V-cycle orchestration is deliberately not consolidated). Trigger:
 > flow's sibling-merge telescoping cannot handle the weighted decomposition load-balanced CFD-DEM
 > runs on (`mac_cutcell_mg.hpp:513–517`), and amr's C1 needed the same machinery. Evidence:
-> `amr/docs/amr_mg_core_boundary.md`, `amr/docs/amr_mg_depth.md` §5.6, `MG_TELESCOPING_PLAN.md` §4.
+> `amr_mg_core_boundary.md`, `amr_mg_depth.md` §5.6, `../../docs/archive/MG_TELESCOPING_PLAN.md` §4.
 
 ## 11. S2 specification — the Repartition kind and the aligned weighted ORB
 
-> Written 2026-09-24 after S1 landed (core branch `stage`: `stage_target.hpp`, `stage_comm.hpp`,
-> `redistribute_topology.hpp`, `gather_by_global_id.hpp`; the policy reproduces flow's search on
+> Written 2026-09-24 after S1 landed (core branch `stage`: `../../core/include/peclet/core/decomp/stage_target.hpp`, `../../core/include/peclet/core/decomp/stage_comm.hpp`,
+> `../../core/include/peclet/core/decomp/redistribute_topology.hpp`, `../../core/include/peclet/core/decomp/gather_by_global_id.hpp`; the policy reproduces flow's search on
 > 4872 ladder levels bitwise, the movement matches flow's gather/scatter and amr's replicated
 > gather bitwise) and after the measurement of §6. S1's Part A (`maxBlockCells == 0`, formerly
 > `allowRepartition == false`) must keep passing unchanged.
@@ -418,7 +418,7 @@ rather than whole member blocks, and the transport is point-to-point on `c.paren
   source and one destination, so the result is independent of message order — bitwise the same
   values as a one-shot `redistributeGridFields` over the same boxes (the test oracle, §11.6).
 - **Tag.** One constant from the range core reserves below the AMR direct tags (11 / 41 / 45,
-  `amr/CLAUDE.md`), offset by a per-topology `id` the caller passes at build (the level index) so
+  `../CLAUDE.md`), offset by a per-topology `id` the caller passes at build (the level index) so
   two levels' stages in flight on the same communicator cannot pair messages across each other;
   `Waitall` before returning keeps the pattern serial in practice.
 - **Later, not now:** persistent requests (`MPI_Send_init`) and device-resident buffers, exactly
@@ -429,11 +429,11 @@ rather than whole member blocks, and the transport is point-to-point on `c.paren
 ### 11.4 The aligned weighted ORB — `init(numBlocks, globalSize, weights, align)`
 
 **Contract.** `align[k] ≥ 1`, `globalSize[k] % align[k] == 0`, `weights` covers the global grid
-x-fastest (`CONVENTIONS.md`). Result: a weighted ORB every one of whose split values, block origins
+x-fastest (`../../docs/CONVENTIONS.md`). Result: a weighted ORB every one of whose split values, block origins
 and block sizes is a multiple of `align[k]` on axis `k`, so `coarsened(align)` divides cleanly and
 in-place lifting nests for `log2(align[k])` levels on every axis; `align_` is set to `align`.
 
-**Construction — coarse-first, never snap-after** (`DECOMPOSITION_AND_MULTIGRID.md` §1.3, §2.4,
+**Construction — coarse-first, never snap-after** (`../../docs/DECOMPOSITION_AND_MULTIGRID.md` §1.3, §2.4,
 §2.5: snapping a chosen split cascaded 96|96 into 128|64; on the coarse grid one cell *is* the
 quantum):
 
@@ -497,7 +497,7 @@ optional — amr's S3 depends on it and it is what makes the policy honest under
 | G-A1 reduction | core | 50 random weight fields, `np ∈ {1..8, 12, 24}`, grids 32³ / 48×32×16 / 96³ | `init(w, align=1)` == `init(w)`: `origins_`, `sizes_`, `tree_` bitwise |
 | G-A2 nesting | core | same, `a ∈ {1, 2, 3}` | every block origin and size a multiple of `2^a`; `coarsened(2^a)` succeeds; after `j ≤ a` halvings every block passes BOTH flow's per-axis and amr's all-axes `liftable` |
 | G-A3 chooser | core | same | returned `imb ≤ 1.05` whenever `a > 0`; `a` identical on every rank (Allreduce of a hash); `a = 0` returns today's partition bitwise |
-| **G-A4 the probe, alignment only** | flow (S5a) | `weighted_dec0_telescope_probe.py`, heap np = 8 and 4, `rebalanceByWeights` through `chooseAlignedWeighted`, Repartition OFF | telescope fires no earlier than level `a` (log the ladder and `a`; expect `a = 2` at 96³/np = 8); projection ≤ **1.15×** the unweighted baseline (0.080 → ≤ 0.092 s at np = 8; was 0.180); iterations 8 → 8; momentum time within ±10 % of the weighted baseline (the cell imbalance is the balancer's, not ours) |
+| **G-A4 the probe, alignment only** | flow (S5a) | `../../flow/tests/study/weighted_dec0_telescope_probe.py`, heap np = 8 and 4, `rebalanceByWeights` through `chooseAlignedWeighted`, Repartition OFF | telescope fires no earlier than level `a` (log the ladder and `a`; expect `a = 2` at 96³/np = 8); projection ≤ **1.15×** the unweighted baseline (0.080 → ≤ 0.092 s at np = 8; was 0.180); iterations 8 → 8; momentum time within ±10 % of the weighted baseline (the cell imbalance is the balancer's, not ours) |
 | G-B1 policy | core | the eight §6 trees exported as fixtures + S1's 4872-level fixture | with `maxBlockCells` = level-0 block: Repartition on 8 / 4 / 8 for the three `d = 0` rows and the flat-bed np = 8 row, SiblingMerge accepted for tilt-0.3 np = 4 at L1, InPlace for flat-bed np = 4; with `maxBlockCells = 0`: S1 Part A byte-identical |
 | G-B2 movement | core | `np ∈ {1..8}`, random proportional and weighted `src`, proportional `dst` on `np_L ∈ {1, 2, np/2, np}`, 1–3 fields | `backward(forward(x)) == x` bitwise; `forward` == `redistributeGridFields` values on the box layout; inactive ranks receive nothing; send segments tile the source block, receive segments the target block |
 | G-B3 the probe, repartition only | flow (S5b) | as G-A4 with alignment forced to `a = 0` and Repartition ON | Repartition at level 0 on all ranks; projection ≤ **1.3×** the unweighted baseline (one level-0 field exchange per direction per V-cycle); iterations 8 → 8 |

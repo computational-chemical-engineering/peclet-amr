@@ -120,7 +120,7 @@ precisely to put cut cells at several levels, and the mixed-level cut band is a 
 
 ## 5. Already decided — do not reopen
 
-From `../../docs/decisions/amr.md`, verbatim:
+From `../../../docs/decisions/amr.md`, verbatim:
 
 - **"cf=1 (quadratic C/F flux) is not optional on graded meshes"** — *"the standard flux cannot
   converge on graded meshes"*. cf=0 is rejected there, and cf=1 is now the shipped DEFAULT (user

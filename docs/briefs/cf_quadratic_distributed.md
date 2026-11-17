@@ -113,7 +113,7 @@ ghost-tailed at that point. If one is not, syncing it is the fix, not resizing t
   it (`flow.hpp:1757`).
 - **Do not change the scheme.** The arithmetic in `cf_scheme.hpp`'s closure is settled and gated by
   `test_amr_cf_vector` / `test_amr_cf_quadratic`. This is a neighbour-resolution change only.
-- **The row gates are load-bearing and have bitten before.** `../docs/decisions/amr.md` records
+- **The row gates are load-bearing and have bitten before.** `../../../docs/decisions/amr.md` records
   that `cfDiv`/`cfGrad` firing at CUT rows (gate was `rowFluid`, not `rowRegular`) violated support
   consistency and made 2 of 12 throat-graded meshes march to k~1e12 by step ~100. Keep
   `rowRegular` for `cfDiv_`/`cfGrad_`. A row whose tangential neighbour is now a GHOST must gate
