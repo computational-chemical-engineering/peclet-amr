@@ -1,0 +1,96 @@
+# cce-code-health gate for peclet.amr (https://github.com/computational-chemical-engineering/cce-code-health).
+# Modeled on dem's (dem-health-api) and flow's (flow-health-api). Established by WO-31 (2026-11-17) at amr
+# origin/main 9205762, core 7cec32a (1.8.1), morton d264165; wall clock in playbook.md.
+#
+# Run with PECLET_SUITE=<suite checkout> set. Core and morton headers: the head side (a sibling worktree
+# suite/amr-<topic>) finds ../core and ../morton silently; the base side (built under <git-common-dir>/codehealth/
+# base-<sha>, no siblings) would FETCH them at PECLET_CORE_TAG / PECLET_MORTON_TAG (older programs). Every
+# configure therefore pins both to $PECLET_SUITE/{core,morton} through FETCHCONTENT_SOURCE_DIR_* (FULLY_DISCONNECTED:
+# no network), and the build tiers print one '[deps] ...' line per sibling with the REAL include path taken from
+# compile_commands.json; state_hash requires those lines to match between base and head (same_lines).
+#
+# Traps encoded below:
+#  - Threads: amr CLAUDE.md runs the battery at OMP_NUM_THREADS=2 OMP_PROC_BIND=false (-LE 'bench|np8') and the
+#    np8 subset LAST at one thread; an unbounded pool on 48 cores is an hour-long trap. state_hash runs at the
+#    [gate.env] one thread (bitwise only there).
+#  - MPIEXEC_PREFLAGS takes the LIST form "--bind-to;none" (amr expands it as a list); MPIEXEC_EXECUTABLE is
+#    /usr/bin/mpirun (ParaView's mpiexec on PATH runs N singletons that all "pass"; the launcher pin in
+#    cmake/PecletAmrPinMpiexec.cmake catches it, but say it anyway).
+#  - ctest exits 0 when a test is skipped -> fail_regex. python_flow_parity exits 77 BY DESIGN without
+#    -DPECLET_AMR_FLOW_PYTHONPATH (a flow build tree, a sibling repo); it is excluded by name, not configured, so the
+#    gate does not depend on another session's build tree.
+#  - state_hash.py --save takes a FILE (dem's takes a directory). The np = 2 hashes need `mpirun -np 2`; the tier
+#    requires the .np2 keys. The committed reference carries a toolchain key; a different compiler SKIPS (77).
+schema = 1
+
+[profiles]
+python = "python@0"
+cpp = "cpp@0"
+
+[scope]
+include = ["include/*", "python/*"]
+
+[gate]
+frozen = ["cmake/*", "CMakeLists.txt", "CLAUDE.md", "python/state_hash.py", "python/state_hash_reference.json"]
+forbid = ["include/*", "pyproject.toml"]
+literals = false
+public_api = false
+flags = true
+keep_going = false
+# The suite venv supplies nanobind (found through the active interpreter), python, numpy, mpi4py and clang-format.
+prefix = ': "${PECLET_SUITE:?set PECLET_SUITE to the suite checkout}" && export VIRTUAL_ENV="$PECLET_SUITE/.venv" PATH="$PECLET_SUITE/.venv/bin:$PATH" AMR_CFG="-DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=$PECLET_SUITE/extern/install/host-openmp -DFETCHCONTENT_SOURCE_DIR_PECLET_SIB_PECLET-CORE=$PECLET_SUITE/core -DFETCHCONTENT_SOURCE_DIR_PECLET_SIB_PECLET-MORTON=$PECLET_SUITE/morton -DFETCHCONTENT_FULLY_DISCONNECTED=ON -DPECLET_AMR_BUILD_TESTS=ON -DPECLET_AMR_BUILD_PYTHON=ON -DMPIEXEC_EXECUTABLE=/usr/bin/mpirun -DMPIEXEC_PREFLAGS=--bind-to;none -DCMAKE_EXPORT_COMPILE_COMMANDS=ON" &&'
+
+[gate.env]
+OMP_NUM_THREADS = "1"
+OMP_PROC_BIND = "false"
+OPENBLAS_NUM_THREADS = "1"
+MKL_NUM_THREADS = "1"
+PYTHONHASHSEED = "0"
+
+# amr's CI format job is BLOCKING (quality.yml, clang-format 18.1.8 = the suite venv's). CI's file set plus
+# python/*.hpp, which CI's glob misses (the binding-only check header lives there).
+[[gate.tier]]
+name = "clang_format"
+kind = "command"
+behaviour = false
+cadence = "step"
+timeout = 120
+cmd = '''cd {repo} && $PECLET_SUITE/.venv/bin/clang-format --dry-run --Werror \
+  $(git ls-files 'include/*.hpp' 'tests/*.hpp' 'tests/*.cpp' 'benchmarks/*.cpp' 'python/*.cpp' 'python/*.hpp')'''
+
+[[gate.tier]]
+name = "build_host"
+kind = "command"
+behaviour = false
+cadence = "step"
+timeout = 2400
+cmd = '''cmake -S {repo} -B {repo}/build_health_host $AMR_CFG && cmake --build {repo}/build_health_host -j32'''
+
+[[gate.tier]]
+name = "ctest_host"
+kind = "command"
+cadence = "step"
+timeout = 7200
+skip_exit = 77
+fail_regex = '\*\*\*Skipped|Not Run|No tests were found'
+detect_exit = [8]
+cmd = '''cmake -S {repo} -B {repo}/build_health_host $AMR_CFG >/dev/null \
+  && cmake --build {repo}/build_health_host -j32 >/dev/null \
+  && OMP_NUM_THREADS=2 ctest --test-dir {repo}/build_health_host -LE 'bench|np8' -E '^python_flow_parity$' \
+       -j8 --timeout 1800 --output-on-failure \
+  && ctest --test-dir {repo}/build_health_host -L np8 -j1 --timeout 1800 --output-on-failure'''
+
+[[gate.tier]]
+name = "state_hash"
+kind = "reference"
+cadence = "step"
+timeout = 1800
+same_lines = '^\[deps\] '
+outputs = ["hashes_np1.json", "hashes_np2.json"]
+cmd = '''cmake -S {repo} -B {repo}/build_health_host $AMR_CFG >/dev/null \
+  && cmake --build {repo}/build_health_host -j32 >/dev/null \
+  && python -c "import json,os,re,sys; cc=json.load(open(sys.argv[1])); s=' '.join(e['command'] for e in cc if e['file'].endswith('amr_bindings.cpp')); [print('[deps] %s=%s' % (r, os.path.realpath(m))) for r in ('core','morton') for m in sorted(set(re.findall(r'-I(\S*/%s/include)' % r, s)))]" {repo}/build_health_host/compile_commands.json \
+  && PYTHONPATH={repo}/build_health_host python {repo}/python/state_hash.py --save {out}/hashes_np1.json \
+  && PYTHONPATH={repo}/build_health_host /usr/bin/mpirun -np 2 --bind-to none \
+     python {repo}/python/state_hash.py --save {out}/hashes_np2.json \
+  && grep -q '\.np2' {out}/hashes_np2.json'''
