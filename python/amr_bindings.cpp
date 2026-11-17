@@ -294,6 +294,7 @@ class Octree : public Releasable {
   // Refine leaves the sphere's surface passes through (plus a band) down to target_level.
   Index refine_to_sphere(std::array<double, 3> center, double radius, unsigned target_level,
                          double band, bool balance) {
+    chk::sphere_args(center, radius, target_level, band, t_.lmax());
     geom::Sphere s{{center[0], center[1], center[2]}, radius};
     return amr::refineToSdf(
         t_, geo_, [&](const Vec<3>& p) { return s.eval(p); }, target_level, band, balance);
@@ -323,6 +324,7 @@ class Octree : public Releasable {
   Index refine_to_gap_floor(std::function<double(double, double, double)> sdf,
                             std::function<double(double, double, double)> gap,
                             unsigned coarsest_level, double n, double band, bool balance) {
+    chk::gap_floor_args(coarsest_level, t_.lmax(), n, band);
     auto tgt = amr::gapFloorTarget<3>([&](const Vec<3>& p) { return gap(p[0], p[1], p[2]); },
                                       geo_.hMax(), coarsest_level, n);
     return amr::refineToSdfGraded(
@@ -353,6 +355,7 @@ class Octree : public Releasable {
   // field (M,).
   nb::ndarray<nb::numpy, double> adapt(DArray field, double refine_thresh, double coarsen_thresh,
                                        unsigned finest_level, double eps, bool linear) {
+    chk::adapt_args(refine_thresh, coarsen_thresh, finest_level, t_.lmax(), eps);
     auto fv = asField(t_, field, "adapt");
     auto r = amr::adapt(t_, fv, refine_thresh, coarsen_thresh, finest_level, eps, linear);
     t_ = std::move(r.octree);
@@ -408,6 +411,7 @@ class Poisson : public Releasable {
   // x0 (or 0). Stops early once the residual <= tol (tol<=0 disables). Returns
   // (u (N,), final_residual, cycles_done).
   nb::tuple solve(DArray rhs, std::optional<DArray> x0, int cycles, int pre, int post, double tol) {
+    chk::solve_args(cycles, pre, post, tol);
     std::vector<double> rv = toVec(rhs, "solve");
     std::vector<double> u(static_cast<std::size_t>(n_), 0.0);
     if (x0)
@@ -695,6 +699,7 @@ class DistributedOctree : public Releasable {
   // 2:1 balance collectively. Returns the local refinement count. Collective when balance=True.
   Index refine_to_sphere(std::array<double, 3> center, double radius, unsigned target_level,
                          double band, bool balance) {
+    chk::sphere_args(center, radius, target_level, band, d_.lmax());
     geom::Sphere s{{center[0], center[1], center[2]}, radius};
     auto lgeo = d_.localGeometry();
     Index n = amr::refineToSdf(
@@ -775,6 +780,7 @@ class DistributedOctree : public Releasable {
   // returns the remapped local field (M,). Bit-identical across rank counts. Collective.
   nb::ndarray<nb::numpy, double> adapt(DArray field, double refine_thresh, double coarsen_thresh,
                                        unsigned finest_level, double eps, bool linear) {
+    chk::adapt_args(refine_thresh, coarsen_thresh, finest_level, d_.lmax(), eps);
     auto fv = asField(d_.local(), field, "adapt");
     return vecToArray(
         amr::distributedAdapt(d_, fv, refine_thresh, coarsen_thresh, finest_level, eps, linear));
@@ -907,7 +913,7 @@ void bindOctreeCommon(nb::class_<T>& c) {
            "width on a cubic octree).")
       .def("levels", &T::levels, "Leaf refinement levels, (num_leaves,) int32 (0 = finest).")
       .def("codes", &T::codes, "Leaf block-local Morton origin codes, (num_leaves,) uint64.")
-      .def("refine_to_sphere", &chk::refine_to_sphere<T>, nb::arg("center"), nb::arg("radius"),
+      .def("refine_to_sphere", &T::refine_to_sphere, nb::arg("center"), nb::arg("radius"),
            nb::arg("target_level") = 0u, nb::arg("band") = 1.0, nb::arg("balance") = true,
            "Refine leaves the sphere surface (`center`, `radius` in length units) passes through "
            "(plus "
@@ -929,7 +935,7 @@ void bindOctreeCommon(nb::class_<T>& c) {
           "Löhner normalized-second-difference feature indicator E in [0,1] per leaf from a scalar "
           "field (num_leaves,); large E = steep feature (refine), small = smooth (coarsen). On a "
           "DistributedOctree it is evaluated across the owner-based halo (collective).")
-      .def("adapt", &chk::adapt<T>, nb::arg("field"), nb::arg("refine_thresh"),
+      .def("adapt", &T::adapt, nb::arg("field"), nb::arg("refine_thresh"),
            nb::arg("coarsen_thresh"), nb::arg("finest_level") = 0u, nb::arg("eps") = 0.01,
            nb::arg("linear") = true,
            "Solution-adaptive step (Löhner-driven): refine where the indicator > refine_thresh (to "
@@ -1098,7 +1104,7 @@ NB_MODULE(_amr, m) {
            "finest spacing as in refine_to_sdf). Requires Flow.set_ghost_sampled(True) — the "
            "classic overlay contracts a uniform finest band and raises on these level jumps. "
            "Returns refinements performed.")
-      .def("refine_to_gap_floor", &chk::refine_to_gap_floor<Octree>, nb::arg("sdf"), nb::arg("gap"),
+      .def("refine_to_gap_floor", &Octree::refine_to_gap_floor, nb::arg("sdf"), nb::arg("gap"),
            nb::arg("coarsest_level"), nb::arg("n") = 4.0, nb::arg("band") = 2.0,
            nb::arg("balance") = true,
            "refine_to_sdf_graded driven by the plan's GAP-WIDTH FLOOR (§7 criterion 1): the "
@@ -1135,7 +1141,7 @@ NB_MODULE(_amr, m) {
       .def("residual", &Poisson::residual, nb::arg("u"), nb::arg("rhs"),
            "Volume-weighted L2 residual norm sqrt(sum V*(rhs - L u)^2).")
       .def(
-          "solve", &chk::solve<Poisson>, nb::arg("rhs"), nb::arg("x0") = std::nullopt,
+          "solve", &Poisson::solve, nb::arg("rhs"), nb::arg("x0") = std::nullopt,
           nb::arg("cycles") = 20, nb::arg("pre") = 2, nb::arg("post") = 2, nb::arg("tol") = 0.0,
           "Solve L u = rhs with up to `cycles` V-cycles (pre/post Gauss-Seidel sweeps), from x0 or "
           "0, stopping once residual <= tol (tol<=0 disables). Returns (u (num_leaves,), "

@@ -8,11 +8,13 @@
 /// computes in the caller's consistent units) and the offending value.
 ///
 /// Two kinds of entries: the check helpers (`finite`, `positive`, ...), called from the binding's
-/// own constructor lambdas, and the CHECKED METHODS (`set_dt<F>`, `refine_to_sphere<T>`, ...),
-/// free functions bound in place of a member pointer: they keep the Python parameter names,
-/// defaults and return type (same `__nb_signature__`), and keep the validation branches out of
-/// NB_MODULE. The wrapper classes are defined in the binding TU, so the checked methods are
-/// templates on them. Binding-only: no header under include/ includes this.
+/// own constructor lambdas and from the four wrapper methods whose six or seven parameters would
+/// make a forwarding wrapper a second long-parameter-list function (`*_args`: refine_to_sphere,
+/// adapt, refine_to_gap_floor, Poisson.solve), and the CHECKED METHODS (`set_dt<F>`, ...), free
+/// functions bound in place of a member pointer: they keep the Python parameter names, defaults
+/// and return type (same `__nb_signature__`), and keep the validation branches out of NB_MODULE.
+/// The wrapper classes are defined in the binding TU, so the checked methods are templates on them.
+/// Binding-only: no header under include/ includes this.
 ///
 /// Ranges are stated only where the docstring, the solver's use or the data structure makes them
 /// evident. Where a sign or 0 is a switch the check is finite only: Poisson.solve tol <= 0 disables
@@ -145,14 +147,12 @@ inline void octree(const std::array<long, 3>& cells, unsigned lmax,
 
 // --- checked methods: Octree / DistributedOctree (bindOctreeCommon) ------------------------
 
-template <class T>
-auto refine_to_sphere(T& t, std::array<double, 3> center, double radius, unsigned target_level,
-                      double band, bool balance) {
+inline void sphere_args(const std::array<double, 3>& center, double radius, unsigned target_level,
+                        double band, unsigned lmax) {
   finite_each("refine_to_sphere", "center", center, "length");
   positive("refine_to_sphere", "radius", radius, "length");
-  level("refine_to_sphere", "target_level", target_level, t.lmax());
+  level("refine_to_sphere", "target_level", target_level, lmax);
   finite("refine_to_sphere", "band", band, "finest cells");
-  return t.refine_to_sphere(center, radius, target_level, band, balance);
 }
 template <class T>
 auto refine_to_sdf(T& t, Sdf sdf, unsigned target_level, double band, bool balance) {
@@ -173,12 +173,6 @@ inline void adapt_args(double refine_thresh, double coarsen_thresh, unsigned fin
   finite("adapt", "coarsen_thresh", coarsen_thresh, "dimensionless");
   level("adapt", "finest_level", finest_level, lmax);
   nonneg("adapt", "eps", eps, "dimensionless");
-}
-template <class T>
-auto adapt(T& t, Field field, double refine_thresh, double coarsen_thresh, unsigned finest_level,
-           double eps, bool linear) {
-  adapt_args(refine_thresh, coarsen_thresh, finest_level, t.lmax(), eps);
-  return t.adapt(field, refine_thresh, coarsen_thresh, finest_level, eps, linear);
 }
 
 // --- checked methods: Octree only ----------------------------------------------------------
@@ -203,12 +197,6 @@ inline void gap_floor_args(unsigned coarsest_level, unsigned lmax, double n, dou
   positive("refine_to_gap_floor", "n", n, "cells per gap, dimensionless");
   finite("refine_to_gap_floor", "band", band, "cells of the level being created");
 }
-template <class T>
-auto refine_to_gap_floor(T& t, Sdf sdf, Sdf gap, unsigned coarsest_level, double n, double band,
-                         bool balance) {
-  gap_floor_args(coarsest_level, t.lmax(), n, band);
-  return t.refine_to_gap_floor(std::move(sdf), std::move(gap), coarsest_level, n, band, balance);
-}
 
 // --- checked methods: DistributedOctree -----------------------------------------------------
 
@@ -224,14 +212,12 @@ auto rebalance(D& d, Field fields) {
 
 // --- checked methods: Poisson ---------------------------------------------------------------
 
-/// solve: `tol` <= 0 disables the early stop, so finite only.
-template <class P>
-auto solve(P& p, Field rhs, std::optional<Field> x0, int cycles, int pre, int post, double tol) {
+/// Poisson.solve: `tol` <= 0 disables the early stop, so finite only.
+inline void solve_args(int cycles, int pre, int post, double tol) {
   count("Poisson.solve", "cycles", cycles, 0);
   count("Poisson.solve", "pre", pre, 0);
   count("Poisson.solve", "post", post, 0);
   finite("Poisson.solve", "tol", tol, "residual units");
-  return p.solve(rhs, x0, cycles, pre, post, tol);
 }
 
 // --- checked methods: Flow ------------------------------------------------------------------
