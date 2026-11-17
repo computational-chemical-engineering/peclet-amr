@@ -31,7 +31,8 @@ cpp = "cpp@0"
 include = ["include/*", "python/*"]
 
 [gate]
-frozen = ["cmake/*", "CMakeLists.txt", "CLAUDE.md", "python/state_hash.py", "python/state_hash_reference.json"]
+# CMakeLists.txt is not frozen: the Python ctests are registered there (python_input_validation, WO-31).
+frozen = ["cmake/*", "CLAUDE.md", "python/state_hash.py", "python/state_hash_reference.json"]
 forbid = ["include/*", "pyproject.toml"]
 literals = false
 public_api = false
