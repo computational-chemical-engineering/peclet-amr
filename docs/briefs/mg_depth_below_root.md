@@ -25,7 +25,7 @@ Three things put it above routine work.
 2. **It touches the decomposition.** The ORB decomposes the **root grid**; each rank owns a
    sub-brick of root cells (`distributed_octree.hpp:63–80`). Coarsening below the root means
    coarsening *through* the partition — at some depth a rank's sub-brick is one cell, and below
-   that the levels must span ranks. `../docs/DECOMPOSITION_AND_MULTIGRID.md` is the suite's
+   that the levels must span ranks. `../../../docs/DECOMPOSITION_AND_MULTIGRID.md` is the suite's
    reference for exactly this interaction and should be read before deciding.
 3. **The cut-cell case is the one that matters and the one the existing partial answer excludes**
    (§4). Production meshes have openness everywhere near the solid.
@@ -166,7 +166,7 @@ requested depth, then `agglomerateBottom()` when the coarsest global grid exceed
 `graphAmgSolveBottom` all-gathers `(gid, rhs)`, has **every rank solve the identical global CSR**
 with GraphAMG-preconditioned CG, and scatters back by id — no rank-0 bottleneck, and
 decomposition-independent by construction (measured np=6 vs np=1 to 4.5e-16).
-`../docs/DECOMPOSITION_AND_MULTIGRID.md` §2.7 has the measured table: an exact agglomerated bottom
+`../../../docs/DECOMPOSITION_AND_MULTIGRID.md` §2.7 has the measured table: an exact agglomerated bottom
 is **depth-independent** (4.0 iterations at 4 levels and at 8) and beats full geometric depth,
 because the extra levels cost more than the coarse solve they replace.
 
@@ -194,7 +194,7 @@ because the extra levels cost more than the coarse solve they replace.
 
 ## 6. Already decided — do not reopen
 
-From `../../docs/decisions/amr.md` and `../../docs/DECISIONS.md`:
+From `../../../docs/decisions/amr.md` and `../../../docs/DECISIONS.md`:
 
 - **The pressure smoother is MG-PCG, not multicolor-GS**; Chebyshev was not pursued for pressure.
 - **AMR keeps the ORB block decomposition**, not a global SFC partition.

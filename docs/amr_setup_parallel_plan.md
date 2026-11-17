@@ -49,7 +49,7 @@ Mechanically, three pieces:
    `Kokkos::DefaultHostExecutionSpace` — no pragmas anywhere.
 3. **Shim for the Kokkos-free builds**: the shared builder headers (`cf_scheme.hpp`,
    `ghost_projection_sampled.hpp`) also compile in the no-Kokkos host/oracle builds. A ~20-line
-   `peclet::core::hostParFor(n, body)` / `hostParScan(...)` in `common/` maps to the Kokkos host
+   `peclet::core::hostParFor(n, body)` / `hostParScan(...)` in `../../core/include/peclet/core/common/` maps to the Kokkos host
    space when compiled with Kokkos and to a serial loop otherwise — one abstraction, one place,
    serial semantics bitwise-unchanged.
 
@@ -110,18 +110,18 @@ in the commit message, measured at 1 and 8 threads.
   their spaces; static Kokkos linkage means already-built flow/dem binaries are UNAFFECTED
   until their owners rebuild — but do NOT run mixed-prefix processes (e.g. coupling imports
   flow+dem in one interpreter) until both sides are rebuilt against the new prefix.
-  (a) `bootstrap_deps.sh`: add `-DKokkos_ENABLE_OPENMP=ON` to the nvidia-cuda variant; rebuild
+  (a) `../../tools/bootstrap_deps.sh`: add `-DKokkos_ENABLE_OPENMP=ON` to the nvidia-cuda variant; rebuild
   the prefix; rebuild the dependent trees used by the gates (`build_kcuda2`,
   `python/build_cuda2`; flow/dem trees as their owners need them).
   (b) `-mfma` on amr_bindings host flags (expect ~15% at 1 thread — fma is a libm call today).
   (c) NO-REGRESSION FENCE before any builder change: 148/148 core ctests both nets;
   `.sdf-campaign-probes/flow_probe.py` at its pinned 4 threads (u_sum must still print
-  6.74193610583927948e+05); `time_setsolid.py` depth 6/7 unchanged vs the §1 numbers (the
+  6.74193610583927948e+05); `../../flow/tests/study/sdf_campaign/time_setsolid.py` depth 6/7 unchanged vs the §1 numbers (the
   OpenMP runtime being merely PRESENT must not move anything — builders are still serial
   here); geom bit-parity gates (`geom_batch_device` etc.) green. Document
   `OMP_NUM_THREADS`/`OMP_PROC_BIND=false` guidance in the suite CLAUDE.md — with OpenMP in the
   default prefix, the 48-unbound-threads trap becomes suite-wide.
-- **Rung 0.5 — the `hostParFor`/`hostParScan` shim (D1′ piece 3)** in `common/`, with a unit
+- **Rung 0.5 — the `hostParFor`/`hostParScan` shim (D1′ piece 3)** in `../../core/include/peclet/core/common/`, with a unit
   test asserting serial ≡ parallel bitwise on a synthetic disjoint-write fill and an integer
   scan. No builder touched yet.
 - **Rung 1 — cf builders parallel** (via the shim). The `per[i]` leaf loops in
@@ -141,8 +141,8 @@ in the commit message, measured at 1 and 8 threads.
   classification must call the same gates as today's single pass (D6 determinism of the plan:
   row state is a pure function of geometry — so classifying twice is safe by contract).
   1.4 → ~0.3.
-- **Rung 5 — re-measure + record.** `time_setsolid.py` at depths 6/7/8, 1/8/16 threads; update
-  `AMR_GEOMETRY_SETUP_REQUIREMENTS.md` §1 table and `amr_mixed_level_cut_band_plan.md` P3c
+- **Rung 5 — re-measure + record.** `../../flow/tests/study/sdf_campaign/time_setsolid.py` at depths 6/7/8, 1/8/16 threads; update
+  `../../docs/archive/AMR_GEOMETRY_SETUP_REQUIREMENTS.md` §1 table and `amr_mixed_level_cut_band_plan.md` P3c
   observation 4; memory hook. If ≤2.5 µs/leaf at 8 threads: DONE. The oracle
   (`flow_oracle.hpp`) shares the cf/overlay builders, so it speeds up for free — verify its
   ctests unchanged, do NOT add oracle-only pragmas beyond what it inherits.
