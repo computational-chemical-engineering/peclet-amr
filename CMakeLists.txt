@@ -199,6 +199,13 @@ if(PECLET_AMR_BUILD_TESTS)
       set_tests_properties(python_amr_seam_records_np${_np} PROPERTIES LABELS "mpi;python"
         ENVIRONMENT "${_py_env};PECLET_AMR_TEST_NP=${_np};OMP_NUM_THREADS=1")
     endforeach()
+    # The binding refuses a NaN/Inf or inadmissible argument with ValueError naming the parameter,
+    # and a valid one still passes (python/amr_bindings_checks.hpp). Table-driven pytest, one rank.
+    add_test(NAME python_input_validation
+             COMMAND "${Python_EXECUTABLE}" -m pytest -q -p no:cacheprovider
+                     "${CMAKE_CURRENT_SOURCE_DIR}/python/test_input_validation.py")
+    set_tests_properties(python_input_validation PROPERTIES LABELS "python"
+      ENVIRONMENT "${_py_env};OMP_NUM_THREADS=1")
     # The structural byte gate (QUALITY_PLAN §3.G): fixed-seed reference runs of every public entry
     # path, hashed; `--check python/state_hash_reference.json` fails on any drift. The reference is
     # toolchain-specific (its `toolchain` key); a build of another compiler / version / build type
