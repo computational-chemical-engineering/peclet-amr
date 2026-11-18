@@ -422,70 +422,8 @@ class DistributedFlowMultigrid {
     h0_ = h0;
     bottomExtent_ = bottomExtent;
     levels_.clear();
-    resolved_ = stagePolicy_;
-    if (resolved_.maxBlockCells < 0) {  // §9.6: the largest finest block's LEAF count
-      long long nl = static_cast<long long>(finest.local().numLeaves()), mx = 0;
-      MPI_Allreduce(&nl, &mx, 1, MPI_LONG_LONG, MPI_MAX, comm_);
-      resolved_.maxBlockCells = static_cast<Index>(mx);
-    }
-    // Ladder of coarsened copies of the SAME distributed octree (decomposition preserved).
-    {
-      auto l0 = std::make_unique<Level>();
-      l0->d = finest;
-      levels_.push_back(std::move(l0));
-      for (;;) {
-        Octree c = levels_.back()->d.local();
-        const Index before = c.numLeaves();
-        const Index merged = c.coarsenIf([](Code, unsigned) { return true; });
-        if (merged == 0 || c.numLeaves() == before)
-          break;
-        auto lv = std::make_unique<Level>();
-        lv->d = levels_.back()->d;
-        lv->d.local() = std::move(c);
-        levels_.push_back(std::move(lv));
-        if (levels_.back()->d.local().numLeaves() == 1)
-          break;
-      }
-      // Pad to the global max level count (identity root-brick levels): the per-level halo
-      // point-to-points and build collectives must pair up across ranks, and the extra
-      // smoothing exactly mirrors COMM_SELF's already-coarse regions.
-      int nl = static_cast<int>(levels_.size()), gnl = nl;
-      MPI_Allreduce(&nl, &gnl, 1, MPI_INT, MPI_MAX, comm_);
-      while (static_cast<int>(levels_.size()) < gnl) {
-        auto lv = std::make_unique<Level>();
-        lv->d = levels_.back()->d;
-        levels_.push_back(std::move(lv));
-      }
-      // Below the root brick (docs/amr_mg_depth.md §6.2/§6.4). Every rank now sits at its root
-      // brick (the coarsenIf loop ran to exhaustion; the padded ranks repeat theirs), so the lift
-      // is a pure function of the global root grid and the ORB blocks — and it is LOCKSTEP: the
-      // depth is the MIN over ranks of the depth each rank's own block allows, Allreduced BEFORE
-      // any level is built. Every rank therefore appends the SAME number of levels and the
-      // per-level halo collectives below keep pairing up (the padding argument, extended by k).
-      if (liftRoot)
-        liftDepth_ = allowedLiftDepth(levels_.back()->d, bottomExtent);
-      for (Index j = 0; j < liftDepth_; ++j) {
-        auto lv = std::make_unique<Level>();
-        lv->d = levels_.back()->d;  // copy: carries the decomposition AND the leaf set
-        lv->d.liftRoot();           // root brick halved, lmax + 1, codes/levels untouched
-        const Index before = lv->d.local().numLeaves();
-        const Index merged = lv->d.local().coarsenIf([](Code, unsigned) { return true; });
-        if (merged == 0 || lv->d.local().numLeaves() == before)
-          break;  // defensive: a level that did not shrink would stall the ladder
-        levels_.push_back(std::move(lv));
-      }
-      // The level counts MUST be equal on every rank — every per-level halo build and exchange
-      // below is a collective. Cheap (once per build) and a hard error, not an assert.
-      {
-        int nlv = static_cast<int>(levels_.size()), lo = 0, hi = 0;
-        MPI_Allreduce(&nlv, &lo, 1, MPI_INT, MPI_MIN, comm_);
-        MPI_Allreduce(&nlv, &hi, 1, MPI_INT, MPI_MAX, comm_);
-        if (lo != hi)
-          throw std::runtime_error(
-              "amr::DistributedFlowMultigrid: the pressure ladder has different level counts on "
-              "different ranks (the lift is not lockstep)");
-      }
-    }
+    resolveStagePolicy(finest);
+    buildLadder(finest, liftRoot, bottomExtent);
     // Per level: seam install + discovery fixpoint + topology freeze. Collective per level —
     // every rank walks its levels in the same order (counts padded), so the resolveMisses /
     // coverLevels rounds stay matched.
@@ -496,90 +434,170 @@ class DistributedFlowMultigrid {
     shift_ = shift;
     bool first = true;
     for (auto& lvp : levels_) {
-      Level& lv = *lvp;
-      lv.comm = comm_;  // the octree's communicator: a stage's sub-communicator for a continuation
-      lv.n = lv.d.local().numLeaves();
-      lv.ap.init(lv.d.local(), h0_);
-      lv.ap.setOrigin(gorigin);
-      lv.ap.setFrameShift(shift);
-      // Install the ghost metadata of a registry into ap (level/lo lookups during the walks).
-      auto installGhosts = [&](const LeafHalo<Dim, Bits>& h) {
-        std::vector<std::array<long, Dim>> glo(static_cast<std::size_t>(h.numGhosts()));
-        std::vector<unsigned> glv(static_cast<std::size_t>(h.numGhosts()));
-        for (Index g = 0; g < h.numGhosts(); ++g) {
-          for (int a = 0; a < Dim; ++a)
-            glo[static_cast<std::size_t>(g)][a] = static_cast<long>(h.ghostCoord(g)[a]) - shift[a];
-          glv[static_cast<std::size_t>(g)] = static_cast<unsigned>(h.level(h.numLocal() + g));
-        }
-        lv.ap.setGhosts(std::move(glo), std::move(glv));
-      };
-      if (first && shared0) {
-        // Level 0 on the flow's frozen ±2 registry: same extended layout as the flow's cell
-        // vectors; every ±1 face probe is already cached ⇒ const lookups, no discovery.
-        lv.hp = shared0;
-        lv.ap.setResolver([shared0, shift](const std::array<long, Dim>& p) -> Index {
-          std::array<long, Dim> g = p;
-          for (int a = 0; a < Dim; ++a)
-            g[a] += shift[a];
-          return shared0->lookupGlobal(g);
-        });
-        installGhosts(*shared0);
-      } else {
-        lv.hp = &lv.halo;
-        lv.halo.init(lv.d);
-        LeafHalo<Dim, Bits>* hp = &lv.halo;
-        lv.ap.setResolver([hp, shift](const std::array<long, Dim>& p) -> Index {
-          std::array<long, Dim> g = p;
-          for (int a = 0; a < Dim; ++a)
-            g[a] += shift[a];
-          return hp->resolveGlobal(g);
-        });
-        // Ghosts must be (re-)installed into ap at the TOP of every fixpoint round: a probe
-        // that resolved in an earlier round returns its ghost slot immediately, and probeSlot
-        // then reads ap.levelOf(slot) — which must already cover it (newly-PENDING coords are
-        // fine: they return kPending and are skipped until the next round).
-        for (;;) {
-          installGhosts(lv.halo);
-          for (Index i = 0; i < lv.n; ++i)
-            lv.ap.forEachFaceNeighbor(i, [](Index, Real, int, double) {});
-          if (lv.halo.resolveMisses() == 0)
-            break;
-        }
-        lv.halo.finalize();
-      }
-      lv.nExt = lv.hp->extendedSize();
-      lv.ex.init(*lv.hp);
+      initLevelTopology(*lvp, first ? shared0 : nullptr, gorigin, shift);
       first = false;
     }
     // Local covering-leaf transfers (parents never cross blocks); identity on padded levels.
-    for (std::size_t L = 0; L + 1 < levels_.size(); ++L) {
-      const Octree& f = levels_[L]->d.local();
-      const Octree& c = levels_[L + 1]->d.local();
-      const Index nf = f.numLeaves(), nc = c.numLeaves();
-      std::vector<Index>& c2p = levels_[L]->c2pHost;
-      c2p.assign(static_cast<std::size_t>(nf), -1);
-      std::vector<Index> cnt(static_cast<std::size_t>(nc), 0);
-      for (Index i = 0; i < nf; ++i) {
-        const Index p = c.find(f.code(i));  // covering construction (== single-rank Multigrid)
-        c2p[static_cast<std::size_t>(i)] = p;
-        if (p >= 0)
-          ++cnt[static_cast<std::size_t>(p)];
-      }
-      std::vector<Index> start(static_cast<std::size_t>(nc) + 1, 0);
-      for (Index p = 0; p < nc; ++p)
-        start[static_cast<std::size_t>(p) + 1] =
-            start[static_cast<std::size_t>(p)] + cnt[static_cast<std::size_t>(p)];
-      std::vector<Index> idx(static_cast<std::size_t>(start[static_cast<std::size_t>(nc)]));
-      std::vector<Index> cur(start.begin(), start.end() - 1);
-      for (Index i = 0; i < nf; ++i) {  // fine order ⇒ deterministic restrict accumulation
-        const Index p = c2p[static_cast<std::size_t>(i)];
-        if (p >= 0)
-          idx[static_cast<std::size_t>(cur[static_cast<std::size_t>(p)]++)] = i;
-      }
-      levels_[L]->c2p = toDevice(c2p, "dfmg_c2p");
-      levels_[L]->childStart = toDevice(start, "dfmg_cstart");
-      levels_[L]->childIdx = toDevice(idx, "dfmg_cidx");
+    for (std::size_t L = 0; L + 1 < levels_.size(); ++L)
+      buildTransfer(L);
+  }
+
+  /// The stage policy in force for this build; maxBlockCells < 0 resolves collectively.
+  void resolveStagePolicy(const DO& finest) {
+    resolved_ = stagePolicy_;
+    if (resolved_.maxBlockCells < 0) {  // §9.6: the largest finest block's LEAF count
+      long long nl = static_cast<long long>(finest.local().numLeaves()), mx = 0;
+      MPI_Allreduce(&nl, &mx, 1, MPI_LONG_LONG, MPI_MAX, comm_);
+      resolved_.maxBlockCells = static_cast<Index>(mx);
     }
+  }
+
+  /// The level ladder: coarsened copies of the SAME distributed octree, padded to the global
+  /// level count, then lifted below the root brick (lockstep).
+  void buildLadder(const DO& finest, bool liftRoot, Index bottomExtent) {
+    auto l0 = std::make_unique<Level>();
+    l0->d = finest;
+    levels_.push_back(std::move(l0));
+    for (;;) {
+      Octree c = levels_.back()->d.local();
+      const Index before = c.numLeaves();
+      const Index merged = c.coarsenIf([](Code, unsigned) { return true; });
+      if (merged == 0 || c.numLeaves() == before)
+        break;
+      auto lv = std::make_unique<Level>();
+      lv->d = levels_.back()->d;
+      lv->d.local() = std::move(c);
+      levels_.push_back(std::move(lv));
+      if (levels_.back()->d.local().numLeaves() == 1)
+        break;
+    }
+    // Pad to the global max level count (identity root-brick levels): the per-level halo
+    // point-to-points and build collectives must pair up across ranks, and the extra
+    // smoothing exactly mirrors COMM_SELF's already-coarse regions.
+    int nl = static_cast<int>(levels_.size()), gnl = nl;
+    MPI_Allreduce(&nl, &gnl, 1, MPI_INT, MPI_MAX, comm_);
+    while (static_cast<int>(levels_.size()) < gnl) {
+      auto lv = std::make_unique<Level>();
+      lv->d = levels_.back()->d;
+      levels_.push_back(std::move(lv));
+    }
+    // Below the root brick (docs/amr_mg_depth.md §6.2/§6.4). Every rank now sits at its root
+    // brick (the coarsenIf loop ran to exhaustion; the padded ranks repeat theirs), so the lift
+    // is a pure function of the global root grid and the ORB blocks — and it is LOCKSTEP: the
+    // depth is the MIN over ranks of the depth each rank's own block allows, Allreduced BEFORE
+    // any level is built. Every rank therefore appends the SAME number of levels and the
+    // per-level halo collectives below keep pairing up (the padding argument, extended by k).
+    if (liftRoot)
+      liftDepth_ = allowedLiftDepth(levels_.back()->d, bottomExtent);
+    for (Index j = 0; j < liftDepth_; ++j) {
+      auto lv = std::make_unique<Level>();
+      lv->d = levels_.back()->d;  // copy: carries the decomposition AND the leaf set
+      lv->d.liftRoot();           // root brick halved, lmax + 1, codes/levels untouched
+      const Index before = lv->d.local().numLeaves();
+      const Index merged = lv->d.local().coarsenIf([](Code, unsigned) { return true; });
+      if (merged == 0 || lv->d.local().numLeaves() == before)
+        break;  // defensive: a level that did not shrink would stall the ladder
+      levels_.push_back(std::move(lv));
+    }
+    // The level counts MUST be equal on every rank — every per-level halo build and exchange
+    // below is a collective. Cheap (once per build) and a hard error, not an assert.
+    {
+      int nlv = static_cast<int>(levels_.size()), lo = 0, hi = 0;
+      MPI_Allreduce(&nlv, &lo, 1, MPI_INT, MPI_MIN, comm_);
+      MPI_Allreduce(&nlv, &hi, 1, MPI_INT, MPI_MAX, comm_);
+      if (lo != hi)
+        throw std::runtime_error(
+            "amr::DistributedFlowMultigrid: the pressure ladder has different level counts on "
+            "different ranks (the lift is not lockstep)");
+    }
+  }
+
+  /// One level's seam install + discovery fixpoint + topology freeze (collective). `shared0`:
+  /// level 0 runs on the flow's frozen registry when one is given (nullptr otherwise).
+  void initLevelTopology(Level& lv, const LeafHalo<Dim, Bits>* shared0, const Vec<Dim>& gorigin,
+                         const std::array<long, Dim>& shift) {
+    lv.comm = comm_;  // the octree's communicator: a stage's sub-communicator for a continuation
+    lv.n = lv.d.local().numLeaves();
+    lv.ap.init(lv.d.local(), h0_);
+    lv.ap.setOrigin(gorigin);
+    lv.ap.setFrameShift(shift);
+    // Install the ghost metadata of a registry into ap (level/lo lookups during the walks).
+    auto installGhosts = [&](const LeafHalo<Dim, Bits>& h) {
+      std::vector<std::array<long, Dim>> glo(static_cast<std::size_t>(h.numGhosts()));
+      std::vector<unsigned> glv(static_cast<std::size_t>(h.numGhosts()));
+      for (Index g = 0; g < h.numGhosts(); ++g) {
+        for (int a = 0; a < Dim; ++a)
+          glo[static_cast<std::size_t>(g)][a] = static_cast<long>(h.ghostCoord(g)[a]) - shift[a];
+        glv[static_cast<std::size_t>(g)] = static_cast<unsigned>(h.level(h.numLocal() + g));
+      }
+      lv.ap.setGhosts(std::move(glo), std::move(glv));
+    };
+    if (shared0) {
+      // Level 0 on the flow's frozen ±2 registry: same extended layout as the flow's cell
+      // vectors; every ±1 face probe is already cached ⇒ const lookups, no discovery.
+      lv.hp = shared0;
+      lv.ap.setResolver([shared0, shift](const std::array<long, Dim>& p) -> Index {
+        std::array<long, Dim> g = p;
+        for (int a = 0; a < Dim; ++a)
+          g[a] += shift[a];
+        return shared0->lookupGlobal(g);
+      });
+      installGhosts(*shared0);
+    } else {
+      lv.hp = &lv.halo;
+      lv.halo.init(lv.d);
+      LeafHalo<Dim, Bits>* hp = &lv.halo;
+      lv.ap.setResolver([hp, shift](const std::array<long, Dim>& p) -> Index {
+        std::array<long, Dim> g = p;
+        for (int a = 0; a < Dim; ++a)
+          g[a] += shift[a];
+        return hp->resolveGlobal(g);
+      });
+      // Ghosts must be (re-)installed into ap at the TOP of every fixpoint round: a probe
+      // that resolved in an earlier round returns its ghost slot immediately, and probeSlot
+      // then reads ap.levelOf(slot) — which must already cover it (newly-PENDING coords are
+      // fine: they return kPending and are skipped until the next round).
+      for (;;) {
+        installGhosts(lv.halo);
+        for (Index i = 0; i < lv.n; ++i)
+          lv.ap.forEachFaceNeighbor(i, [](Index, Real, int, double) {});
+        if (lv.halo.resolveMisses() == 0)
+          break;
+      }
+      lv.halo.finalize();
+    }
+    lv.nExt = lv.hp->extendedSize();
+    lv.ex.init(*lv.hp);
+  }
+
+  /// The local covering-leaf transfer of level L -> L + 1 (c2p, child CSR), uploaded.
+  void buildTransfer(std::size_t L) {
+    const Octree& f = levels_[L]->d.local();
+    const Octree& c = levels_[L + 1]->d.local();
+    const Index nf = f.numLeaves(), nc = c.numLeaves();
+    std::vector<Index>& c2p = levels_[L]->c2pHost;
+    c2p.assign(static_cast<std::size_t>(nf), -1);
+    std::vector<Index> cnt(static_cast<std::size_t>(nc), 0);
+    for (Index i = 0; i < nf; ++i) {
+      const Index p = c.find(f.code(i));  // covering construction (== single-rank Multigrid)
+      c2p[static_cast<std::size_t>(i)] = p;
+      if (p >= 0)
+        ++cnt[static_cast<std::size_t>(p)];
+    }
+    std::vector<Index> start(static_cast<std::size_t>(nc) + 1, 0);
+    for (Index p = 0; p < nc; ++p)
+      start[static_cast<std::size_t>(p) + 1] =
+          start[static_cast<std::size_t>(p)] + cnt[static_cast<std::size_t>(p)];
+    std::vector<Index> idx(static_cast<std::size_t>(start[static_cast<std::size_t>(nc)]));
+    std::vector<Index> cur(start.begin(), start.end() - 1);
+    for (Index i = 0; i < nf; ++i) {  // fine order ⇒ deterministic restrict accumulation
+      const Index p = c2p[static_cast<std::size_t>(i)];
+      if (p >= 0)
+        idx[static_cast<std::size_t>(cur[static_cast<std::size_t>(p)]++)] = i;
+    }
+    levels_[L]->c2p = toDevice(c2p, "dfmg_c2p");
+    levels_[L]->childStart = toDevice(start, "dfmg_cstart");
+    levels_[L]->childIdx = toDevice(idx, "dfmg_cidx");
   }
 
   // Area-average level-L face openness onto level L+1 — the EXACT AmrMultigrid::coarsenOpenness
