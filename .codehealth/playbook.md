@@ -74,3 +74,17 @@ codehealth scan < 2 s.
 - Timing case `tests/regression/setup_bench.py` (`set_solid_spheres` + 20 steps, 96^3 graded, sampled, advection;
   OMP 8): set_solid ~2 s, steps ~38 s. A Python SDF callback makes set_solid ~85 s (the GIL-bound callback, not
   the builders): time with the C++ sphere SDF.
+- Round result (WO-37, campaign base d0f9c2a): setSolid 51e2007, DistributedFvOperator::init 34e81f6,
+  DistributedFlowMultigrid::buildImpl 880a05a, buildSeamRecon 25fa7be, buildMomSeamDelta e883003, each
+  `gate --mode refactor` PASS 11/11. Host zone 814.4 / 8 brain -> 648.3 / 3.
+- **FMA trap (amr host build)**: the host-openmp prefix compiles with `-mfma` and amr adds no
+  `-ffp-contract=off` (core 1.8.1 did for its own host builds), so GCC fuses multiply-adds wherever inlining
+  puts them in one function. A verbatim split of `buildGhostOverlaySampled` into GpsLeafGeometry / GpsCloud /
+  GpsRowBuilder changed the sampled hashes in the module, although the overlay is bitwise identical in a standalone
+  probe TU at the same flags, and the module hashes are identical with `-ffp-contract=off`. Forcing or forbidding
+  inlining of the new helpers did not restore them: the change moves inlining elsewhere in the one large bindings TU.
+  The leaf-geometry extraction alone was bitwise. Not landed; the flag is a decision for the user (numerics flag).
+- Wall clock (TRS2, load 100-140 on 48 cores): cold build -j8 5 min; per-step gate 15-35 min (ctest at OMP 1
+  dominates; amr_face_field 470 s, amr_graded_mg_np8 330 s under load); self-test 94 min; state_hash ~32 s.
+- Timing gate on this machine was INCONCLUSIVE (same-binary spread > 300 %): rerun on a quiet host with
+  `tests/regression/setup_bench.py --steps 100`, base build = `<git-common-dir>/codehealth/base-d0f9c2a*/build_health_host`.
