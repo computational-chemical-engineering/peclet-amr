@@ -4,7 +4,8 @@ Read the seed first (`plugins/cce-code-health/skills/refactor-loop/playbook-seed
 (`suite/dem-health-api/.codehealth/playbook.md`, the recipes) and this file. Read `CLAUDE.md` (settled decisions)
 before touching any solver header; a refactor never reverses one. The collocated pressure coupling (approximate
 projection, never Rhie-Chow) and the in-predictor force placement are guarded by ctest `amr_stability_guard`.
-Gate: `PECLET_SUITE=<suite> codehealth gate`; bitwise = `python/state_hash.py` on the host/OpenMP build at ONE thread.
+Gate: `PECLET_SUITE=<suite> codehealth gate --mode refactor --base <prev> --ref-base <campaign base>`; bitwise =
+`tests/regression/state_hash.py` + `python/state_hash.py` on the host/OpenMP build at ONE thread.
 
 ## Base gate (WO-31, amr origin/main 9205762, core 7cec32a, morton d264165; TRS2)
 - Build: host-openmp prefix, `-DPECLET_AMR_BUILD_TESTS=ON -DPECLET_AMR_BUILD_PYTHON=ON`, Release, no extra flags (the
@@ -54,3 +55,22 @@ codehealth scan < 2 s.
   scope (FAIL scope/forbid/frozen before any tier runs). The tiers were run blind with the config's own commands.
 - **Wall clock (TRS2)**: incremental module build 47 s; ctest main 103 tests 313 s, np8 14 s; state_hash 7 s;
   targeted pytest 0.5 s (208 cases); api audit 4 s; codehealth docs / diff < 2 s.
+
+## Host-orchestration round (WO-37, 2026-11-18; RULES.md "Host-orchestration round")
+- Recipes: dem's playbook (`suite/dem-health/.codehealth/playbook.md`): extract-kernel-phase, launch-params-struct,
+  host-state-owner; anti-patterns "debt by lambda shuffling", "a phase helper with a parameter list as long as the
+  phase". Kernel bodies (`KOKKOS_LAMBDA`, functor `operator()`, `KOKKOS_*FUNCTION`) move only whole, token-identical.
+- Config: profiles `cpp@1` + `python@0`, zones of the campaign's `tools/zones-cpp1.toml`; forbid `tests/*`,
+  `packaging/*`, the bindings and their check header; frozen `tests/regression/*`, cmake, CLAUDE.md, the public hash.
+- Bitwise reference `tests/regression/state_hash.py --build <build>`: one process per case at OMP 1. Single-rank:
+  `sampled_graded` (two-level cut band, sampled overlay), `ghost_adapt` (classic ghost, begin/finish_adapt),
+  `aperture_cf0` (aperture projection, standard C/F, staircase velocity MG + GS). `mpirun -np 1, 2, 4`:
+  `dist_sampled` (band coarsened on one side by `adapt`, so LS2 slots exist at np 2), `dist_adapt` (adapt +
+  finish_adapt + rebalance_mpi), `fv` (`regression_fv_dump`: `DistributedFvOperator`, which peclet.amr does not
+  expose, plain and openness-weighted, apply + 20 Jacobi sweeps, hex-float dump sorted by global code). Iteration
+  counts are their own keys. Runs in ~32 s; byte-identical twice.
+- Sibling pin: the `[deps]` lines carry the core/morton commit, so a shared checkout moving mid-round fails
+  `same_lines` rather than comparing two programs.
+- Timing case `tests/regression/setup_bench.py` (`set_solid_spheres` + 20 steps, 96^3 graded, sampled, advection;
+  OMP 8): set_solid ~2 s, steps ~38 s. A Python SDF callback makes set_solid ~85 s (the GIL-bound callback, not
+  the builders): time with the C++ sphere SDF.
