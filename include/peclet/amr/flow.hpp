@@ -731,29 +731,76 @@ class AmrFlow {
   template <class SdfFn>
   void setSolid(SdfFn&& sdfFn) {
     const Index n = t_->numLeaves();
-    // Phase profiler (PECLET_AMR_PROFILE_SETUP=1): setSolid is the whole setup cost at bed
-    // scale (measured 127 us/leaf single-threaded, [[performance-sota-yardstick]]) — the
-    // per-phase breakdown is what any optimization must start from.
-    const bool prof_ = [] {
-      const char* e = std::getenv("PECLET_AMR_PROFILE_SETUP");
-      return e && e[0] == '1';
-    }();
-    auto profT0_ = std::chrono::steady_clock::now();
-    auto profPhase = [&](const char* name) {
-      if (!prof_)
+    SetupProfiler prof(n);
+    buildHostOperators(sdfFn, prof);
+    GhostOverlay hov;
+    GhostOverlaySampled hovS;
+    buildProjectionOverlay(sdfFn, hov, hovS, prof);
+    buildPressureHierarchy(sdfFn, prof);
+
+    // Device assembly (D6): the static cut-cell momentum operator CSR and the collocated face
+    // geometry are assembled ON THE DEVICE (assembleMomentum / assembleFaceGeom), and the
+    // pressure MG operators are device-assembled per level (Multigrid D5) — so no host CSR walk and
+    // no operator round-trip. Each is bit-for-bit identical to the host assembler on OpenMP (locked
+    // in test_amr_momentum / test_amr_facegeom), so the flow result is unchanged. A shared device
+    // octree view backs both assemblers.
+    // DISTRIBUTED: assemble on the HOST through the resolver seam instead (the device walkers
+    // cannot resolve cross-block probes) and upload — same parity-locked builders, ghost
+    // columns included.
+    BlockOctreeView<3, Bits> ov;
+    if (!dist_)
+      ov.upload(*t_);
+    assembleMomentumOperator(n, ov, prof);
+    buildVelocityMG(n);
+    prof.phase("velocity MG build");
+    buildFaceGeometry(n, ov, prof);
+    buildCfOverlays(n);
+    prof.phase("cf overlays");
+    if (ghostProj_)
+      uploadGhostOverlays(sdfFn, n, hov, hovS);
+    allocateStepState(n);
+    n_ = n;
+    ready_ = true;
+    prof.phase("overlays upload + state alloc");
+  }
+
+ private:
+  // ---- setSolid phases (in call order) ---------------------------------------------------------
+  // Phase profiler (PECLET_AMR_PROFILE_SETUP=1): setSolid is the whole setup cost at bed
+  // scale (measured 127 us/leaf single-threaded, [[performance-sota-yardstick]]) — the
+  // per-phase breakdown is what any optimization must start from.
+  struct SetupProfiler {
+    bool on;
+    Index n;
+    std::chrono::steady_clock::time_point t0;
+    explicit SetupProfiler(Index nLeaves)
+        : on([] {
+          const char* e = std::getenv("PECLET_AMR_PROFILE_SETUP");
+          return e && e[0] == '1';
+        }())
+        , n(nLeaves)
+        , t0(std::chrono::steady_clock::now()) {}
+    void phase(const char* name) {
+      if (!on)
         return;
       Kokkos::fence();
       auto now = std::chrono::steady_clock::now();
-      double ms = std::chrono::duration<double, std::milli>(now - profT0_).count();
+      double ms = std::chrono::duration<double, std::milli>(now - t0).count();
       std::fprintf(stderr, "[setSolid] %-28s %9.1f ms  (%6.1f us/leaf)\n", name, ms,
                    1e3 * ms / static_cast<double>(n));
-      profT0_ = std::chrono::steady_clock::now();
-    };
+      t0 = std::chrono::steady_clock::now();
+    }
+  };
+
+  /// Host operator build, projection-mode resolve, distributed fixpoint and the momentum build.
+  template <class SdfFn>
+  void buildHostOperators(SdfFn& sdfFn, SetupProfiler& prof) {
+    const Index n = t_->numLeaves();
     // Host operator build (geometry, openness, cut stencils) — same as oracle::AmrFlow::setSolid.
     mom_.init(*t_, h0_, origin_);
     pres_.init(*t_, h0_);
     pres_.setOrigin(origin_);
-    profPhase("mom.init + pres.init");
+    prof.phase("mom.init + pres.init");
     // Resolve the projection mode. DEFAULT SWITCH (2026-08-25, user decision): AUTO = the
     // GHOST (fluid-only) projection — family-free/stable/unique (see the setter doc) — falling
     // back to the aperture projection with a stderr notice when the finest band is too thin for
@@ -782,14 +829,18 @@ class AmrFlow {
       pcg_.setDistributed({}, {}, 0);
       mom_.build(sdfFn, /*idiag=*/rho_ / dt_, /*beta=*/betaPerAxis());
     }
-    profPhase("mom.build (SDF+cut stencils)");
-    GhostOverlay hov;
-    GhostOverlaySampled hovS;
+    prof.phase("mom.build (SDF+cut stencils)");
+  }
+
+  /// The ghost-projection overlay (classic or sampled); AUTO may fall back to the aperture scheme.
+  template <class SdfFn>
+  void buildProjectionOverlay(SdfFn& sdfFn, GhostOverlay& hov, GhostOverlaySampled& hovS,
+                              SetupProfiler& prof) {
     if (ghostSampled_) {  // mixed-level cut band: sample-slot overlay, no band-margin probe
       const auto gfine = globalFineExtent();
       hovS = buildGhostOverlaySampled(*t_, pres_, sdfFn, gpMatrixOrder_, gpRhsOrder_, origin_,
                                       &gfine, shiftD_, /*discovery=*/false, gpsRho_, gpsMaxN_);
-      profPhase("buildGhostOverlaySampled");
+      prof.phase("buildGhostOverlaySampled");
     } else if (ghostProj_) {  // probe the band margin; explicit request throws on violation, AUTO
                               // falls
       bool viol = false;
@@ -813,6 +864,12 @@ class AmrFlow {
                 "setGhostProjection to silence this notice.\n");
       }
     }
+  }
+
+  /// Pressure openness, the pressure multigrid (single-rank or distributed), its bottom and
+  /// nullspace.
+  template <class SdfFn>
+  void buildPressureHierarchy(SdfFn& sdfFn, SetupProfiler& prof) {
     if (ghostProj_) {
       // Ghost projection: the pressure geometry is the BINARY openness on the unchanged MG
       // rails; the closure physics lives in the overlay (built above). Sampled mode: the
@@ -822,7 +879,7 @@ class AmrFlow {
         auto binFn = makeBinaryOpenFnMixed(
             *t_, pres_, [&sdfFn](const Vec<3>& p) { return sdfFn(p); }, h0_, origin_, shiftD_);
         pres_.buildOpenness(binFn);
-        profPhase("buildOpenness (mixed)");
+        prof.phase("buildOpenness (mixed)");
         // D1: the pressure hierarchy has to be the DISTRIBUTED one when a seam is installed —
         // gpOp0() reads presMGD_ whenever dist_ is set, so building presMG_ here left the ghost
         // solver pointing at an empty operator.
@@ -831,7 +888,7 @@ class AmrFlow {
         else
           presMG_.build(*t_, h0_, binFn, /*periodic=*/true, /*immersedWall=*/false,
                         /*liftRoot=*/true, presBottomExtent_);
-        profPhase("presMG.build");
+        prof.phase("presMG.build");
       } else {
         auto binFn = makeBinaryOpenFn([&sdfFn](const Vec<3>& p) { return sdfFn(p); }, h0_);
         pres_.buildOpenness(binFn);
@@ -848,7 +905,7 @@ class AmrFlow {
       // (a rank-local BFS would mislabel components that span ranks), so multi-rank runs are
       // unprotected on fragmenting geometries until it lands.
       gpPocket_ = dist_ ? std::vector<char>{} : findPocketCells(*t_, pres_, mom_.sdfCRaw());
-      profPhase("findPocketCells");
+      prof.phase("findPocketCells");
     } else {
       gpPocket_.clear();
       auto openFn = [&](const Vec<3>& fc, int axis) { return faceFrac(sdfFn, fc, axis); };
@@ -873,20 +930,11 @@ class AmrFlow {
     } else {
       presMG_.setRemoveMean(true);
     }
-    profPhase("nullspace setup");
+    prof.phase("nullspace setup");
+  }
 
-    // Device assembly (D6): the static cut-cell momentum operator CSR and the collocated face
-    // geometry are assembled ON THE DEVICE (assembleMomentum / assembleFaceGeom), and the
-    // pressure MG operators are device-assembled per level (Multigrid D5) — so no host CSR walk and
-    // no operator round-trip. Each is bit-for-bit identical to the host assembler on OpenMP (locked
-    // in test_amr_momentum / test_amr_facegeom), so the flow result is unchanged. A shared device
-    // octree view backs both assemblers.
-    // DISTRIBUTED: assemble on the HOST through the resolver seam instead (the device walkers
-    // cannot resolve cross-block probes) and upload — same parity-locked builders, ghost
-    // columns included.
-    BlockOctreeView<3, Bits> ov;
-    if (!dist_)
-      ov.upload(*t_);
+  /// The static cut-cell momentum operator: device-assembled, or host-assembled when distributed.
+  void assembleMomentumOperator(Index n, const BlockOctreeView<3, Bits>& ov, SetupProfiler& prof) {
     if (dist_) {
       auto A = mom_.assembleOperator();
       momOp_ = MomentumOp{};
@@ -897,8 +945,12 @@ class AmrFlow {
       momOp_.faceCoef = toDevice(A.coef, "mo_coef");
     } else {
       momOp_ = assembleMomentum<Bits>(mom_, ov);  // static Stokes operator (hasAdv stays false)
-      profPhase("assembleMomentum (device)");
+      prof.phase("assembleMomentum (device)");
     }
+  }
+
+  /// The momentum preconditioner hierarchy (Galerkin MomentumMG or the staircase VelocityMG).
+  void buildVelocityMG(Index n) {
     // Velocity multigrid (momentum preconditioner): the Galerkin hierarchy A_c = R·A·P built
     // directly from the exact assembled momentum CSR. Consistent with the fine cut-cell
     // operator by construction (inherits the ξ-overlay + D_rescale row scaling; a coarse cell
@@ -950,7 +1002,10 @@ class AmrFlow {
         momMG_.setGaussSeidel(momGS_);
       }
     }
-    profPhase("velocity MG build");
+  }
+
+  /// The collocated face geometry, the rhs scale, the fluid mask and the classic gradient overlay.
+  void buildFaceGeometry(Index n, const BlockOctreeView<3, Bits>& ov, SetupProfiler& prof) {
     std::vector<char> fluidVec(static_cast<std::size_t>(n));
     for (Index i = 0; i < n; ++i)
       fluidVec[static_cast<std::size_t>(i)] = mom_.isFluid(i) ? 1 : 0;
@@ -963,7 +1018,7 @@ class AmrFlow {
     } else {
       geom_ = assembleFaceGeom<Bits>(pres_, fluidVec, ov);
     }
-    profPhase("assembleFaceGeom");
+    prof.phase("assembleFaceGeom");
     std::vector<double> rs(static_cast<std::size_t>(n));
     for (Index i = 0; i < n; ++i)
       rs[static_cast<std::size_t>(i)] = mom_.rhsScale(i);
@@ -974,6 +1029,10 @@ class AmrFlow {
     else
       gc_ = GhostGradOverlay{};  // sampled mode: the CSR overlay gcS_ owns all cut cells
     // C/F interface scheme overlays (cf_scheme.hpp): the same host builders the oracle uses
+  }
+
+  /// The C/F interface scheme overlays and the seam reconstruction (cf_scheme.hpp, seam_recon.hpp).
+  void buildCfOverlays(Index n) {
     // (parity by construction), uploaded once. Momentum delta = ×μ on the α=1 velocity geometry.
     // The per-FACE C/F gate (docs/amr_cf_flux_gate.md §6.1, §6.4) needs `regular = fluid && !cut`
     // at GHOST slots too: the gate is a property of the FACE, and a 2:1 sub-face at a block seam
@@ -1067,60 +1126,67 @@ class AmrFlow {
       cfUfVel_ = CfCompCsrDev{};
       clearSeamRecon();
     }
-    profPhase("cf overlays");
-    if (ghostProj_) {
-      // Closure overlay (pre-built in the mode-resolve step above) + the coupled-subspace mask
-      // for the BiCGStab projection. Sampled mode uploads the sample-slot overlay instead (the
-      // classic gpOv_ stays empty — every delta site calls both, empties no-op).
-      gpOv_ = ghostSampled_ ? GhostOverlayDev{} : uploadGhostOverlay(hov);
-      gpOvS_ = ghostSampled_ ? uploadGhostOverlaySampled(hovS) : GhostOverlaySampledDev{};
-      const GhostOverlay& rows = ghostSampled_ ? hovS.base : hov;
-      std::vector<double> mc(static_cast<std::size_t>(n), 0.0);
-      for (Index i = 0; i < n; ++i)
-        mc[static_cast<std::size_t>(i)] =
-            (mom_.isFluid(i) && !(!gpPocket_.empty() && gpPocket_[static_cast<std::size_t>(i)]))
-                ? 1.0
-                : 0.0;
-      for (Index r = 0; r < rows.n; ++r)
-        if (!rows.coupled[static_cast<std::size_t>(r)])
-          mc[static_cast<std::size_t>(rows.cell[static_cast<std::size_t>(r)])] = 0.0;
-      maskC_ = toDevice(mc, "gp_maskc");
-      // Sampled mode: momentum ξ-row seam correction (host CSR folds 1/rscale for the oracle's
-      // pre-rscale source; the device adds POST-rscale via cfApply, so re-fold rscale per row)
-      // + the CSR directional-gradient overlay (cascade over sample functionals; classic
-      // same-level fallback on cut cells without a row — the oracle's gradP split).
-      if (ghostSampled_) {
-        CfCsr msd = buildMomSeamDelta(hovS, *t_, pres_, mom_, sdfFn, origin_, rho_ / dt_, mu_,
-                                      /*nSkipped=*/nullptr, shiftD_);
-        for (Index i = 0; i < n; ++i) {
-          const double rs = mom_.rhsScale(i);
-          for (Index k = msd.start[static_cast<std::size_t>(i)];
-               k < msd.start[static_cast<std::size_t>(i) + 1]; ++k)
-            msd.coef[static_cast<std::size_t>(k)] *= rs;
-        }
-        gpsMomDelta_ = uploadCfCsr(msd, "gps_momdelta");
-        auto classicOk = [&](Index j, Index i) {
-          return j >= 0 && mom_.isFluid(j) && pres_.levelOf(j) == pres_.levelOf(i) &&
-                 !(!gpPocket_.empty() && j < n && gpPocket_[static_cast<std::size_t>(j)]);
-        };
-        gcS_ = uploadGhostGradCsr(buildSampledGradCsr(
-            hovS, *t_, pres_, [&](Index i) { return mom_.isCut(i); }, classicOk));
-      } else {
-        gpsMomDelta_ = CfCsrDev{};
-        gcS_ = GhostGradCsrDev{};
-      }
-      // Krylov scratch carries the ghost tail (matvec inputs) in distributed mode.
-      auto mk = [&](const char* l) { return View<double>(l, static_cast<std::size_t>(nExt_)); };
-      gpr_ = mk("gp_r");
-      gprh_ = mk("gp_rhat");
-      gpp_ = mk("gp_p");
-      gpph_ = mk("gp_phat");
-      gpv_ = mk("gp_v");
-      gps_ = mk("gp_s");
-      gpsh_ = mk("gp_shat");
-      gpt_ = mk("gp_t");
-    }
+  }
 
+  /// Ghost projection: upload the closure overlay, the coupled-subspace mask, the sampled-mode
+  /// momentum seam delta and gradient CSR, and the Krylov scratch.
+  template <class SdfFn>
+  void uploadGhostOverlays(SdfFn& sdfFn, Index n, const GhostOverlay& hov,
+                           const GhostOverlaySampled& hovS) {
+    // Closure overlay (pre-built in the mode-resolve step above) + the coupled-subspace mask
+    // for the BiCGStab projection. Sampled mode uploads the sample-slot overlay instead (the
+    // classic gpOv_ stays empty — every delta site calls both, empties no-op).
+    gpOv_ = ghostSampled_ ? GhostOverlayDev{} : uploadGhostOverlay(hov);
+    gpOvS_ = ghostSampled_ ? uploadGhostOverlaySampled(hovS) : GhostOverlaySampledDev{};
+    const GhostOverlay& rows = ghostSampled_ ? hovS.base : hov;
+    std::vector<double> mc(static_cast<std::size_t>(n), 0.0);
+    for (Index i = 0; i < n; ++i)
+      mc[static_cast<std::size_t>(i)] =
+          (mom_.isFluid(i) && !(!gpPocket_.empty() && gpPocket_[static_cast<std::size_t>(i)]))
+              ? 1.0
+              : 0.0;
+    for (Index r = 0; r < rows.n; ++r)
+      if (!rows.coupled[static_cast<std::size_t>(r)])
+        mc[static_cast<std::size_t>(rows.cell[static_cast<std::size_t>(r)])] = 0.0;
+    maskC_ = toDevice(mc, "gp_maskc");
+    // Sampled mode: momentum ξ-row seam correction (host CSR folds 1/rscale for the oracle's
+    // pre-rscale source; the device adds POST-rscale via cfApply, so re-fold rscale per row)
+    // + the CSR directional-gradient overlay (cascade over sample functionals; classic
+    // same-level fallback on cut cells without a row — the oracle's gradP split).
+    if (ghostSampled_) {
+      CfCsr msd = buildMomSeamDelta(hovS, *t_, pres_, mom_, sdfFn, origin_, rho_ / dt_, mu_,
+                                    /*nSkipped=*/nullptr, shiftD_);
+      for (Index i = 0; i < n; ++i) {
+        const double rs = mom_.rhsScale(i);
+        for (Index k = msd.start[static_cast<std::size_t>(i)];
+             k < msd.start[static_cast<std::size_t>(i) + 1]; ++k)
+          msd.coef[static_cast<std::size_t>(k)] *= rs;
+      }
+      gpsMomDelta_ = uploadCfCsr(msd, "gps_momdelta");
+      auto classicOk = [&](Index j, Index i) {
+        return j >= 0 && mom_.isFluid(j) && pres_.levelOf(j) == pres_.levelOf(i) &&
+               !(!gpPocket_.empty() && j < n && gpPocket_[static_cast<std::size_t>(j)]);
+      };
+      gcS_ = uploadGhostGradCsr(
+          buildSampledGradCsr(hovS, *t_, pres_, [&](Index i) { return mom_.isCut(i); }, classicOk));
+    } else {
+      gpsMomDelta_ = CfCsrDev{};
+      gcS_ = GhostGradCsrDev{};
+    }
+    // Krylov scratch carries the ghost tail (matvec inputs) in distributed mode.
+    auto mk = [&](const char* l) { return View<double>(l, static_cast<std::size_t>(nExt_)); };
+    gpr_ = mk("gp_r");
+    gprh_ = mk("gp_rhat");
+    gpp_ = mk("gp_p");
+    gpph_ = mk("gp_phat");
+    gpv_ = mk("gp_v");
+    gps_ = mk("gp_s");
+    gpsh_ = mk("gp_shat");
+    gpt_ = mk("gp_t");
+  }
+
+  /// Device state of the step (fields, advection operator storage) and the solver settings.
+  void allocateStepState(Index n) {
     // Device state. Fields whose ghost entries are READ through the CSRs / overlays (u, p, φ)
     // — plus div (its View is deep_copied into the nExt-sized distributed MG rhs) and the u
     // snapshots (full-extent deep_copies of u) — carry the ghost tail [n, nExt); nExt == n
@@ -1176,11 +1242,9 @@ class AmrFlow {
     }
     pcg_.setVcycle(2, 2, 60, 0.8);
     pcg_.setSingular(true);
-    n_ = n;
-    ready_ = true;
-    profPhase("overlays upload + state alloc");
   }
 
+ public:
   /// One incompressible step on device (Stokes, or Navier–Stokes with setAdvection). `momIters`
   /// BiCGStab iterations for each momentum component; `presIters` PCG iterations for the
   /// pressure solve.
