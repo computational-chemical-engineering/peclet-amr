@@ -4,7 +4,8 @@ Read the seed first (`plugins/cce-code-health/skills/refactor-loop/playbook-seed
 (`suite/dem-health-api/.codehealth/playbook.md`, the recipes) and this file. Read `CLAUDE.md` (settled decisions)
 before touching any solver header; a refactor never reverses one. The collocated pressure coupling (approximate
 projection, never Rhie-Chow) and the in-predictor force placement are guarded by ctest `amr_stability_guard`.
-Gate: `PECLET_SUITE=<suite> codehealth gate`; bitwise = `python/state_hash.py` on the host/OpenMP build at ONE thread.
+Gate: `PECLET_SUITE=<suite> codehealth gate --mode refactor --base <prev> --ref-base <campaign base>`; bitwise =
+`tests/regression/state_hash.py` + `python/state_hash.py` on the host/OpenMP build at ONE thread.
 
 ## Base gate (WO-31, amr origin/main 9205762, core 7cec32a, morton d264165; TRS2)
 - Build: host-openmp prefix, `-DPECLET_AMR_BUILD_TESTS=ON -DPECLET_AMR_BUILD_PYTHON=ON`, Release, no extra flags (the
@@ -54,3 +55,36 @@ codehealth scan < 2 s.
   scope (FAIL scope/forbid/frozen before any tier runs). The tiers were run blind with the config's own commands.
 - **Wall clock (TRS2)**: incremental module build 47 s; ctest main 103 tests 313 s, np8 14 s; state_hash 7 s;
   targeted pytest 0.5 s (208 cases); api audit 4 s; codehealth docs / diff < 2 s.
+
+## Host-orchestration round (WO-37, 2026-11-18; RULES.md "Host-orchestration round")
+- Recipes: dem's playbook (`suite/dem-health/.codehealth/playbook.md`): extract-kernel-phase, launch-params-struct,
+  host-state-owner; anti-patterns "debt by lambda shuffling", "a phase helper with a parameter list as long as the
+  phase". Kernel bodies (`KOKKOS_LAMBDA`, functor `operator()`, `KOKKOS_*FUNCTION`) move only whole, token-identical.
+- Config: profiles `cpp@1` + `python@0`, zones of the campaign's `tools/zones-cpp1.toml`; forbid `tests/*`,
+  `packaging/*`, the bindings and their check header; frozen `tests/regression/*`, cmake, CLAUDE.md, the public hash.
+- Bitwise reference `tests/regression/state_hash.py --build <build>`: one process per case at OMP 1. Single-rank:
+  `sampled_graded` (two-level cut band, sampled overlay), `ghost_adapt` (classic ghost, begin/finish_adapt),
+  `aperture_cf0` (aperture projection, standard C/F, staircase velocity MG + GS). `mpirun -np 1, 2, 4`:
+  `dist_sampled` (band coarsened on one side by `adapt`, so LS2 slots exist at np 2), `dist_adapt` (adapt +
+  finish_adapt + rebalance_mpi), `fv` (`regression_fv_dump`: `DistributedFvOperator`, which peclet.amr does not
+  expose, plain and openness-weighted, apply + 20 Jacobi sweeps, hex-float dump sorted by global code). Iteration
+  counts are their own keys. Runs in ~32 s; byte-identical twice.
+- Sibling pin: the `[deps]` lines carry the core/morton commit, so a shared checkout moving mid-round fails
+  `same_lines` rather than comparing two programs.
+- Timing case `tests/regression/setup_bench.py` (`set_solid_spheres` + 20 steps, 96^3 graded, sampled, advection;
+  OMP 8): set_solid ~2 s, steps ~38 s. A Python SDF callback makes set_solid ~85 s (the GIL-bound callback, not
+  the builders): time with the C++ sphere SDF.
+- Round result (WO-37, campaign base d0f9c2a): setSolid 51e2007, DistributedFvOperator::init 34e81f6,
+  DistributedFlowMultigrid::buildImpl 880a05a, buildSeamRecon 25fa7be, buildMomSeamDelta e883003, each
+  `gate --mode refactor` PASS 11/11. Host zone 814.4 / 8 brain -> 648.3 / 3.
+- **FMA trap (amr host build)**: the host-openmp prefix compiles with `-mfma` and amr adds no
+  `-ffp-contract=off` (core 1.8.1 did for its own host builds), so GCC fuses multiply-adds wherever inlining
+  puts them in one function. A verbatim split of `buildGhostOverlaySampled` into GpsLeafGeometry / GpsCloud /
+  GpsRowBuilder changed the sampled hashes in the module, although the overlay is bitwise identical in a standalone
+  probe TU at the same flags, and the module hashes are identical with `-ffp-contract=off`. Forcing or forbidding
+  inlining of the new helpers did not restore them: the change moves inlining elsewhere in the one large bindings TU.
+  The leaf-geometry extraction alone was bitwise. Not landed; the flag is a decision for the user (numerics flag).
+- Wall clock (TRS2, load 100-140 on 48 cores): cold build -j8 5 min; per-step gate 15-35 min (ctest at OMP 1
+  dominates; amr_face_field 470 s, amr_graded_mg_np8 330 s under load); self-test 94 min; state_hash ~32 s.
+- Timing gate on this machine was INCONCLUSIVE (same-binary spread > 300 %): rerun on a quiet host with
+  `tests/regression/setup_bench.py --steps 100`, base build = `<git-common-dir>/codehealth/base-d0f9c2a*/build_health_host`.

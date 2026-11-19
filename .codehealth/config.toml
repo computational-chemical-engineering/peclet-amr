@@ -1,39 +1,55 @@
 # cce-code-health gate for peclet.amr (https://github.com/computational-chemical-engineering/cce-code-health).
-# Modeled on dem's (dem-health-api) and flow's (flow-health-api). Established by WO-31 (2026-11-17) at amr
-# origin/main 9205762, core 7cec32a (1.8.1), morton d264165; wall clock in playbook.md.
+# Refactor gate of the host-orchestration round (WO-37, 2026-11-18), at amr origin/main 8ce8c60, core 7cec32a (1.8.1),
+# morton d264165, tool 0.3.0 (cpp@1 + zones). Replaces WO-31's user-facing config (which forbade include/*).
+# Wall clock: playbook.md.
 #
 # Run with PECLET_SUITE=<suite checkout> set. Core and morton headers: the head side (a sibling worktree
 # suite/amr-<topic>) finds ../core and ../morton silently; the base side (built under <git-common-dir>/codehealth/
 # base-<sha>, no siblings) would FETCH them at PECLET_CORE_TAG / PECLET_MORTON_TAG (older programs). Every
 # configure therefore pins both to $PECLET_SUITE/{core,morton} through FETCHCONTENT_SOURCE_DIR_* (FULLY_DISCONNECTED:
-# no network), and the build tiers print one '[deps] ...' line per sibling with the REAL include path taken from
-# compile_commands.json; state_hash requires those lines to match between base and head (same_lines).
+# no network). state_hash prints one '[deps] <repo>=<include path> @ <commit>' line per sibling, from
+# compile_commands.json (tests/regression/deps_lines.py), and requires them equal at base and head (same_lines): a
+# shared suite/core or suite/morton checkout that moves between the two runs fails the gate instead of hashing two
+# different programs.
 #
 # Traps encoded below:
-#  - Threads: amr CLAUDE.md runs the battery at OMP_NUM_THREADS=2 OMP_PROC_BIND=false (-LE 'bench|np8') and the
-#    np8 subset LAST at one thread; an unbounded pool on 48 cores is an hour-long trap. state_hash runs at the
-#    [gate.env] one thread (bitwise only there).
+#  - Threads: OMP_NUM_THREADS=1 for everything (RULES.md; amr's CLAUDE.md runs the battery at 2, the np8 subset at
+#    1). state_hash is bitwise at one thread only (device reductions are order-dependent at more).
 #  - MPIEXEC_PREFLAGS takes the LIST form "--bind-to;none" (amr expands it as a list); MPIEXEC_EXECUTABLE is
-#    /usr/bin/mpirun (ParaView's mpiexec on PATH runs N singletons that all "pass"; the launcher pin in
-#    cmake/PecletAmrPinMpiexec.cmake catches it, but say it anyway).
+#    /usr/bin/mpirun (ParaView's mpiexec on PATH runs N singletons that all "pass").
 #  - ctest exits 0 when a test is skipped -> fail_regex. python_flow_parity exits 77 BY DESIGN without
-#    -DPECLET_AMR_FLOW_PYTHONPATH (a flow build tree, a sibling repo); it is excluded by name, not configured, so the
-#    gate does not depend on another session's build tree.
-#  - state_hash.py --save takes a FILE (dem's takes a directory). The np = 2 hashes need `mpirun -np 2`; the tier
-#    requires the .np2 keys. The committed reference carries a toolchain key; a different compiler SKIPS (77).
+#    -DPECLET_AMR_FLOW_PYTHONPATH (a flow build tree, a sibling repo): excluded by name, not configured, so the gate
+#    does not depend on another session's build tree. The bench label (studies, ~4 min) is not a gate.
+#  - Warnings: build_host fails on any compiler warning (base: 0).
+#  - Machine load (TRS2 shared): builds -j8, ctest -j8 at one thread.
 schema = 1
 
 [profiles]
 python = "python@0"
-cpp = "cpp@0"
+cpp = "cpp@1"
 
 [scope]
-include = ["include/*", "python/*"]
+include = ["src/*", "include/*", "python/*", "bindings/*", "tools/*", "scripts/*", "examples/*"]
+
+[[zones]]
+name = "user"
+paths = ["*.py", "src/*_bindings.cpp", "src/*_bindings*.hpp", "python/*_bindings.cpp", "bindings/*.cpp",
+         "bindings/*.h", "examples/*.cpp"]
+[[zones]]
+name = "device"
+paths = ["src/pore_kernels.hpp", "src/coupling_kernels.hpp", "src/drag.hpp"]
+[[zones]]
+name = "device"
+markers = ["KOKKOS_INLINE_FUNCTION", "KOKKOS_FUNCTION", "KOKKOS_FORCEINLINE_FUNCTION", "KOKKOS_LAMBDA",
+           "KOKKOS_CLASS_LAMBDA"]
+[[zones]]
+name = "host"
 
 [gate]
-# CMakeLists.txt is not frozen: the Python ctests are registered there (python_input_validation, WO-31).
-frozen = ["cmake/*", "CLAUDE.md", "python/state_hash.py", "python/state_hash_reference.json"]
-forbid = ["include/*", "pyproject.toml"]
+frozen = ["cmake/*", "CMakeLists.txt", "CLAUDE.md", "tests/regression/*", "python/state_hash.py",
+          "python/state_hash_reference.json"]
+# WO-37: the bindings, their check header and the packaging are out of bounds for the host round.
+forbid = ["tests/*", "packaging/*", "pyproject.toml", "python/amr_bindings.cpp", "python/amr_bindings_checks.hpp"]
 literals = false
 public_api = false
 flags = true
@@ -49,7 +65,7 @@ MKL_NUM_THREADS = "1"
 PYTHONHASHSEED = "0"
 
 # amr's CI format job is BLOCKING (quality.yml, clang-format 18.1.8 = the suite venv's). CI's file set plus
-# python/*.hpp, which CI's glob misses (the binding-only check header lives there).
+# python/*.hpp, which CI's glob misses.
 [[gate.tier]]
 name = "clang_format"
 kind = "command"
@@ -59,14 +75,18 @@ timeout = 120
 cmd = '''cd {repo} && $PECLET_SUITE/.venv/bin/clang-format --dry-run --Werror \
   $(git ls-files 'include/*.hpp' 'tests/*.hpp' 'tests/*.cpp' 'benchmarks/*.cpp' 'python/*.cpp' 'python/*.hpp')'''
 
+# 0 warnings (the base has none): any gcc warning line fails the tier.
 [[gate.tier]]
 name = "build_host"
 kind = "command"
 behaviour = false
 cadence = "step"
-timeout = 2400
-cmd = '''cmake -S {repo} -B {repo}/build_health_host $AMR_CFG && cmake --build {repo}/build_health_host -j32'''
+timeout = 3600
+fail_regex = ':[0-9]+:[0-9]+: warning:'
+cmd = '''cmake -S {repo} -B {repo}/build_health_host $AMR_CFG && cmake --build {repo}/build_health_host -j8'''
 
+# The whole battery minus `bench` and the parity gate: 101 main (amr_stability_guard included; MPI at np 1, 2, 4)
+# then the 21 np8 tests. 0 skipped.
 [[gate.tier]]
 name = "ctest_host"
 kind = "command"
@@ -76,22 +96,27 @@ skip_exit = 77
 fail_regex = '\*\*\*Skipped|Not Run|No tests were found'
 detect_exit = [8]
 cmd = '''cmake -S {repo} -B {repo}/build_health_host $AMR_CFG >/dev/null \
-  && cmake --build {repo}/build_health_host -j32 >/dev/null \
-  && OMP_NUM_THREADS=2 ctest --test-dir {repo}/build_health_host -LE 'bench|np8' -E '^python_flow_parity$' \
+  && cmake --build {repo}/build_health_host -j8 >/dev/null \
+  && ctest --test-dir {repo}/build_health_host -LE 'bench|np8' -E '^python_flow_parity$' \
        -j8 --timeout 1800 --output-on-failure \
   && ctest --test-dir {repo}/build_health_host -L np8 -j1 --timeout 1800 --output-on-failure'''
 
+# Bitwise reference: tests/regression/state_hash.py (setup paths: every setSolid mode, sampled overlay, adapt,
+# distributed flow MG and FV operator at np 1, 2, 4) plus python/state_hash.py (the public entry paths, np 1 and 2).
 [[gate.tier]]
 name = "state_hash"
 kind = "reference"
 cadence = "step"
 timeout = 1800
+fail_regex = 'mpi cases skipped'
 same_lines = '^\[deps\] '
-outputs = ["hashes_np1.json", "hashes_np2.json"]
+outputs = ["hashes_regression.json", "hashes_public_np1.json", "hashes_public_np2.json"]
 cmd = '''cmake -S {repo} -B {repo}/build_health_host $AMR_CFG >/dev/null \
-  && cmake --build {repo}/build_health_host -j32 >/dev/null \
-  && python -c "import json,os,re,sys; cc=json.load(open(sys.argv[1])); s=' '.join(e['command'] for e in cc if e['file'].endswith('amr_bindings.cpp')); [print('[deps] %s=%s' % (r, os.path.realpath(m))) for r in ('core','morton') for m in sorted(set(re.findall(r'-I(\S*/%s/include)' % r, s)))]" {repo}/build_health_host/compile_commands.json \
-  && PYTHONPATH={repo}/build_health_host python {repo}/python/state_hash.py --save {out}/hashes_np1.json \
+  && cmake --build {repo}/build_health_host -j8 >/dev/null \
+  && python {repo}/tests/regression/deps_lines.py {repo}/build_health_host/compile_commands.json \
+  && PYTHONPATH={repo}/build_health_host python {repo}/tests/regression/state_hash.py \
+       --build {repo}/build_health_host --save {out}/hashes_regression.json \
+  && PYTHONPATH={repo}/build_health_host python {repo}/python/state_hash.py --save {out}/hashes_public_np1.json \
   && PYTHONPATH={repo}/build_health_host /usr/bin/mpirun -np 2 --bind-to none \
-     python {repo}/python/state_hash.py --save {out}/hashes_np2.json \
-  && grep -q '\.np2' {out}/hashes_np2.json'''
+     python {repo}/python/state_hash.py --save {out}/hashes_public_np2.json \
+  && grep -q '\.np2' {out}/hashes_public_np2.json'''

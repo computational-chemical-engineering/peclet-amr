@@ -89,3 +89,8 @@ foreach(np IN ITEMS 1 2 4 8)
     peclet_amr_add_mpi_test(${t}_np${np} test_${t}_mpi ${np})
   endforeach()
 endforeach()
+
+# ---- byte-gate driver (NOT a ctest): tests/regression/state_hash.py runs it under mpirun ----------
+# regression_fv_dump  DistributedFvOperator (not exposed in peclet.amr) applied + Jacobi, hex dump
+add_executable(regression_fv_dump regression/fv_dump.cpp)
+target_link_libraries(regression_fv_dump PRIVATE peclet::amr)

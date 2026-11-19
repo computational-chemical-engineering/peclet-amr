@@ -29,6 +29,7 @@
 #include <cmath>
 #include <map>
 #include <memory>
+#include <type_traits>
 #include <vector>
 
 #include "peclet/amr/common.hpp"
@@ -65,122 +66,15 @@ class DistributedFvOperator {
     const auto& t = d.local();
     const Index n = t.numLeaves();
     const IVec<Dim> bfo = d.blockFineOrigin();
-    const Vec<Dim> org = d.globalGeometry().origin;
+    const FaceAlpha<std::remove_reference_t<OpenFn>> alpha{openFn, d.globalGeometry().origin, h0_};
     invVol_.assign(static_cast<std::size_t>(n), 0.0);
     diag_.assign(static_cast<std::size_t>(n), 0.0);
 
-    // α at the finer side's (sub-)face: flo = finer cell global fine lower corner,
-    // s its size (fine units), faceDir its outward normal toward the neighbour.
-    auto alphaOf = [&](const std::array<long, Dim>& flo, Coord s, int axis, int faceDir) -> double {
-      Vec<Dim> fc{};
-      long plane = flo[axis] + (faceDir > 0 ? static_cast<long>(s) : 0L);
-      for (int d2 = 0; d2 < Dim; ++d2)
-        fc[d2] =
-            (d2 == axis)
-                ? org[d2] + static_cast<double>(plane) * h0_[d2]
-                : org[d2] + (static_cast<double>(flo[d2]) + 0.5 * static_cast<double>(s)) * h0_[d2];
-      double a = openFn(fc, axis);
-      return a < 0.0 ? 0.0 : (a > 1.0 ? 1.0 : a);
-    };
-    auto gLo = [&](const std::array<Coord, Dim>& lc) {
-      std::array<long, Dim> g{};
-      for (int d2 = 0; d2 < Dim; ++d2)
-        g[d2] = static_cast<long>(lc[d2]) + static_cast<long>(bfo[d2]);
-      return g;
-    };
-    // Global fine lower corner of the k-th fine sub-neighbour across a coarse cell's
-    // (axis,dir) face: clo is the coarse cell's global lo, si its size, sj=si/2. Used
-    // for the sub-face α centroid — the *finer* cell's lo, not the probe point.
-    auto fineLoGlobal = [&](const std::array<long, Dim>& clo, Coord si, Coord sj, int axis, int dir,
-                            int k) {
-      std::array<long, Dim> flo{};
-      flo[axis] = (dir > 0) ? clo[axis] + static_cast<long>(si) : clo[axis] - static_cast<long>(sj);
-      int bit = 0;
-      for (int t = 0; t < Dim; ++t) {
-        if (t == axis)
-          continue;
-        flo[t] = clo[t] + (((k >> bit) & 1) ? static_cast<long>(sj) : 0L);
-        ++bit;
-      }
-      for (int d2 = 0; d2 < Dim; ++d2) {
-        long gf = static_cast<long>(d.globalFineSize()[d2]);
-        if (flo[d2] < 0)
-          flo[d2] += gf;
-        else if (flo[d2] >= gf)
-          flo[d2] -= gf;
-      }
-      return flo;
-    };
-
     // Pass 1: per-leaf entries in face order; remote faces become markers.
-    struct E {
-      double w = 0.0;
-      Index localRef = -1;  // >=0 local neighbour slot
-      int rfId = -1;        // >=0 unresolved remote face
-    };
-    std::vector<std::vector<E>> ent(static_cast<std::size_t>(n));
-    struct RFace {
-      std::array<Coord, Dim> gc{};
-      int Li = 0;
-      Coord si = 1;
-      int axis = 0;
-      int dir = 1;
-      std::array<long, Dim> iLo{};  // requesting leaf's global fine lower corner
-    };
-    std::vector<RFace> rfaces;
-
-    for (Index i = 0; i < n; ++i) {
-      const int Li = static_cast<int>(t.level(i));
-      const Coord si = Coord(Coord(1) << Li);
-      invVol_[static_cast<std::size_t>(i)] = 1.0 / cellVol(Li);
-      auto b = t.bounds(i);
-      const auto& lo = b[0];
-      for (int axis = 0; axis < Dim; ++axis)
-        for (int dir = -1; dir <= 1; dir += 2) {
-          typename DO::FaceInfo fi = d.faceAcross(i, axis, dir);
-          if (fi.state == 2)
-            continue;           // DomainNone
-          if (fi.state == 0) {  // InBlock: enumerate locally
-            Index j = fi.localNb;
-            if (j < 0)
-              continue;
-            const int Lj = static_cast<int>(t.level(j));
-            if (Lj >= Li) {  // finer side is i: α at i's face
-              const double a = alphaOf(gLo(lo), si, axis, dir);
-              ent[static_cast<std::size_t>(i)].push_back(
-                  E{a * coeff(si, Coord(Coord(1) << Lj), axis), j, -1});
-            } else {  // finer side is the sub-neighbour jj: α at jj's face (−dir)
-              const Coord sj = Coord(si >> 1);
-              const long pc = (dir > 0) ? static_cast<long>(lo[axis]) + static_cast<long>(si)
-                                        : static_cast<long>(lo[axis]) - 1;
-              const int nsub = 1 << (Dim - 1);
-              for (int k = 0; k < nsub; ++k) {
-                std::array<Coord, Dim> q = lo;
-                q[axis] = static_cast<Coord>(pc);
-                int bit = 0;
-                for (int tt = 0; tt < Dim; ++tt) {
-                  if (tt == axis)
-                    continue;
-                  const Coord off = ((k >> bit) & 1) ? sj : Coord(0);
-                  q[tt] = static_cast<Coord>(lo[tt] + off);
-                  ++bit;
-                }
-                Index jj = t.find(M::encode(q).code());
-                const double a =
-                    alphaOf(fineLoGlobal(gLo(lo), si, sj, axis, dir, k), sj, axis, -dir);
-                ent[static_cast<std::size_t>(i)].push_back(E{a * coeff(si, sj, axis), jj, -1});
-              }
-            }
-          } else {  // Remote: defer (need covering level)
-            E e;
-            e.rfId = static_cast<int>(rfaces.size());
-            ent[static_cast<std::size_t>(i)].push_back(e);
-            RFace rf{fi.gc, Li, si, axis, dir, {}};
-            rf.iLo = gLo(lo);
-            rfaces.push_back(rf);
-          }
-        }
-    }
+    std::vector<std::vector<FaceEntry>> ent(static_cast<std::size_t>(n));
+    std::vector<RemoteFace> rfaces;
+    for (Index i = 0; i < n; ++i)
+      appendLeafFaces(i, bfo, alpha, ent[static_cast<std::size_t>(i)], rfaces);
 
     // One owner gather of the across-face covering level for every remote face.
     std::vector<std::array<Coord, Dim>> coverCoords(rfaces.size());
@@ -189,54 +83,7 @@ class DistributedFvOperator {
     std::vector<int> coverLv = d.coverLevels(coverCoords);
 
     // Pass 2: expand into the final CSR; ghost coords deduped to ghost slots.
-    std::map<std::array<Coord, Dim>, Index> ghostSlot;
-    std::vector<std::array<Coord, Dim>> ghostCoords;
-    auto ghostRef = [&](const std::array<Coord, Dim>& gc) -> Index {
-      auto it = ghostSlot.find(gc);
-      if (it != ghostSlot.end())
-        return it->second;
-      Index s = static_cast<Index>(ghostCoords.size());
-      ghostSlot.emplace(gc, s);
-      ghostCoords.push_back(gc);
-      return s;
-    };
-
-    start_.assign(static_cast<std::size_t>(n) + 1, 0);
-    for (Index i = 0; i < n; ++i) {
-      for (const E& e : ent[static_cast<std::size_t>(i)]) {
-        if (e.rfId < 0) {
-          ref_.push_back(e.localRef);
-          w_.push_back(e.w);
-          diag_[static_cast<std::size_t>(i)] += e.w;
-        } else {
-          const RFace& rf = rfaces[static_cast<std::size_t>(e.rfId)];
-          const int Lj = coverLv[static_cast<std::size_t>(e.rfId)];
-          if (Lj < 0)
-            continue;         // no neighbour
-          if (Lj >= rf.Li) {  // finer side is i: α at i's face
-            const double a = alphaOf(rf.iLo, rf.si, rf.axis, rf.dir);
-            const double ww = a * coeff(rf.si, Coord(Coord(1) << Lj), rf.axis);
-            ref_.push_back(d_->local().numLeaves() + ghostRef(rf.gc));
-            w_.push_back(ww);
-            diag_[static_cast<std::size_t>(i)] += ww;
-          } else {  // finer side is each remote sub-neighbour: α at its face (−dir)
-            const Coord sj = Coord(rf.si >> 1);
-            const int nsub = 1 << (Dim - 1);
-            for (int k = 0; k < nsub; ++k) {
-              std::array<Coord, Dim> sc = subCoord(rf.gc, rf.axis, k, sj);
-              const double a = alphaOf(fineLoGlobal(rf.iLo, rf.si, sj, rf.axis, rf.dir, k), sj,
-                                       rf.axis, -rf.dir);
-              const double ww = a * coeff(rf.si, sj, rf.axis);
-              ref_.push_back(d_->local().numLeaves() + ghostRef(sc));
-              w_.push_back(ww);
-              diag_[static_cast<std::size_t>(i)] += ww;
-            }
-          }
-        }
-      }
-      start_[static_cast<std::size_t>(i) + 1] = static_cast<Index>(ref_.size());
-    }
-    ghostCoords_ = std::move(ghostCoords);
+    expandFaces(ent, rfaces, coverLv, alpha);
     n_ = n;
   }
 
@@ -312,6 +159,188 @@ class DistributedFvOperator {
   }
 
  private:
+  // ---- init helpers ----------------------------------------------------------------------------
+  // Pass 1 entry of a leaf face: a weight and a local slot, or a marker of an unresolved remote
+  // face.
+  struct FaceEntry {
+    double w = 0.0;
+    Index localRef = -1;  // >=0 local neighbour slot
+    int rfId = -1;        // >=0 unresolved remote face
+  };
+  struct RemoteFace {
+    std::array<Coord, Dim> gc{};
+    int Li = 0;
+    Coord si = 1;
+    int axis = 0;
+    int dir = 1;
+    std::array<long, Dim> iLo{};  // requesting leaf's global fine lower corner
+  };
+
+  // α at the finer side's (sub-)face: flo = finer cell global fine lower corner,
+  // s its size (fine units), faceDir its outward normal toward the neighbour.
+  template <class OpenFn>
+  struct FaceAlpha {
+    OpenFn& openFn;
+    Vec<Dim> org;
+    Vec<Dim> h0_;
+    double operator()(const std::array<long, Dim>& flo, Coord s, int axis, int faceDir) const {
+      Vec<Dim> fc{};
+      long plane = flo[axis] + (faceDir > 0 ? static_cast<long>(s) : 0L);
+      for (int d2 = 0; d2 < Dim; ++d2)
+        fc[d2] =
+            (d2 == axis)
+                ? org[d2] + static_cast<double>(plane) * h0_[d2]
+                : org[d2] + (static_cast<double>(flo[d2]) + 0.5 * static_cast<double>(s)) * h0_[d2];
+      double a = openFn(fc, axis);
+      return a < 0.0 ? 0.0 : (a > 1.0 ? 1.0 : a);
+    }
+  };
+
+  /// A block-local fine coord in the global fine frame (bfo = the block's fine origin).
+  static std::array<long, Dim> globalLo(const IVec<Dim>& bfo, const std::array<Coord, Dim>& lc) {
+    std::array<long, Dim> g{};
+    for (int d2 = 0; d2 < Dim; ++d2)
+      g[d2] = static_cast<long>(lc[d2]) + static_cast<long>(bfo[d2]);
+    return g;
+  }
+
+  // Global fine lower corner of the k-th fine sub-neighbour across a coarse cell's
+  // (axis,dir) face: clo is the coarse cell's global lo, si its size, sj=si/2. Used
+  // for the sub-face α centroid — the *finer* cell's lo, not the probe point.
+  std::array<long, Dim> fineLoGlobal(const std::array<long, Dim>& clo, Coord si, Coord sj, int axis,
+                                     int dir, int k) const {
+    std::array<long, Dim> flo{};
+    flo[axis] = (dir > 0) ? clo[axis] + static_cast<long>(si) : clo[axis] - static_cast<long>(sj);
+    int bit = 0;
+    for (int t = 0; t < Dim; ++t) {
+      if (t == axis)
+        continue;
+      flo[t] = clo[t] + (((k >> bit) & 1) ? static_cast<long>(sj) : 0L);
+      ++bit;
+    }
+    for (int d2 = 0; d2 < Dim; ++d2) {
+      long gf = static_cast<long>(d_->globalFineSize()[d2]);
+      if (flo[d2] < 0)
+        flo[d2] += gf;
+      else if (flo[d2] >= gf)
+        flo[d2] -= gf;
+    }
+    return flo;
+  }
+
+  /// Pass 1 for leaf i: its face entries in face order (remote faces deferred to `rfaces`).
+  template <class Alpha>
+  void appendLeafFaces(Index i, const IVec<Dim>& bfo, const Alpha& alpha,
+                       std::vector<FaceEntry>& entI, std::vector<RemoteFace>& rfaces) {
+    DO& d = *d_;
+    const auto& t = d.local();
+    const int Li = static_cast<int>(t.level(i));
+    const Coord si = Coord(Coord(1) << Li);
+    invVol_[static_cast<std::size_t>(i)] = 1.0 / cellVol(Li);
+    auto b = t.bounds(i);
+    const auto& lo = b[0];
+    for (int axis = 0; axis < Dim; ++axis)
+      for (int dir = -1; dir <= 1; dir += 2) {
+        typename DO::FaceInfo fi = d.faceAcross(i, axis, dir);
+        if (fi.state == 2)
+          continue;           // DomainNone
+        if (fi.state == 0) {  // InBlock: enumerate locally
+          Index j = fi.localNb;
+          if (j < 0)
+            continue;
+          const int Lj = static_cast<int>(t.level(j));
+          if (Lj >= Li) {  // finer side is i: α at i's face
+            const double a = alpha(globalLo(bfo, lo), si, axis, dir);
+            entI.push_back(FaceEntry{a * coeff(si, Coord(Coord(1) << Lj), axis), j, -1});
+          } else {  // finer side is the sub-neighbour jj: α at jj's face (−dir)
+            const Coord sj = Coord(si >> 1);
+            const long pc = (dir > 0) ? static_cast<long>(lo[axis]) + static_cast<long>(si)
+                                      : static_cast<long>(lo[axis]) - 1;
+            const int nsub = 1 << (Dim - 1);
+            for (int k = 0; k < nsub; ++k) {
+              std::array<Coord, Dim> q = lo;
+              q[axis] = static_cast<Coord>(pc);
+              int bit = 0;
+              for (int tt = 0; tt < Dim; ++tt) {
+                if (tt == axis)
+                  continue;
+                const Coord off = ((k >> bit) & 1) ? sj : Coord(0);
+                q[tt] = static_cast<Coord>(lo[tt] + off);
+                ++bit;
+              }
+              Index jj = t.find(M::encode(q).code());
+              const double a =
+                  alpha(fineLoGlobal(globalLo(bfo, lo), si, sj, axis, dir, k), sj, axis, -dir);
+              entI.push_back(FaceEntry{a * coeff(si, sj, axis), jj, -1});
+            }
+          }
+        } else {  // Remote: defer (need covering level)
+          FaceEntry e;
+          e.rfId = static_cast<int>(rfaces.size());
+          entI.push_back(e);
+          RemoteFace rf{fi.gc, Li, si, axis, dir, {}};
+          rf.iLo = globalLo(bfo, lo);
+          rfaces.push_back(rf);
+        }
+      }
+  }
+
+  /// Pass 2: expand the entries into the final CSR (start_, ref_, w_, diag_) and the ghost list.
+  template <class Alpha>
+  void expandFaces(const std::vector<std::vector<FaceEntry>>& ent,
+                   const std::vector<RemoteFace>& rfaces, const std::vector<int>& coverLv,
+                   const Alpha& alpha) {
+    const Index n = static_cast<Index>(ent.size());
+    std::map<std::array<Coord, Dim>, Index> ghostSlot;
+    std::vector<std::array<Coord, Dim>> ghostCoords;
+    auto ghostRef = [&](const std::array<Coord, Dim>& gc) -> Index {
+      auto it = ghostSlot.find(gc);
+      if (it != ghostSlot.end())
+        return it->second;
+      Index s = static_cast<Index>(ghostCoords.size());
+      ghostSlot.emplace(gc, s);
+      ghostCoords.push_back(gc);
+      return s;
+    };
+
+    start_.assign(static_cast<std::size_t>(n) + 1, 0);
+    for (Index i = 0; i < n; ++i) {
+      for (const FaceEntry& e : ent[static_cast<std::size_t>(i)]) {
+        if (e.rfId < 0) {
+          ref_.push_back(e.localRef);
+          w_.push_back(e.w);
+          diag_[static_cast<std::size_t>(i)] += e.w;
+        } else {
+          const RemoteFace& rf = rfaces[static_cast<std::size_t>(e.rfId)];
+          const int Lj = coverLv[static_cast<std::size_t>(e.rfId)];
+          if (Lj < 0)
+            continue;         // no neighbour
+          if (Lj >= rf.Li) {  // finer side is i: α at i's face
+            const double a = alpha(rf.iLo, rf.si, rf.axis, rf.dir);
+            const double ww = a * coeff(rf.si, Coord(Coord(1) << Lj), rf.axis);
+            ref_.push_back(d_->local().numLeaves() + ghostRef(rf.gc));
+            w_.push_back(ww);
+            diag_[static_cast<std::size_t>(i)] += ww;
+          } else {  // finer side is each remote sub-neighbour: α at its face (−dir)
+            const Coord sj = Coord(rf.si >> 1);
+            const int nsub = 1 << (Dim - 1);
+            for (int k = 0; k < nsub; ++k) {
+              std::array<Coord, Dim> sc = subCoord(rf.gc, rf.axis, k, sj);
+              const double a =
+                  alpha(fineLoGlobal(rf.iLo, rf.si, sj, rf.axis, rf.dir, k), sj, rf.axis, -rf.dir);
+              const double ww = a * coeff(rf.si, sj, rf.axis);
+              ref_.push_back(d_->local().numLeaves() + ghostRef(sc));
+              w_.push_back(ww);
+              diag_[static_cast<std::size_t>(i)] += ww;
+            }
+          }
+        }
+      }
+      start_[static_cast<std::size_t>(i) + 1] = static_cast<Index>(ref_.size());
+    }
+    ghostCoords_ = std::move(ghostCoords);
+  }
+
   /// Phase 3: per-axis cell width; the scalar form is the cubic one.
   double cellWidth(int level, int axis) const {
     return h0_[axis] * static_cast<double>(Index(1) << level);

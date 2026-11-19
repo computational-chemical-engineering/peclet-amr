@@ -37,6 +37,7 @@
 
 #include <array>
 #include <map>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -107,37 +108,25 @@ inline bool seamFaceLayer(const AmrPoisson<3, Bits>& ap, Index C, int axis, int 
 
 }  // namespace detail
 
-/// Build the seam-reconstruction tables over the LOCAL rows of `ap` (docs/amr_cf_convective.md
-/// §5.2). `regularOk` is the ghost-visible `fluid && !cut` flag the C/F overlays are gated on and
-/// `fluidOk` the plain fluid predicate `cfAppendStencil` drops a tangential side on; `scheme`
-/// selects the tangential sample (CfScheme::quadratic — §5.1 Q-A: ONE tangential-sample operator
-/// suite-wide). Every probe it issues is registered by the distributed discovery fixpoint
-/// (`AmrFlow::probeCfScheme` + `AmrFlow::probeSeamLayer`), so a ghost cell resolves rather than
-/// throwing.
-///
-/// LOCAL: no communication; each rank walks its own rows, reading ghost slots through `ap`'s
-/// resolver. Deterministic (see the file header), which is what makes np = 1 bitwise identical to
-/// the single-rank build.
-///
-/// @pre `ap` is fully built on the final mesh (operator, level-aware probes and — distributed — a
-///      FINALIZED resolver whose registry holds every probe above). An unregistered out-of-block
-///      probe reaches the frozen `LeafHalo` resolver, which throws `std::runtime_error`.
-/// @pre `regularOk` / `fluidOk` accept every slot `ap` can return, ghost slots included.
-/// @return the tables; the two record counts are `Flow.diagnostics.num_seam_sample_records` /
-///         `num_seam_layer_records`.
+namespace detail {
+
+/// The record tables of buildSeamRecon under construction: the descriptors (`out`), the record
+/// entries and distances, and the two key caches.
 template <unsigned Bits, class RegularFn, class FluidFn>
-SeamReconHost buildSeamRecon(const AmrPoisson<3, Bits>& ap, RegularFn&& regularOk,
-                             FluidFn&& fluidOk, CfScheme scheme) {
-  const Index n = ap.octree().numLeaves();
+struct SeamReconBuilder {
+  const AmrPoisson<3, Bits>& ap;
+  RegularFn& regularOk;
+  FluidFn& fluidOk;
+  CfScheme scheme;
   SeamReconHost out;
   std::vector<std::vector<detail::ScalarEnt>> rec;  // entries, one vector per record
   std::vector<double> dist;                         // recDist, one per record
-
   // (coarse, fine, axis) -> sample record id; (coarse, axis, dir) -> layer record id. A withheld
   // record is cached as −1 so a gate is evaluated once per key, not once per referencing slot.
   std::map<std::array<Index, 3>, Index> sampleOf, layerOf;
 
-  auto sampleRecord = [&](Index C, Index F, int axis) -> Index {
+  /// The tangential-sample record of coarse C at fine F's column (cached, -1 when withheld).
+  Index sample(Index C, Index F, int axis) {
     if (C < 0 || F < 0)
       return -1;
     const std::array<Index, 3> key{C, F, static_cast<Index>(axis)};
@@ -156,9 +145,10 @@ SeamReconHost buildSeamRecon(const AmrPoisson<3, Bits>& ap, RegularFn&& regularO
     }
     sampleOf.emplace(key, id);
     return id;
-  };
+  }
 
-  auto layerRecord = [&](Index C, int axis, int dir) -> Index {
+  /// The fine-layer record of C's (axis, dir) face (cached, -1 when withheld).
+  Index layer(Index C, int axis, int dir) {
     if (C < 0)
       return -1;
     const std::array<Index, 3> key{C, static_cast<Index>(axis), static_cast<Index>(dir)};
@@ -183,67 +173,102 @@ SeamReconHost buildSeamRecon(const AmrPoisson<3, Bits>& ap, RegularFn&& regularO
     }
     layerOf.emplace(key, id);
     return id;
-  };
-
-  for (Index i = 0; i < n; ++i) {
-    ap.forEachFaceFull(i, [&](Index j, int a, int d, double, double, double) {
-      const unsigned Li = ap.levelOf(i), Lj = ap.levelOf(j);
-      Index rsI = -1, rsJ = -1, ruI = -1, ruJ = -1;
-      // Case 1 — this slot IS a 2:1 sub-face: the coarse side's value is sampled at the fine
-      // side's tangential column. (A level in this octree counts DOWN: 0 is the finest.)
-      if (Lj != Li) {
-        if (Li > Lj)
-          rsI = sampleRecord(i, j, a);
-        else
-          rsJ = sampleRecord(j, i, a);
-      }
-      // Cases 2/3 — the upstream probe of each side crosses a level: coarser ⇒ the same
-      // tangential sample at its true distance; finer ⇒ the mean of that face's fine layer.
-      const Index uI = ap.periodicNeighbor(i, a, -d);
-      if (uI >= 0) {
-        const unsigned Lu = ap.levelOf(uI);
-        if (Lu > Li)
-          ruI = sampleRecord(uI, i, a);
-        else if (Lu < Li)
-          ruI = layerRecord(i, a, -d);
-      }
-      const Index uJ = ap.periodicNeighbor(j, a, d);
-      if (uJ >= 0) {
-        const unsigned Lu = ap.levelOf(uJ);
-        if (Lu > Lj)
-          ruJ = sampleRecord(uJ, j, a);
-        else if (Lu < Lj)
-          ruJ = layerRecord(j, a, d);
-      }
-      if (rsI < 0 && rsJ < 0 && ruI < 0 && ruJ < 0) {
-        out.seam.push_back(-1);  // plain slot: today's reconstruction, bit for bit
-        return;
-      }
-      out.seam.push_back(out.numDescriptors());
-      out.sampI.push_back(rsI);
-      out.sampJ.push_back(rsJ);
-      out.uuRecI.push_back(ruI);
-      out.uuRecJ.push_back(ruJ);
-      out.d1I.push_back(0.5 * static_cast<double>(ap.cellWidth(i, a)));
-      out.d1J.push_back(0.5 * static_cast<double>(ap.cellWidth(j, a)));
-    });
   }
 
-  const Index nRec = static_cast<Index>(rec.size());
-  out.recStart.assign(static_cast<std::size_t>(nRec) + 1, 0);
-  for (Index r = 0; r < nRec; ++r)
-    out.recStart[static_cast<std::size_t>(r) + 1] =
-        out.recStart[static_cast<std::size_t>(r)] +
-        static_cast<Index>(rec[static_cast<std::size_t>(r)].size());
-  out.recDist = std::move(dist);
-  out.recCell.reserve(static_cast<std::size_t>(out.recStart[static_cast<std::size_t>(nRec)]));
-  out.recW.reserve(static_cast<std::size_t>(out.recStart[static_cast<std::size_t>(nRec)]));
-  for (Index r = 0; r < nRec; ++r)
-    for (const auto& e : rec[static_cast<std::size_t>(r)]) {
-      out.recCell.push_back(e.cell);
-      out.recW.push_back(e.w);
+  /// The descriptor of face slot (i, j, a, d) in forEachFaceFull order.
+  void faceSlot(Index i, Index j, int a, int d) {
+    const unsigned Li = ap.levelOf(i), Lj = ap.levelOf(j);
+    Index rsI = -1, rsJ = -1, ruI = -1, ruJ = -1;
+    // Case 1 — this slot IS a 2:1 sub-face: the coarse side's value is sampled at the fine
+    // side's tangential column. (A level in this octree counts DOWN: 0 is the finest.)
+    if (Lj != Li) {
+      if (Li > Lj)
+        rsI = sample(i, j, a);
+      else
+        rsJ = sample(j, i, a);
     }
-  return out;
+    // Cases 2/3 — the upstream probe of each side crosses a level: coarser ⇒ the same
+    // tangential sample at its true distance; finer ⇒ the mean of that face's fine layer.
+    const Index uI = ap.periodicNeighbor(i, a, -d);
+    if (uI >= 0) {
+      const unsigned Lu = ap.levelOf(uI);
+      if (Lu > Li)
+        ruI = sample(uI, i, a);
+      else if (Lu < Li)
+        ruI = layer(i, a, -d);
+    }
+    const Index uJ = ap.periodicNeighbor(j, a, d);
+    if (uJ >= 0) {
+      const unsigned Lu = ap.levelOf(uJ);
+      if (Lu > Lj)
+        ruJ = sample(uJ, j, a);
+      else if (Lu < Lj)
+        ruJ = layer(j, a, d);
+    }
+    if (rsI < 0 && rsJ < 0 && ruI < 0 && ruJ < 0) {
+      out.seam.push_back(-1);  // plain slot: today's reconstruction, bit for bit
+      return;
+    }
+    out.seam.push_back(out.numDescriptors());
+    out.sampI.push_back(rsI);
+    out.sampJ.push_back(rsJ);
+    out.uuRecI.push_back(ruI);
+    out.uuRecJ.push_back(ruJ);
+    out.d1I.push_back(0.5 * static_cast<double>(ap.cellWidth(i, a)));
+    out.d1J.push_back(0.5 * static_cast<double>(ap.cellWidth(j, a)));
+  }
+
+  /// Pack the records into the CSR of the result.
+  SeamReconHost pack() {
+    const Index nRec = static_cast<Index>(rec.size());
+    out.recStart.assign(static_cast<std::size_t>(nRec) + 1, 0);
+    for (Index r = 0; r < nRec; ++r)
+      out.recStart[static_cast<std::size_t>(r) + 1] =
+          out.recStart[static_cast<std::size_t>(r)] +
+          static_cast<Index>(rec[static_cast<std::size_t>(r)].size());
+    out.recDist = std::move(dist);
+    out.recCell.reserve(static_cast<std::size_t>(out.recStart[static_cast<std::size_t>(nRec)]));
+    out.recW.reserve(static_cast<std::size_t>(out.recStart[static_cast<std::size_t>(nRec)]));
+    for (Index r = 0; r < nRec; ++r)
+      for (const auto& e : rec[static_cast<std::size_t>(r)]) {
+        out.recCell.push_back(e.cell);
+        out.recW.push_back(e.w);
+      }
+    return std::move(out);
+  }
+};
+
+}  // namespace detail
+
+/// Build the seam-reconstruction tables over the LOCAL rows of `ap` (docs/amr_cf_convective.md
+/// §5.2). `regularOk` is the ghost-visible `fluid && !cut` flag the C/F overlays are gated on and
+/// `fluidOk` the plain fluid predicate `cfAppendStencil` drops a tangential side on; `scheme`
+/// selects the tangential sample (CfScheme::quadratic — §5.1 Q-A: ONE tangential-sample operator
+/// suite-wide). Every probe it issues is registered by the distributed discovery fixpoint
+/// (`AmrFlow::probeCfScheme` + `AmrFlow::probeSeamLayer`), so a ghost cell resolves rather than
+/// throwing.
+///
+/// LOCAL: no communication; each rank walks its own rows, reading ghost slots through `ap`'s
+/// resolver. Deterministic (see the file header), which is what makes np = 1 bitwise identical to
+/// the single-rank build.
+///
+/// @pre `ap` is fully built on the final mesh (operator, level-aware probes and — distributed — a
+///      FINALIZED resolver whose registry holds every probe above). An unregistered out-of-block
+///      probe reaches the frozen `LeafHalo` resolver, which throws `std::runtime_error`.
+/// @pre `regularOk` / `fluidOk` accept every slot `ap` can return, ghost slots included.
+/// @return the tables; the two record counts are `Flow.diagnostics.num_seam_sample_records` /
+///         `num_seam_layer_records`.
+template <unsigned Bits, class RegularFn, class FluidFn>
+SeamReconHost buildSeamRecon(const AmrPoisson<3, Bits>& ap, RegularFn&& regularOk,
+                             FluidFn&& fluidOk, CfScheme scheme) {
+  const Index n = ap.octree().numLeaves();
+  detail::SeamReconBuilder<Bits, std::remove_reference_t<RegularFn>,
+                           std::remove_reference_t<FluidFn>>
+      b{ap, regularOk, fluidOk, scheme, {}, {}, {}, {}, {}};
+  for (Index i = 0; i < n; ++i)
+    ap.forEachFaceFull(
+        i, [&](Index j, int a, int d, double, double, double) { b.faceSlot(i, j, a, d); });
+  return b.pack();
 }
 
 }  // namespace peclet::amr
